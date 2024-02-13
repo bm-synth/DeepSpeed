@@ -89,8 +89,8 @@ class DataAnalyzer(object):
             metric_type, metric_dtype, metric_function, metric_result = metric_types[m_idx], \
                 metric_dtypes[m_idx], metric_functions[m_idx], metric_results[m_idx]
             metric_values = metric_function(data)
-            assert metric_values.numpy().dtype == metric_dtype, \
-                f"dtype {type(m_value)} returned by metric_function {metric_function} is not consistent with the metric_dtype {metric_dtype}"
+            assert metric_values.dtype == metric_dtype, \
+                f"metric_function result dtype {metric_values.dtype} does not match metric_dtype {metric_dtype}"
             if metric_type == 'single_value_per_sample':
                 for row in range(metric_values.size()[0]):
                     metric_result["sample_to_metric_builder"].add_item(metric_values[row].reshape(-1))
@@ -159,7 +159,8 @@ class DataAnalyzer(object):
             try:
                 data = next(iterator)
                 if self.custom_map_update is None:
-                    self.update_metric_results(data, self.metric_types, self.metric_dtypes, self.metric_functions, metric_results)
+                    self.update_metric_results(data, self.metric_types, self.metric_dtypes, self.metric_functions,
+                                               metric_results)
                 else:
                     self.custom_map_update(data, self.metric_types, self.metric_functions, metric_results)
                 processed_sample += self.batch_size
@@ -274,21 +275,27 @@ class DataAnalyzer(object):
                 manager = Manager()
                 return_dict = manager.dict()
                 p = []
-                for t_idx_reduce in range(num_threads_reduce):
-                    p.append(
-                        Process(target=self.merge_gather_map_stats,
-                                args=(
-                                    num_workers,
-                                    num_threads,
-                                    num_threads_reduce,
-                                    t_idx_reduce,
-                                    metric_save_path,
-                                    metric_name,
-                                    return_dict,
-                                )))
-                    p[t_idx_reduce].start()
-                for t_idx_reduce in range(num_threads_reduce):
-                    p[t_idx_reduce].join()
+                if num_threads_reduce > 1:
+                    for t_idx_reduce in range(num_threads_reduce):
+                        p.append(
+                            Process(target=self.merge_gather_map_stats,
+                                    args=(
+                                        num_workers,
+                                        num_threads,
+                                        num_threads_reduce,
+                                        t_idx_reduce,
+                                        metric_save_path,
+                                        metric_name,
+                                        return_dict,
+                                    )))
+                        p[t_idx_reduce].start()
+                    for t_idx_reduce in range(num_threads_reduce):
+                        p[t_idx_reduce].join()
+                else:
+                    assert num_threads_reduce == 1
+                    self.merge_gather_map_stats(num_workers, num_threads, num_threads_reduce, 0, metric_save_path,
+                                                metric_name, return_dict)
+
                 for t_idx_reduce in range(num_threads_reduce):
                     results = return_dict[t_idx_reduce]
                     for res in results:
@@ -416,4 +423,3 @@ class DataAnalyzer(object):
         else:
             self.custom_reduce(self.dataset, self.metric_names, self.metric_types, self.save_path, self.num_workers,
                                self.num_threads, self.num_threads_reduce)
-
