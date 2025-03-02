@@ -61,13 +61,20 @@ def installed_cuda_version(name=""):
 
 def get_default_compute_capabilities():
     compute_caps = DEFAULT_COMPUTE_CAPABILITIES
+    # Update compute capability according to: https://en.wikipedia.org/wiki/CUDA#GPUs_supported
     import torch.utils.cpp_extension
-    if torch.utils.cpp_extension.CUDA_HOME is not None and installed_cuda_version()[0] >= 11:
-        if installed_cuda_version()[0] == 11 and installed_cuda_version()[1] == 0:
-            # Special treatment of CUDA 11.0 because compute_86 is not supported.
-            compute_caps += ";8.0"
-        else:
+    if torch.utils.cpp_extension.CUDA_HOME is not None:
+        if installed_cuda_version()[0] == 11:
+            if installed_cuda_version()[1] >= 0:
+                compute_caps += ";8.0"
+            if installed_cuda_version()[1] >= 1:
+                compute_caps += ";8.6"
+            if installed_cuda_version()[1] >= 8:
+                compute_caps += ";9.0"
+        elif installed_cuda_version()[0] == 12:
             compute_caps += ";8.0;8.6;9.0"
+            if installed_cuda_version()[1] >= 8:
+                compute_caps += ";10.0;12.0"
     return compute_caps
 
 
@@ -405,8 +412,8 @@ class OpBuilder(ABC):
         try:
             cpu_info = get_cpu_info()
         except Exception as e:
-            self.warning(f"{self.name} attempted to use `py-cpuinfo` but failed (exception type: {type(e)}, {e}), "
-                         "falling back to `lscpu` to get this information.")
+            self.warning(f"{self.name} attempted to use 'py-cpuinfo' but failed (exception type: {type(e)}, {e}), "
+                         "falling back to 'lscpu' to get this information.")
             cpu_info = self._backup_cpuinfo()
             if cpu_info is None:
                 return "-march=native"
@@ -464,8 +471,8 @@ class OpBuilder(ABC):
         try:
             cpu_info = get_cpu_info()
         except Exception as e:
-            self.warning(f"{self.name} attempted to use `py-cpuinfo` but failed (exception type: {type(e)}, {e}), "
-                         "falling back to `lscpu` to get this information.")
+            self.warning(f"{self.name} attempted to use 'py-cpuinfo' but failed (exception type: {type(e)}, {e}), "
+                         "falling back to 'lscpu' to get this information.")
             cpu_info = self._backup_cpuinfo()
             if cpu_info is None:
                 return '-D__SCALAR__'
@@ -635,7 +642,7 @@ class CUDAOpBuilder(OpBuilder):
             if cross_compile_archs_env is not None:
                 if cross_compile_archs is not None:
                     print(
-                        f"{WARNING} env var `TORCH_CUDA_ARCH_LIST={cross_compile_archs_env}` overrides `cross_compile_archs={cross_compile_archs}`"
+                        f"{WARNING} env var 'TORCH_CUDA_ARCH_LIST={cross_compile_archs_env}' overrides 'cross_compile_archs={cross_compile_archs}'"
                     )
                 cross_compile_archs = cross_compile_archs_env.replace(' ', ';')
             else:

@@ -70,16 +70,16 @@ CURRICULUM_LEARNING_NP_RNG_STATE = "np_rng_state"
 DYNAMIC_BATCHING = "dynamic_batching"
 DYNAMIC_BATCHING_ENABLED = "enabled"
 DYNAMIC_BATCHING_ENABLED_DEFAULT = False
-DYNAMIC_BATCHING_SEQLEN_SAMPLE_TO_METRIC_PATH = "seqlen_sample_to_metric_path"
+DYNAMIC_BATCHING_METRICS_PATH = "metrics_path"
 DYNAMIC_BATCHING_LR_SCALING_METHOD = "lr_scaling_method"  # "linear" / "sqrt" / "none"
 DYNAMIC_BATCHING_LR_SCALING_METHOD_DEFAULT = "linear"
 DYNAMIC_BATCHING_MIN_BATCH_SIZE = "min_batch_size"
 DYNAMIC_BATCHING_MIN_BATCH_SIZE_DEFAULT = 1
 DYNAMIC_BATCHING_MAX_BATCH_SIZE = "max_batch_size"
 DYNAMIC_BATCHING_MAX_BATCH_SIZE_DEFAULT = None
-DYNAMIC_BATCHING_SAMPLES_ORDER = "samples_order"  # "random" / "seqlen" / "dataloader"
-DYNAMIC_BATCHING_SAMPLES_ORDER_DEFAULT = "dataloader"  # "random" / "seqlen" / "dataloader"
-DYNAMIC_BATCHING_MAX_TOKENS_PER_BATCH = "max_tokens_per_batch"
+DYNAMIC_BATCHING_SEQUENCE_PICKING_ORDER = "sequence_picking_order"  # "random" / "seqlen" / "dataloader"
+DYNAMIC_BATCHING_SEQUENCE_PICKING_ORDER_DEFAULT = "dataloader"  # "random" / "seqlen" / "dataloader"
+DYNAMIC_BATCHING_MAX_TOKENS = "max_tokens"
 DYNAMIC_BATCHING_VERBOSE = "verbose"
 
 #########################################
