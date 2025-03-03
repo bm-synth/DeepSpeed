@@ -1,8 +1,3 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 import pytest
 import torch
 import deepspeed
@@ -15,7 +10,7 @@ class TestInferenceConfig(DistributedTest):
     world_size = 1
 
     def test_overlap_kwargs(self):
-        config = {"replace_with_kernel_inject": True, "dtype": torch.float32}
+        config = {"replace_with_kernel_inject": True}
         kwargs = {"replace_with_kernel_inject": True}
 
         engine = deepspeed.init_inference(torch.nn.Module(), config=config, **kwargs)
@@ -37,7 +32,7 @@ class TestInferenceConfig(DistributedTest):
         assert engine._config.dtype == kwargs["dtype"]
 
     def test_json_config(self, tmpdir):
-        config = {"replace_with_kernel_inject": True, "dtype": "torch.float32"}
+        config = {"replace_with_kernel_inject": True}
         config_json = create_config_from_dict(tmpdir, config)
 
         engine = deepspeed.init_inference(torch.nn.Module(), config=config_json)
