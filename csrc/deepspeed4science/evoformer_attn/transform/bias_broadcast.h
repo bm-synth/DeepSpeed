@@ -90,13 +90,15 @@ struct BroadcastB : public BroadcastNoLoad<ThreadMap, Shape, scalar_t> {
 template <typename Shape,
           typename scalar_t,
           int kThreads,
-          template <typename, typename, typename> class Broadcast1_,
-          template <typename, typename, typename> class Broadcast2_>
+          template <typename, typename, typename>
+          class Broadcast1_,
+          template <typename, typename, typename>
+          class Broadcast2_>
 struct AttentionBiasEpilogue {
     using ThreadMap = cutlass::transform::PitchLinearStripminedThreadMap<
         cutlass::layout::PitchLinearShape<Shape::kColumn, Shape::kRow>,
         kThreads,
-        1>;
+        128 / cutlass::sizeof_bits<scalar_t>::value>;
 
     using Broadcast1 = Broadcast1_<ThreadMap, Shape, scalar_t>;
     using Broadcast2 = Broadcast2_<ThreadMap, Shape, scalar_t>;

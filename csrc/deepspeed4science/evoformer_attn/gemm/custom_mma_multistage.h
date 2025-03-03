@@ -243,18 +243,10 @@ public:
     }
 
     CUTLASS_DEVICE
-    bool set_prologue_done(bool value)
-    {
-        prologue_done_ = value;
-        return true;
-    }
+    bool set_prologue_done(bool value) { prologue_done_ = value; }
 
     CUTLASS_DEVICE
-    bool set_zero_outside_bounds(bool value)
-    {
-        zero_outside_bounds_ = value;
-        return true;
-    }
+    bool set_zero_outside_bounds(bool value) { zero_outside_bounds_ = value; }
 
     template <bool kLoadA = true, bool kLoadB = true>
     CUTLASS_DEVICE static void prologue(typename Base::SharedStorage& shared_storage,
