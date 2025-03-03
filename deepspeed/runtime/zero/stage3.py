@@ -272,11 +272,85 @@ class PrefetchCoordinator(object):
             if sub_module.id == trace[step_id]:
                 end_step = step_id
 
-                is_there_reuse = True
-                reuse_distance_in_numel = self._distance_in_numel(
-                    start_step,
-                    end_step,
-                    trace)
+            if self.__prefetch_nvme:
+                self.__prefetch_nvme_param_partitions()
+
+        self.__step_id += 1
+
+    @instrument_w_nvtx
+    @torch.no_grad()
+    def release_sub_module(self, submodule: Module) -> None:
+        """release the parameters of a sub module, assuming they meet conditions to
+        be released."""
+        params_to_release = (self.__params_to_release(submodule,
+                                                      self.__step_id)
+                             if self.trace_complete else set(
+                                 p.ds_id for p in iter_params(submodule)))
+
+        for param in iter_params(submodule):
+            param.ds_active_sub_modules.discard(submodule.id)
+            if param.ds_id in params_to_release and not param.is_external_param:
+                self.__release_param(param)
+
+    @instrument_w_nvtx
+    @torch.no_grad()
+    def release_and_reset_all(self, module: Module) -> None:
+        """release all module parameters"""
+        for param in iter_params(module, recurse=True):
+            if param in self.__inflight_param_registry:
+                raise RuntimeError(f"param {param.ds_summary()} still in flight")
+
+            # TODO. make this throw if if there are still active submodules. currently
+            # there's a hook execution issue
+            param.ds_active_sub_modules.clear()
+            self.__release_param(param)
+
+        for param in iter_params(module, recurse=True):
+            if param.ds_status != ZeroParamStatus.NOT_AVAILABLE:
+                raise RuntimeError(f"{param.ds_summary()} expected to be released")
+
+    @instrument_w_nvtx
+    def __all_gather_params(self, params: Set[Parameter]) -> None:
+        """for each partitioned parameter, kick off an async allgather and store
+        the work handle for the in flight parameters."""
+        partitioned_params = []
+        for param in params:
+            if param.ds_status == ZeroParamStatus.NOT_AVAILABLE:
+                partitioned_params.append(param)
+                self.__n_available_params += param.ds_numel
+
+        if partitioned_params:
+            with torch.cuda.stream(self.__allgather_stream):
+                handle = partitioned_params[0].all_gather_coalesced(partitioned_params)
+
+            for param in partitioned_params:
+                assert param.ds_status == ZeroParamStatus.INFLIGHT, param.ds_summary()
+                self.__inflight_param_registry[param] = handle
+
+    @instrument_w_nvtx
+    def __release_param(self, param: Parameter) -> None:
+        if param.ds_status == ZeroParamStatus.AVAILABLE and not param.ds_active_sub_modules:
+            debug_rank0(f"-release: {param.ds_summary()}")
+            param.partition()
+            self.__n_available_params -= param.ds_numel
+
+    @instrument_w_nvtx
+    @functools.lru_cache(maxsize=None)
+    def __params_to_release(self,
+                            submodule_to_release: Module,
+                            step_id: int) -> Set[int]:
+        if not self.trace_complete:
+            raise RuntimeError("expected trace to be complete")
+
+        params_to_release = set(p.ds_id for p in iter_params(submodule_to_release)
+                                if not p.ds_persist)
+
+        # examine all modules within `max_reuse_dist_in_numel` of the current step,
+        # if we see any of the candidate parameters to be released reoccur while
+        # doing this, remove them from the set of parameters to release.
+        params_traversed = 0
+        for module in self.__submodule_order[step_id:]:
+            if params_traversed > self.__max_reuse_dist_in_numel:
                 break
 
         self.reuse_numel_for_step_id[sub_module_step_id] = reuse_distance_in_numel
@@ -2956,8 +3030,13 @@ class DeepSpeedZeroOptimizer_Stage3(object):
             self.optimizer_swapper.post_backward()
 
     def _partition_all_parameters(self):
-        for name, param in self.module.named_parameters(recurse=True):
-            self.param_coordinator.release_and_reset_parameter(param)
+        """Partitioning Parameters that were not partitioned usually if parameters
+        of modules whose input parameters do not require grad computation do not
+        trigger post call and will therefore will remain unpartitioned"""
+        self.param_coordinator.release_and_reset_all(self.module)
+        for param in iter_params(self.module, recurse=True):
+            if param.ds_status != ZeroParamStatus.NOT_AVAILABLE:
+                raise RuntimeError(f"{param.ds_summary()} expected to be released")
 
     def check_overflow(self, partition_gradients=True):
         self._check_overflow(partition_gradients)
@@ -3239,10 +3318,10 @@ class DeepSpeedZeroOptimizer_Stage3(object):
             self.persistent_parameters[0].partition(self.persistent_parameters)
             self.persistent_parameters[0].all_gather(self.persistent_parameters)
 
-    def save_checkpoint_prologue(self):
+    def checkpoint_event_prologue(self):
         self._partition_all_parameters()
 
-    def save_checkpoint_epilogue(self):
+    def checkpoint_event_epilogue(self):
         if len(self.persistent_parameters) > 0:
             self.persistent_parameters[0].all_gather(self.persistent_parameters)
 
