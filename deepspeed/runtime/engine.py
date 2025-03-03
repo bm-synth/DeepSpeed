@@ -1802,6 +1802,22 @@ class DeepSpeedEngine(Module):
 
         return loss
 
+    def _cast_inputs_half(self, inputs):
+        if isinstance(inputs, (list, tuple)):
+            new_inputs = []
+            for v in inputs:
+                new_inputs.append(self._cast_inputs_half(v))
+            return inputs.__class__(new_inputs)
+        elif isinstance(inputs, dict):
+            new_inputs = {}
+            for k, v in inputs:
+                new_inputs[k] = self._cast_inputs_half(v)
+            return new_inputs
+        elif hasattr(inputs, 'half'):
+            return inputs.half()
+        else:
+            return inputs
+
     def print_forward_breakdown(self, fwd_time):
         gate_time = 0.0
         moe_time = 0.0
