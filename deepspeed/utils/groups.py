@@ -344,11 +344,7 @@ def _create_expert_and_data_parallel(expert_parallel_size_, use_data_before_expe
                     _EXPERT_PARALLEL_GROUP[group_name] = group
 
 
-def _get_expert_parallel_ranks(world_size,
-                               tensor_parallel_size_,
-                               expert_parallel_size_,
-                               pipeline_parallel_size_=1,
-                               use_data_before_expert_parallel_=False):
+def _get_expert_parallel_ranks(world_size, model_parallel_size_, expert_parallel_size_):
     """Generate expert parallel and expert data parallel group ranks list.
 
         Example - E + M + D parallel
@@ -362,40 +358,21 @@ def _get_expert_parallel_ranks(world_size,
 
     Args:
         world_size (int): Distributed world size.
-        tensor_parallel_size_ (int): Tensor parallel group size.
+        model_parallel_size_ (int): Model parallel group size.
         expert_parallel_size_ (int): Expert parallel group size.
-        pipeline_parallel_size_ (int): Pipeline parallel group size
-        use_data_before_expert_parallel_ (bool): Use the D + E instead of E + D topology
+
     Returns:
         Expert parallel group ranks and Expert data parallel group ranks list.
     """
-    _ensure_divisibility(world_size, tensor_parallel_size_ * pipeline_parallel_size_)
-    dp_world_size = world_size // (tensor_parallel_size_ * pipeline_parallel_size_)
+    _ensure_divisibility(world_size, model_parallel_size_)
+    dp_world_size = world_size // model_parallel_size_
     _ensure_divisibility(dp_world_size, expert_parallel_size_)
 
     # Generate data parallel groups
     data_parallel_groups = []
-    dp_group_size = tensor_parallel_size_
-    pp_stride = world_size // pipeline_parallel_size_
-
-    if use_data_before_expert_parallel_:
-        dp_stride = world_size // expert_parallel_size_ // tensor_parallel_size_ // pipeline_parallel_size_
-        for pp_stage_start in range(0, world_size, pp_stride):
-            pp_stage_next = pp_stage_start + pp_stride
-            for i in range(dp_group_size):
-                data_parallel_groups.append(list())
-                for ds in range(dp_stride):
-                    # [0, 4, 8, 12, 16, 20, 24, 28, 2, 6, 10, 14, 18, 22, 26, 30]
-                    # [1, 5, 9, 13, 17, 21, 25, 29, 3, 7, 11, 15, 19, 23, 27, 31]
-                    data_parallel_groups[-1].extend(
-                        list(
-                            range(pp_stage_start + i + ds * tensor_parallel_size_, pp_stage_next,
-                                  dp_stride * tensor_parallel_size_)))
-    else:
-        for pp_stage_start in range(0, world_size, pp_stride):
-            pp_stage_next = pp_stage_start + pp_stride
-            for i in range(dp_group_size):
-                data_parallel_groups.append(list(range(pp_stage_start + i, pp_stage_next, dp_group_size)))
+    dp_group_size = model_parallel_size_
+    for i in range(dp_group_size):
+        data_parallel_groups.append(list(range(i, world_size, dp_group_size)))
 
     expert_parallel_groups = []
     expert_data_parallel_groups = []
@@ -413,7 +390,7 @@ def _get_expert_parallel_ranks(world_size,
     return expert_parallel_groups, expert_data_parallel_groups
 
 
-def _create_expert_data_and_model_parallel(expert_parallel_size_, mpu, use_data_before_expert_parallel_=False):
+def _create_expert_data_and_model_parallel(expert_parallel_size_, mpu):
     """
         Create expert and data parallel groups based on MPU (model parallel) group.
 
@@ -428,8 +405,8 @@ def _create_expert_data_and_model_parallel(expert_parallel_size_, mpu, use_data_
         expert_parallel_group = [0,2,4,6], [8,10,12,14]             [1,3,5,7], [9,11,13,15]
         expert_data_parallel_group = [0,8],[2,10],[4,12],[6,14],    [1,9],[3,11],[5,13],[7,15]
     """
-    assert dist.is_initialized(), "dist is not initialized"
-    tensor_parallel_size_ = bwc_tensor_model_parallel_world_size(mpu)
+    assert torch.distributed.is_initialized(), "torch distributed is not initialized"
+    model_parallel_size_ = mpu.get_model_parallel_world_size()
 
     global expert_tensor_parallel_world_size
     expert_tensor_parallel_world_size = tensor_parallel_size_
@@ -455,14 +432,14 @@ def _create_expert_data_and_model_parallel(expert_parallel_size_, mpu, use_data_
     # Need to check conditions outside the group creation loop because of the way torch.dist group creation works
     if group_name not in _EXPERT_DATA_PARALLEL_GROUP and group_name not in _EXPERT_PARALLEL_GROUP:
         expert_parallel_groups, expert_data_parallel_groups = _get_expert_parallel_ranks(
-            world_size, tensor_parallel_size_, expert_parallel_size_, pp_world_size, use_data_before_expert_parallel_)
+            world_size, model_parallel_size_, expert_parallel_size_)
         for ranks in expert_parallel_groups:
-            group = dist.new_group(ranks)
+            group = torch.distributed.new_group(ranks)
             if rank in list(ranks):
                 _EXPERT_PARALLEL_GROUP[group_name] = group
 
         for ranks in expert_data_parallel_groups:
-            group = dist.new_group(ranks)
+            group = torch.distributed.new_group(ranks)
             if rank in list(ranks):
                 _EXPERT_DATA_PARALLEL_GROUP[group_name] = group
 
