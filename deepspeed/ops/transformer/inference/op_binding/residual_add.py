@@ -30,7 +30,7 @@ class ResidualAddOp(BaseOp):
     def forward(self, hidden_state: torch.Tensor, residual: torch.Tensor, attention_output: torch.Tensor,
                 attention_bias: torch.Tensor, final_bias: torch.Tensor, add_bias: bool, residual_add: torch.Tensor):
 
-        if self.residual_add_func != None:
+        if self.residual_add_func is not None:
             if final_bias is None:
                 residual = self._vector_add(residual, hidden_state, 1.0 / self.config.mp_size)
             else:

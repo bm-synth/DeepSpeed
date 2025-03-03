@@ -80,7 +80,7 @@ def printflock(*msgs):
 
     """
     global fcntl
-    if fcntl == None:
+    if fcntl is None:
         import fcntl
 
     with open(__file__, "r") as fh:
