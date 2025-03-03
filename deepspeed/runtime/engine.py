@@ -1980,7 +1980,7 @@ class DeepSpeedEngine(Module):
     def clip_fp32_gradients(self):
         clip_grad_norm_(parameters=self.module.parameters(), max_norm=self.gradient_clipping(), mpu=self.mpu)
 
-    def _take_model_step(self, lr_kwargs, block_eigenvalue={}):
+    def _take_model_step(self, lr_kwargs):
         if self.gradient_clipping() > 0.0:
             if not (self.fp16_enabled() or self.bfloat16_enabled() or self.amp_enabled() or self.zero_optimization()):
                 self.clip_fp32_gradients()
@@ -2029,16 +2029,7 @@ class DeepSpeedEngine(Module):
         else:
             self.compression_scheduler.step()
             if self.lr_scheduler is not None:
-                try:
-                    self.lr_scheduler.step(**(lr_kwargs or {}))
-                except TypeError:
-                    # XXX Hack to work with Megatron 2.0 and DeepSpeed pipelines.
-                    # We don't currently have a way to specify lr_kwargs from
-                    # pipe_engine.train_batch()
-                    self.lr_scheduler.step(self.train_batch_size())
-
-        if self.steps_per_print() is not None:
-            report_progress = self.global_rank == 0 if self.global_rank else True
+                self.lr_scheduler.step(**(lr_kwargs or {}))
             if report_progress and (self.global_steps + 1) % self.steps_per_print() == 0:
                 self._report_progress(self.global_steps + 1)
 
@@ -2082,11 +2073,7 @@ class DeepSpeedEngine(Module):
             if self.progressive_layer_drop:
                 self.progressive_layer_drop.update_state(self.global_steps)
 
-            if (self.eigenvalue_enabled() and not self.gas_boundary_ctr % self.eigenvalue_gas_boundary_resolution()
-                    and self.quantizer.any_precision_switch()):
-                self._take_model_step(lr_kwargs, self.block_eigenvalue)
-            else:
-                self._take_model_step(lr_kwargs)
+            self._take_model_step(lr_kwargs)
 
             report_progress = self.global_rank == 0 if self.global_rank else True
 
