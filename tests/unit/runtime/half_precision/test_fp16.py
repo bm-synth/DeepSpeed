@@ -492,9 +492,13 @@ class TestAmp(DistributedTest):
     world_size = 2
 
     def test_adam_basic(self):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
-        config_dict = {"train_batch_size": 2, "steps_per_print": 1, "amp": {"enabled": True}}
+        config_dict = {
+            "train_batch_size": 2,
+            "steps_per_print": 1,
+            "amp": {
+                "enabled": True
+            }
+        }
         hidden_dim = 10
 
         model = SimpleModel(hidden_dim)
