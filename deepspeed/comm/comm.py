@@ -31,19 +31,6 @@ from .reduce_op import *
 from deepspeed.accelerator import get_accelerator
 from deepspeed.comm.ccl import CCLBackend
 
-
-class ReduceOp(Enum):
-    SUM = 0
-    PRODUCT = 1
-    MIN = 2
-    MAX = 3
-    BAND = 4
-    BOR = 5
-    BXOR = 6
-    AVG = 7
-    UNUSED = 8
-
-
 from deepspeed.utils.comms_logging import CommsLogger
 from deepspeed.utils import timer, get_caller_func
 from deepspeed.comm.backend import Backend
@@ -65,10 +52,17 @@ comms_logger = CommsLogger()
 nccl_backend = None
 mpi_backend = None
 ccl_backend = None
-hccl_backend = None
 
 # This should be set here so all rank/size information from the launcher can be propagated
 from deepspeed.comm.utils import *
+
+
+class ProcessGroup():
+
+    def __init__(self, comm_id, ranks=[]):
+        self.ranks = ranks
+        self.comm_id = comm_id
+        self.size = len(ranks)
 
 
 def _configure_using_config_file(config):
@@ -152,22 +146,19 @@ def init_deepspeed_backend(ds_backend, timeout, init_method):
     global nccl_backend
     global mpi_backend
     global ccl_backend
-    global hccl_backend
 
-    rank = int(os.getenv('RANK', '-1'))
-    size = int(os.getenv('WORLD_SIZE', '-1'))
+    rank = int(os.environ["RANK"])
+    size = int(os.environ["WORLD_SIZE"])
 
     if ds_backend == NCCL_BACKEND:
         utils.logger.debug("NCCL backend in DeepSpeed not yet implemented")
     elif ds_backend == MPI_BACKEND:
         utils.logger.debug("MPI backend in DeepSpeed not yet implemented")
     elif ds_backend == GLOO_BACKEND:
-        utils.logger.debug("Gloo backend in DeepSpeed not yet implemented")
+        utils.logger.warn("Gloo backend in DeepSpeed not yet implemented")
     elif ds_backend == CCL_BACKEND:
         ccl_backend = CCLBackend(rank=rank, world_size=size, timeout=timeout, init_method=init_method)
         utils.logger.info(f"Initialize {ds_backend} backend")
-    elif ds_backend == HCCL_BACKEND:
-        utils.logger.debug("HCCL backend in DeepSpeed not yet implemented")
     else:
         utils.logger.debug(f"DeepSpeed does not support {ds_backend} backend")
 
@@ -202,18 +193,11 @@ def is_available() -> bool:
     return True
 
 
-def set_backend(backend_name):
-    if not use_ds_backend:
-        utils.logger.error(
-            "DeepSpeed communication backend is required. Please use deepspeed.comm.init_distributed(backend, use_deepspeed=True) to use this functionality"
-        )
-        raise RuntimeError('Error: Custom DeepSpeed backend called without initializing DeepSpeed distributed.')
-
+def set_backend():
     global cdb
     global nccl_backend
     global mpi_backend
     global ccl_backend
-    global hccl_backend
 
     backend_name = get_accelerator().communication_backend_name()
 
@@ -226,9 +210,6 @@ def set_backend(backend_name):
     elif backend_name == CCL_BACKEND:
         if ccl_backend is not None and ccl_backend.is_initialized():
             cdb = ccl_backend
-    elif backend_name == HCCL_BACKEND:
-        if hccl_backend is not None and hccl_backend.is_initialized():
-            cdb = hccl_backend
 
 
 @timed_op
@@ -412,7 +393,7 @@ def scatter(tensor,
 @timed_op
 def barrier(group=None, async_op=False, device_ids=None, prof=False, log_name='barrier', debug=get_caller_func()):
     global cdb
-    return cdb.barrier(group=group, async_op=async_op, device_ids=device_ids)
+    return cdb.barrier(group=group, async_op=async_op)
 
 
 @timed_op
@@ -639,6 +620,10 @@ def init_distributed(dist_backend=None,
     if dist_init_required is None:
         dist_init_required = cdb is None or not cdb.is_initialized()
 
+    if cdb is None:
+        init_deepspeed_backend(get_accelerator().communication_backend_name(), timeout, init_method)
+        set_backend()
+        utils.logger.info(f'cdb={cdb}')
     if cdb is None and torch.distributed.is_initialized():
         # The user initialized torch.dist themselves, create cdb and short-circuit
         cdb = TorchBackend(dist_backend, timeout, init_method)

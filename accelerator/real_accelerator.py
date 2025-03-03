@@ -1,3 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+
+# DeepSpeed Team
+import os
+
 try:
     from accelerator.abstract_accelerator import DeepSpeedAccelerator as dsa1
 except ImportError as e:
@@ -41,195 +47,71 @@ def get_accelerator():
     accelerator_name = None
     ds_set_method = None
     # 1. Detect whether there is override of DeepSpeed accelerators from environment variable.
-    if "DS_ACCELERATOR" in os.environ.keys():
-        accelerator_name = os.environ["DS_ACCELERATOR"]
-        if accelerator_name == "xpu":
+    #    DS_ACCELERATOR = 'cuda'|'xpu'|'cpu'
+    if 'DS_ACCELERATOR' in os.environ.keys():
+        accelerator_name = os.environ['DS_ACCELERATOR']
+        if accelerator_name == 'xpu':
             try:
-                import intel_extension_for_pytorch as ipex
-                assert ipex._C._has_xpu(), "XPU_Accelerator requires an intel_extension_for_pytorch that supports XPU."
+                from intel_extension_for_deepspeed import XPU_Accelerator  # noqa: F401
             except ImportError as e:
                 raise ValueError(
-                    f"XPU_Accelerator requires intel_extension_for_pytorch, which is not installed on this system.")
-        elif accelerator_name == "xpu.external":
+                    f'XPU_Accelerator requires intel_extension_for_deepspeed, which is not installed on this system.')
+        elif accelerator_name == 'cpu':
             try:
-                import intel_extension_for_deepspeed  # noqa: F401 # type: ignore
+                import intel_extension_for_pytorch  # noqa: F401
             except ImportError as e:
                 raise ValueError(
-                    f"XPU_Accelerator external requires intel_extension_for_deepspeed, which is not installed on this system."
-                )
-        elif accelerator_name == "cpu":
+                    f'CPU_Accelerator requires intel_extension_for_pytorch, which is not installed on this system.')
+        elif accelerator_name == 'cuda':
             pass
-        elif accelerator_name == "npu":
-            try:
-                import torch_npu  # noqa: F401 # type: ignore
-            except ImportError as e:
-                raise ValueError(f"NPU_Accelerator requires torch_npu, which is not installed on this system.")
-            pass
-        elif accelerator_name == "sdaa":
-            try:
-                import torch_sdaa  # noqa: F401 # type: ignore
-            except ImportError as e:
-                raise ValueError(f"SDAA_Accelerator requires torch_sdaa, which is not installed on this system.")
-            pass
-        elif accelerator_name == "mps":
-            try:
-                import torch.mps
-
-                # should use torch.mps.is_available() if it exists someday but this is used as proxy
-                torch.mps.current_allocated_memory()
-            except (RuntimeError, ImportError) as e:
-                raise ValueError(f"MPS_Accelerator requires torch.mps, which is not installed on this system.")
-        elif accelerator_name == "hpu":
-            try:
-                import habana_frameworks.torch.hpu  # noqa: F401
-            except ImportError as e:
-                raise ValueError(
-                    f"HPU_Accelerator requires habana_frameworks.torch.hpu, which is not installed on this system.")
-        elif accelerator_name == "mlu":
-            try:
-                import torch_mlu  # noqa: F401
-            except ImportError as e:
-                raise ValueError(f"MLU_Accelerator requires torch_mlu, which is not installed on this system.")
-        elif accelerator_name not in SUPPORTED_ACCELERATOR_LIST:
-            raise ValueError(f'DS_ACCELERATOR must be one of {SUPPORTED_ACCELERATOR_LIST}. '
-                             f'Value "{accelerator_name}" is not supported')
-        ds_set_method = "override"
+        else:
+            raise ValueError(
+                f'DS_ACCELERATOR must be one of "cuda", "cpu", or "xpu".  Value "{accelerator_name}" is not supported')
+        ds_set_method = 'override'
 
     # 2. If no override, detect which accelerator to use automatically
-    if accelerator_name is None:
-        # We need a way to choose among different accelerator types.
-        # Currently we detect which accelerator extension is installed
-        # in the environment and use it if the installing answer is True.
-        # An alternative might be detect whether CUDA device is installed on
-        # the system but this comes with two pitfalls:
-        # 1. the system may not have torch pre-installed, so
-        #    get_accelerator().is_available() may not work.
-        # 2. Some scenario like install on login node (without CUDA device)
-        #    and run on compute node (with CUDA device) may cause mismatch
-        #    between installation time and runtime.
-
+    if accelerator_name == None:
         try:
-            from intel_extension_for_deepspeed import XPU_Accelerator  # noqa: F401,F811 # type: ignore
-            accelerator_name = "xpu.external"
+            from intel_extension_for_deepspeed import XPU_Accelerator  # noqa: F401,F811
+            accelerator_name = 'xpu'
         except ImportError as e:
-            pass
-        if accelerator_name is None:
+            # We need a way to choose between CUDA_Accelerator and CPU_Accelerator
+            # Currently we detect whether intel_etension_for_pytorch is installed
+            # in the environment and use CPU_Accelerator if the answewr is True.
+            # An alternative might be detect whether CUDA device is installed on
+            # the system but this comes with two pitfalls:
+            # 1. the system may not have torch pre-installed, so
+            #    get_accelerator().is_avaiable() may not work.
+            # 2. Some scenario like install on login node (without CUDA device)
+            #    and run on compute node (with CUDA device) may cause mismatch
+            #    between installation time and runtime.
             try:
-                import intel_extension_for_pytorch as ipex
-
-                if ipex._C._has_xpu():
-                    accelerator_name = "xpu"
+                import intel_extension_for_pytorch  # noqa: F401,F811
+                accelerator_name = 'cpu'
             except ImportError as e:
-                pass
-        if accelerator_name is None:
-            try:
-                import torch_npu  # noqa: F401,F811 # type: ignore
-
-                accelerator_name = "npu"
-            except ImportError as e:
-                pass
-        if accelerator_name is None:
-            try:
-                import torch_sdaa  # noqa: F401,F811 # type: ignore
-
-                accelerator_name = "sdaa"
-            except ImportError as e:
-                pass
-        if accelerator_name is None:
-            try:
-                import torch.mps
-
-                # should use torch.mps.is_available() if it exists someday but this is used as proxy
-                torch.mps.current_allocated_memory()
-                accelerator_name = "mps"
-            except (RuntimeError, ImportError) as e:
-                pass
-        if accelerator_name is None:
-            try:
-                import habana_frameworks.torch.hpu  # noqa: F401,F811
-
-                accelerator_name = "hpu"
-            except ImportError as e:
-                pass
-        if accelerator_name is None:
-            try:
-                import torch_mlu  # noqa: F401,F811
-
-                accelerator_name = "mlu"
-            except ImportError as e:
-                pass
-        if accelerator_name is None:
-            try:
-                import torch
-
-                # Determine if we are on a GPU or x86 CPU with torch.
-                # "torch.cuda.is_available()" provides a stronger guarantee,     #ignore-cuda
-                # ensuring that we are free from CUDA initialization errors.
-                # While "torch.cuda.device_count() > 0" check ensures that       #ignore-cuda
-                # we won't try to do any CUDA calls when no device is available
-                # For reference: https://github.com/deepspeedai/DeepSpeed/pull/6810
-                if torch.cuda.device_count() > 0 and torch.cuda.is_available():  #ignore-cuda
-                    accelerator_name = "cuda"
-            except (RuntimeError, ImportError) as e:
-                # TODO need a more decent way to detect which accelerator to use, consider using nvidia-smi command for detection
-                pass
-        if accelerator_name is None:
-            # borrow this log from PR#5084
-            if accel_logger is not None:
-                accel_logger.warning(
-                    "Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.")
-            # cpu added as catch-all when accelerator detection fails
-            accelerator_name = "cpu"
-
-        ds_set_method = "auto detect"
+                accelerator_name = 'cuda'
+        ds_set_method = 'auto detect'
 
     # 3. Set ds_accelerator accordingly
-    if accelerator_name == "cuda":
+    if accelerator_name == 'cuda':
         from .cuda_accelerator import CUDA_Accelerator
 
         ds_accelerator = CUDA_Accelerator()
-    elif accelerator_name == "cpu":
+    elif accelerator_name == 'cpu':
         from .cpu_accelerator import CPU_Accelerator
-
         ds_accelerator = CPU_Accelerator()
-    elif accelerator_name == "xpu.external":
+    elif accelerator_name == 'xpu':
         # XPU_Accelerator is already imported in detection stage
         ds_accelerator = XPU_Accelerator()
-    elif accelerator_name == "xpu":
-        from .xpu_accelerator import XPU_Accelerator
-
-        ds_accelerator = XPU_Accelerator()
-    elif accelerator_name == "npu":
-        from .npu_accelerator import NPU_Accelerator
-
-        ds_accelerator = NPU_Accelerator()
-    elif accelerator_name == "sdaa":
-        from .sdaa_accelerator import SDAA_Accelerator
-
-        ds_accelerator = SDAA_Accelerator()
-    elif accelerator_name == "mps":
-        from .mps_accelerator import MPS_Accelerator
-
-        ds_accelerator = MPS_Accelerator()
-    elif accelerator_name == 'hpu':
-        from .hpu_accelerator import HPU_Accelerator
-
-        ds_accelerator = HPU_Accelerator()
-    elif accelerator_name == 'mlu':
-        from .mlu_accelerator import MLU_Accelerator
-
-        ds_accelerator = MLU_Accelerator()
     _validate_accelerator(ds_accelerator)
-    if accel_logger is not None:
-        accel_logger.info(f"Setting ds_accelerator to {ds_accelerator._name} ({ds_set_method})")
+    print(f"Setting ds_accelerator to {ds_accelerator._name} ({ds_set_method})")
     return ds_accelerator
 
 
 def set_accelerator(accel_obj):
     global ds_accelerator
     _validate_accelerator(accel_obj)
-    if accel_logger is not None:
-        accel_logger.info(f"Setting ds_accelerator to {accel_obj._name} (model specified)")
+    print(f"Setting ds_accelerator to {accel_obj._name} (model specified)")
     ds_accelerator = accel_obj
 
 
