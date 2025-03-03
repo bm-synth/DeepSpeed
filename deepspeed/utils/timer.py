@@ -5,6 +5,7 @@
 
 import time
 import torch
+from deepspeed.utils.logging import log_dist
 
 FORWARD_MICRO_TIMER = 'fwd_microstep'
 FORWARD_GLOBAL_TIMER = 'fwd'
@@ -32,18 +33,6 @@ try:
 except ImportError:
     PSUTILS_INSTALLED = False
     pass
-
-
-class CudaEventTimer(object):
-
-    def __init__(self, start_event: get_accelerator().Event, end_event: get_accelerator().Event):
-        self.start_event = start_event
-        self.end_event = end_event
-
-    def get_elapsed_msec(self):
-        get_accelerator().current_stream().wait_event(self.end_event)
-        self.end_event.synchronize()
-        return self.start_event.elapsed_time(self.end_event)
 
 
 class SynchronizedWallClockTimer:
@@ -154,16 +143,6 @@ class SynchronizedWallClockTimer:
                 string += " | {}: {:.2f}".format(name, elapsed_time)
 
         log_dist(string, ranks=ranks or [0])
-
-    def get_mean(self, names, normalizer=1.0, reset=True):
-        """Get the mean of a group of timers."""
-        assert normalizer > 0.0
-        means = {}
-        for name in names:
-            if name in self.timers:
-                elapsed_time = (self.timers[name].mean() * 1000.0 / normalizer)
-                means[name] = elapsed_time
-        return means
 
 
 class ThroughputTimer():
