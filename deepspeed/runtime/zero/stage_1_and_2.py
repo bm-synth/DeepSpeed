@@ -306,13 +306,19 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
 
             # push this group to list before modify
             # TODO: Explore simplification that avoids the extra book-keeping by pushing the reordered group
-            trainable_parameters = []
-            for param in param_group['params']:
-                if param.requires_grad:
-                    param.grad_accum = None
-                    param.param_idx_in_group = len(trainable_parameters)
-                    trainable_parameters.append(param)
+            trainable_parameters = [
+                param for param in param_group['params'] if param.requires_grad
+            ]
             self.bit16_groups.append(trainable_parameters)
+
+            # Record padding required to align group to world size
+            if partition_id == dist.get_world_size(
+                    group=self.real_dp_process_group[i]) - 1:
+                padding = get_alignment_padding(self.bit16_groups[i],
+                                                self.partition_count[i])
+            else:
+                padding = 0
+            self.groups_padding.append(padding)
 
             # not sure why apex was cloning the weights before flattening
             # removing cloning here
