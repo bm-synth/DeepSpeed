@@ -157,12 +157,9 @@ def command_exists(cmd):
     if '|' in cmd:
         cmds = cmd.split("|")
     else:
-        cmds = [cmd]
-    valid = False
-    for cmd in cmds:
-        result = subprocess.Popen(f'type {cmd}', stdout=subprocess.PIPE, shell=True)
-        valid = valid or result.wait() == 0
-    return valid
+        safe_cmd = ["bash", "-c", f"type {cmd}"]
+        result = subprocess.Popen(safe_cmd, stdout=subprocess.PIPE)
+        return result.wait() == 0
 
 
 def op_envvar(op_name):
