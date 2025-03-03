@@ -231,7 +231,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.reduce_bucket_size = int(reduce_bucket_size)
 
         if self.reduce_scatter:
-            assert self.communication_data_type in (torch.float16, torch.bfloat16), f"ZeRO-3 supports only float16 or bfloat16 communication_data_type with reduce scatter enabled. Got: '{self.communication_data_type}'"
+            assert self.communication_data_type in (torch.float16, torch.bfloat16, torch.float32), f"ZeRO-3 supports only float16 or bfloat16 communication_data_type with reduce scatter enabled. Got: '{self.communication_data_type}'"
             assert self.gradient_predivide_factor == 1.0, "gradient_predivide_factor != 1.0 is not yet supported with ZeRO-3 with reduce scatter enabled"
             assert self.postscale_gradients, "pre-scale gradients is not yet supported with ZeRO-3 with reduce scatter enabled"
 
@@ -1261,14 +1261,36 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             event.record()
             self.__param_reduce_events.append(event)
 
-            # reduction resulting with each rank only holding the gradient partition it owns
-            # This could either be a reduce scatter or a reduce op depending on how
-            # parameters are partitionied. The method is implemented by the
-            # DeepSpeed param extensions to the pytorch parameter, so its up to
-            # the extension to define what happens here
-            params_to_reduce[0].reduce_gradients_at_owner(
-                param_list=params_to_reduce,
-                hierarchy=self.param_coordinator.hierarchy)
+    @instrument_w_nvtx
+    def __avg_scatter_grads(self, params_to_reduce: List[Parameter]) -> List[Tensor]:
+        """average gradients and scatter partitions across ranks"""
+
+        full_grads_for_rank = [p.grad for p in params_to_reduce]
+        if self.communication_data_type != self.dtype:
+            full_grads_for_rank = [
+                g.to(self.communication_data_type) for g in full_grads_for_rank
+            ]
+
+        if self.postscale_gradients and self.gradient_predivide_factor != 1.0:
+            full_grads_for_rank = [
+                g.div(self.gradient_predivide_factor) for g in full_grads_for_rank
+            ]
+
+        grad_partitions_for_rank = reduce_scatter_coalesced(full_grads_for_rank,
+                                                            self.dp_process_group)
+
+        if self.postscale_gradients and self.gradient_predivide_factor != dist.get_world_size(
+                self.dp_process_group):
+            grad_partitions_for_rank = [
+                g.mul(self.gradient_predivide_factor) for g in grad_partitions_for_rank
+            ]
+
+        if self.communication_data_type != self.dtype:
+            grad_partitions_for_rank = [
+                g.to(self.dtype) for g in grad_partitions_for_rank
+            ]
+
+        return grad_partitions_for_rank
 
     def set_grad_positions(self):
         for i, group in enumerate(self.fp16_groups):
