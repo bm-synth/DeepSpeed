@@ -24,7 +24,7 @@ def load_model_with_checkpoint(r_module,
                                ckpt_mp_size,
                                weight_quantizer=None,
                                rank=0,
-                               replace_policy=None):
+                               container=None):
     error_msgs = []
 
     def prefix_check():
@@ -217,11 +217,7 @@ def load_model_with_checkpoint(r_module,
             for n, child in module.named_children():
                 load_parameters(child, prefix + n + '.')
         else:
-            replace_policy.load_params(module,
-                                       sd[0],
-                                       weight_quantizer,
-                                       mp_replace,
-                                       prefix)
+            container.load_params(module, sd[0], weight_quantizer, mp_replace, prefix)
 
     try:
         import transformers
@@ -288,7 +284,7 @@ def load_model_with_checkpoint(r_module,
             else:
                 load_module_recursive(
                     child,
-                    prefix if (level == 0 and ckpt_type == 'pp') and replace_policy.use_load_prefix else \
+                    prefix if (level == 0 and ckpt_type == 'pp') and container.policy.use_load_prefix else \
                     prefix + name + '.',
                     level + 1)
 
