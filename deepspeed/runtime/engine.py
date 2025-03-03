@@ -1665,6 +1665,7 @@ class DeepSpeedEngine(Module):
                     zero_param_parallel_group=zero_param_parallel_group,
                     zero_quantized_weights=self.zero_quantized_weights(),
                     zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights(),
+                    zero_module_granularity_threshold=self.zero_module_granularity_threshold(),
                 )
             else:
                 log_dist(
@@ -1711,6 +1712,7 @@ class DeepSpeedEngine(Module):
                     zero_hpz_partition_size=self.zero_hpz_partition_size(),
                     zero_quantized_weights=self.zero_quantized_weights(),
                     zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights(),
+                    zero_module_granularity_threshold=self.zero_module_granularity_threshold(),
                 )
 
         else:
