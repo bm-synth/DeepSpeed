@@ -66,7 +66,7 @@ With automatic tensor parallelism, we do not need to provide the injection polic
 
 # Example Script
 
-We can observe performance improvement with automatic tensor parallelism using the [inference test suite](https://github.com/deepspeedai/DeepSpeedExamples/blob/master/inference/huggingface/text-generation/inference-test.py). This script is for testing text-generation models and includes per token latency, bandwidth, throughput and memory checks for comparison. See the [README](https://github.com/deepspeedai/DeepSpeedExamples/tree/master/inference/huggingface/text-generation#deepspeed-huggingface-text-generation-examples) for more information.
+We can observe performance improvement with automatic tensor parallelism using the [inference test suite](https://github.com/microsoft/DeepSpeedExamples/blob/master/inference/huggingface/text-generation/inference-test.py). This script is for testing text-generation models and includes per token latency, bandwidth, throughput and memory checks for comparison. See the [README](https://github.com/microsoft/DeepSpeedExamples/tree/master/inference/huggingface/text-generation#deepspeed-huggingface-text-generation-examples) for more information.
 
 
 ## Launching
@@ -108,15 +108,7 @@ The following results were collected using V100 SXM2 32GB GPUs.
 
 The following results were collected using V100 SXM2 32GB GPUs.
 
-### Max New Tokens = 50
-
-| Test       | Memory Allocated per GPU   | Max Batch Size   | Max Throughput per GPU   |
-| ---------- | -------------------------- | ---------------- | ------------------------ |
-| No TP      | 23.94 GB                   | 64               | 18.84 TFlops             |
-| 2 GPU TP   | 12.23 GB                   | 320              | 27.17 TFlops             |
-| 4 GPU TP   | 6.36 GB                    | 664              | 27.63 TFlops             |
-
-### Max New Tokens = 1024
+![OPT Throughput Graph](/assets/images/auto-tp-chart-opt-throughput.png){: .align-center}
 
 | Test       | Memory Allocated per GPU   | Max Batch Size   | Max Throughput per GPU   |
 | ---------- | -------------------------- | ---------------- | ------------------------ |
