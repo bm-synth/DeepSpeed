@@ -2631,11 +2631,8 @@ class DeepSpeedEngine(Module):
                         tag=None,
                         load_module_strict=True,
                         load_optimizer_states=True,
-                        load_lr_scheduler_states=True,
-                        load_module_only=False,
-                        custom_load_fn=None):
-        """
-        Load training checkpoint
+                        load_lr_scheduler_states=True):
+        """Load training checkpoint
 
         Arguments:
             load_dir: Required. Directory to load the checkpoint from
@@ -2659,24 +2656,11 @@ class DeepSpeedEngine(Module):
         """
 
         if tag is None:
-            latest_tag = "latest_universal" if self.load_universal_checkpoint() else "latest"
-            latest_path = os.path.join(load_dir, latest_tag)
-            if os.path.isfile(latest_path):
-                with open(latest_path, "r") as fd:
-                    tag = fd.read().strip()
-            else:
-                if self.load_universal_checkpoint():
-                    raise ValueError(f'Invalid for universal checkpoint: {latest_path} does not exist')
-                else:
-                    logger.warning(
-                        f"Unable to find latest file at {latest_path}, if trying to load latest "
-                        "checkpoint please ensure this file exists or pass an explicit checkpoint tag when loading a checkpoint."
-                    )
-                    return None, None
-
-        if self._optimizer_has_ckpt_event_prologue():
-            # Prepare for checkpoint load by ensuring all parameters are partitioned
-            self.optimizer.checkpoint_event_prologue()
+            latest_path = os.path.join(load_dir, 'latest')
+            assert os.path.isfile(latest_path), f"Unable to find latest file at {latest_path}, if trying to load latest " \
+                "checkpoint please ensure this file exists or pass an explicit checkpoint tag when loading a checkpoint."
+            with open(latest_path, 'r') as fd:
+                tag = fd.read().strip()
 
         load_path, client_states = self._load_checkpoint(load_dir,
                                                          tag,
@@ -2948,51 +2932,14 @@ class DeepSpeedEngine(Module):
         logger.info(f"successfully read {len(zero_optimizer_sd)} ZeRO state_dicts for rank {self.global_rank}")
         return zero_optimizer_sd
 
-    def _get_all_zero_checkpoints(self, load_dir, tag):
-        for bf16_mode in [self.bfloat16_enabled(), not self.bfloat16_enabled()]:
-            zero_ckpt_names = self._get_all_zero_checkpoint_names(load_dir, tag, bf16_mode)
-            if zero_ckpt_names is not None:
-                # Warn if loading checkpoint of different bit16 type
-                if bf16_mode is not self.bfloat16_enabled():
-                    checkpoint_bit16 = BFLOAT16 if bf16_mode else FP16
-                    engine_bit16 = BFLOAT16 if self.bfloat16_enabled() else FP16
-                    logger.warning(f'Loading {checkpoint_bit16} zero checkpoints into {engine_bit16} training engine')
-                return self._get_all_zero_checkpoint_state_dicts(zero_ckpt_names)
-
-        return None
-
-    def _checkpoint_tag_validation(self, tag):
-        if self.checkpoint_tag_validation_enabled():
-            s_hash = hashlib.sha1(tag.encode())
-            bhash = torch.ByteTensor([s_hash.digest()]).flatten().to(self.device)
-            max_bhash = bhash.clone()
-            min_bhash = bhash.clone()
-            dist.all_reduce(max_bhash, op=dist.ReduceOp.MAX)
-            dist.all_reduce(min_bhash, op=dist.ReduceOp.MIN)
-            valid = all(min_bhash == bhash) and all(max_bhash == bhash)
-            msg = (f"[rank={dist.get_rank()}] The checkpoint tag name '{tag}' is not consistent across "
-                   "all ranks. Including rank unique information in checkpoint tag could cause issues when "
-                   "restoring with different world sizes.")
-            if self.checkpoint_tag_validation_fail():
-                assert valid, msg
-            elif not valid:
-                logger.warning(msg)
-
-    def save_checkpoint(self, save_dir, tag=None, client_state={}, save_latest=True, exclude_frozen_parameters=False):
-        """Save training checkpoint
+    def save_checkpoint(self, save_dir, tag=None, client_state={}, save_latest=True):
+        r"""Save training checkpoint
 
         Arguments:
             save_dir: Required. Directory for saving the checkpoint
-            tag: Optional. Checkpoint tag used as a unique identifier for the checkpoint, global step is
-                used if not provided. Tag name must be the same across all ranks.
+            tag: Optional. Checkpoint tag used as a unique identifier for the checkpoint, global step is used if not provided.
             client_state: Optional. State dictionary used for saving required training states in the client code.
             save_latest: Optional. Save a file 'latest' pointing to the latest saved checkpoint.
-            exclude_frozen_parameters: Optional. Exclude frozen parameters from checkpointed state.
-        Important: all processes must call this method and not just the process with rank 0. It is
-        because each process needs to save its master weights and scheduler+optimizer states. This
-        method will hang waiting to synchronize with other processes if it's called just for the
-        process with rank 0.
-
         """
         if self._optimizer_has_ckpt_event_prologue():
             # Custom preparation for checkpoint save, if applicable
@@ -3004,22 +2951,12 @@ class DeepSpeedEngine(Module):
         # There seems to be issue creating them in parallel
 
         # Ensure save_dir directory exists
-        if rank == 0:
-            self.checkpoint_engine.makedirs(save_dir, exist_ok=True)
-        dist.barrier()
+        os.makedirs(save_dir, exist_ok=True)
 
         if tag is None:
             tag = f"global_step{self.global_steps}"
 
-        # Ensure tag is a string
-        tag = str(tag)
-        self.checkpoint_engine.create(tag)
-
-        # Ensure checkpoint tag is consistent across ranks
-        self._checkpoint_tag_validation(tag)
-
-        if self.has_moe_layers:
-            self.save_non_zero_checkpoint = False
+        if self.save_non_zero_checkpoint:
             self._create_checkpoint_file(save_dir, tag, False)
             self._save_moe_checkpoint(save_dir,
                                       tag,
@@ -3041,31 +2978,10 @@ class DeepSpeedEngine(Module):
             self._create_zero_checkpoint_files(save_dir, tag)
             self._save_zero_checkpoint(save_dir, tag)
 
-        if self.zero_nvme_offload_optimizer():
-            from shutil import copytree, disk_usage
-            offload_dir = self.optimizer.optimizer_swapper.swap_folder
-            offload_ckpt_dir = os.path.join(save_dir, tag, "offloaded_tensors")
-            _, _, free = disk_usage(save_dir)
-            logger.info(
-                f"Copying NVMe offload files from {offload_dir} to {offload_ckpt_dir}, {free / 1e9:,.2f} GB free on target filesystem..."
-            )
-            copytree(offload_dir,
-                     offload_ckpt_dir,
-                     ignore=lambda _, dir_list: list(filter(lambda x: 'gradient' in x, dir_list)),
-                     dirs_exist_ok=False)
-            _, _, free = disk_usage(save_dir)
-            logger.info(f"Copying complete! {free / 1e9:,.2f} GB free on target filesystem")
-
-        if self._optimizer_has_ckpt_event_epilogue():
-            self.optimizer.checkpoint_event_epilogue()
-
         # Save latest checkpoint tag
-        self.checkpoint_engine.commit(tag)
-        if save_latest and rank == 0:
+        if save_latest:
             with open(os.path.join(save_dir, 'latest'), 'w') as fd:
                 fd.write(tag)
-
-        dist.barrier()
 
         return True
 
