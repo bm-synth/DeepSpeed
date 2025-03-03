@@ -1676,7 +1676,7 @@ class TestZero3SwitchModes(DistributedTest):
 
 
 # Avoid overwriting client module id
-# https://github.com/microsoft/DeepSpeed/issues/6772
+# https://github.com/deepspeedai/DeepSpeed/issues/6772
 class TestZero3ClientModuleID(DistributedTest):
     world_size = 2
 
