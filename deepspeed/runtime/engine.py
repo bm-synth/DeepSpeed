@@ -972,8 +972,10 @@ class DeepSpeedEngine(Module):
 
     # Validate configuration based on command line arguments
     def _do_sanity_check(self):
-        if self.fp16_enabled() and not get_accelerator().is_fp16_supported():
-            raise ValueError("Type fp16 is not supported on your device.")
+        if not self.client_optimizer:
+            if self.optimizer_name() is not None:
+                assert self._is_supported_optimizer(self.optimizer_name()), \
+                    '{} is not a supported DeepSpeed Optimizer'.format(self.optimizer_name())
 
         if self.bfloat16_enabled() and not get_accelerator().is_bf16_supported():
             raise ValueError("Type bf16 is not supported on your device.")
@@ -2713,7 +2715,7 @@ class DeepSpeedEngine(Module):
 
         self.load_module_state_dict(state_dict=checkpoint['module'],
                                     strict=load_module_strict)
-        if not self.zero_optimization():
+        if self.optimizer is not None and not self.zero_optimization():
             if self.fp16_enabled():
                 self.optimizer.load_state_dict(
                     checkpoint['optimizer'],
