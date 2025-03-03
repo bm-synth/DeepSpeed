@@ -71,6 +71,16 @@ class noop_context(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
+# pt-1.9 deprecations
+if hasattr(torch.cuda, "memory_reserved"):
+    torch_memory_reserved = torch.cuda.memory_reserved
+else:
+    torch_memory_reserved = torch.cuda.memory_allocated
+if hasattr(torch.cuda, "max_memory_reserved"):
+    torch_max_memory_reserved = torch.cuda.max_memory_reserved
+else:
+    torch_max_memory_reserved = torch.cuda.memory_cached
+
 
 def noop_decorator(func):
     return func
@@ -740,8 +750,9 @@ def see_memory_usage(message, force=False):
 
     # Print message except when distributed but not rank 0
     logger.info(message)
-    logger.info(f"MA {round(get_accelerator().memory_allocated() / (1024 * 1024 * 1024),2 )} GB \
-        Max_MA {round(get_accelerator().max_memory_allocated() / (1024 * 1024 * 1024),2)} GB \
+    logger.info(
+        f"MA {round(torch.cuda.memory_allocated() / (1024 * 1024 * 1024),2 )} GB \
+        Max_MA {round(torch.cuda.max_memory_allocated() / (1024 * 1024 * 1024),2)} GB \
         CA {round(torch_memory_reserved() / (1024 * 1024 * 1024),2)} GB \
         Max_CA {round(torch_max_memory_reserved() / (1024 * 1024 * 1024))} GB ")
 
