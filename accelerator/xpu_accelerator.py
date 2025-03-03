@@ -9,9 +9,6 @@ import intel_extension_for_pytorch as ipex  # noqa: F401 # type: ignore
 import oneccl_bindings_for_pytorch  # noqa: F401 # type: ignore
 import functools
 
-import importlib
-import inspect
-
 
 class XPU_Accelerator(DeepSpeedAccelerator):
 
