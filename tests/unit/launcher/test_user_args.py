@@ -43,9 +43,7 @@ def cmd(user_script_fp, prompt, multi_node):
     '''I'm going to tell them "DeepSpeed is the best"'''
 ])
 @pytest.mark.parametrize("multi_node", [True, False])
-def test_user_args(cmd, multi_node):
-    if multi_node and get_accelerator().device_name() == "cpu":
-        pytest.skip("CPU accelerator does not support this test yet")
+def test_user_args(cmd):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = p.communicate()
     assert "ARG PARSE SUCCESS" in out.decode("utf-8"), f"User args not parsed correctly: {err.decode('utf-8')}"
