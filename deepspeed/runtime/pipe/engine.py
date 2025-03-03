@@ -200,6 +200,14 @@ class PipelineEngine(DeepSpeedEngine):
 
         if self._config.pipeline['activation_checkpoint_interval'] > 0:
             self.module.activation_checkpoint_interval = self._config.pipeline['activation_checkpoint_interval']
+            # set use_reentrant default to True.
+            if self._config.pipeline.get('use_reentrant') is None:
+                self._config.pipeline['use_reentrant'] = True
+            if self._config.pipeline['use_reentrant'] is False:
+                # set activation_checkpoint_func to non_reentrant_checkpoint func.
+                self.module.activation_checkpoint_func = ds_checkpointing.non_reentrant_checkpoint
+                if self.grid.get_global_rank() == 0:
+                    logger.info(f'CONFIG: activation_checkpoint_func=non_reentrant_checkpoint')
 
         self.module.checkpoint_parallel_write_pipeline = self._config.checkpoint_parallel_write_pipeline
 
@@ -683,10 +691,6 @@ class PipelineEngine(DeepSpeedEngine):
             part_input = None
             inputs = inputs[0] if len(inputs) == 1 else inputs
             self.pipe_buffers['inputs'][buffer_id] = inputs
-
-        # Zero out the gradients each time we use the tensor because only the data in
-        # tensor changes across batches
-        self._zero_grads(inputs)
 
         # inputs has no gradient because it is from a cloned tensor
         outputs = super().forward(inputs)
@@ -1221,15 +1225,6 @@ class PipelineEngine(DeepSpeedEngine):
                     BACKWARD_REDUCE_GLOBAL_TIMER,
                     STEP_GLOBAL_TIMER,
                 ])
-
-    def _zero_grads(self, inputs):
-        if isinstance(inputs, torch.Tensor):
-            if inputs.grad is not None:
-                inputs.grad.data.zero_()
-        else:
-            for t in inputs:
-                if t.grad is not None:
-                    t.grad.data.zero_()
 
     def _allocate_zeros(self, shape, **kwargs):
         """ Allocate a tensor of zeros on the engine's device.
