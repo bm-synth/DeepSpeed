@@ -322,13 +322,7 @@ class PipelineEngine(DeepSpeedEngine):
         self.first_output_send = True
         self.pipe_recv_buf = None
         self.grad_layer = None
-        self._grad_layer_buf = []
         self.meta_buffer = None
-
-        self.pipe_partition_input_meta_cache = None
-        self.pipe_partition_output_meta_cache = None
-        self.pipe_partition_grad_meta_cache = None
-        self.grad_partition_grad_layer_meta_cache = None
 
     def train_batch(self, data_iter=None):
         """Progress the pipeline to train the next batch of data. The engine will ingest
@@ -358,17 +352,17 @@ class PipelineEngine(DeepSpeedEngine):
             raise RuntimeError(f'train_batch() requires gradients enabled. Use eval_batch() instead.')
 
         # Curriculum learning could change activation shape
-        if self.curriculum_enabled_legacy():
-            new_difficulty = self.curriculum_scheduler_legacy.update_difficulty( \
+        if self.curriculum_enabled():
+            new_difficulty = self.curriculum_scheduler.update_difficulty( \
                 self.global_steps + 1)
-            if self.global_steps == 0 or self.curriculum_scheduler_legacy.first_step:
+            if self.global_steps == 0 or self.curriculum_scheduler.first_step:
                 self.reset_activation_shape()
-                self.curriculum_scheduler_legacy.first_step = False
-            elif new_difficulty != self.curriculum_scheduler_legacy.get_difficulty( \
+                self.curriculum_scheduler.first_step = False
+            elif new_difficulty != self.curriculum_scheduler.get_difficulty( \
                 self.global_steps):
                 self.reset_activation_shape()
 
-        if data_iter is not None:
+        if data_iter:
             self.set_dataiterator(data_iter)
 
         self.module.train()
