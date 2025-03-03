@@ -3103,27 +3103,19 @@ class DeepSpeedEngine(Module):
         # then instead just returns None.
         self._curr_ckpt_path = os.path.join(save_dir, tag)
 
-        state = dict(module=module,
-                     buffer_names=self._get_buffer_names(),
-                     optimizer=self.optimizer.state_dict() if self.optimizer and not zero_optimizer_state else None,
-                     param_shapes=self._get_zero_param_shapes() if self.optimizer and zero_optimizer_state else None,
-                     frozen_param_shapes=self._get_zero_frozen_param_attributes(self._get_param_shape_func)
-                     if save_frozen_param else None,
-                     shared_params=self._get_shared_params() if self.optimizer and zero_optimizer_state else None,
-                     frozen_param_fragments=self._get_zero_frozen_param_attributes(self._get_param_fragment_func)
-                     if save_frozen_param else None,
-                     lr_scheduler=self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None,
-                     data_sampler=self.training_dataloader.data_sampler.state_dict() if
-                     (self.training_dataloader is not None and self.curriculum_learning_enabled()) else None,
-                     random_ltd=self.random_ltd_scheduler.state_dict() if self.random_ltd_enabled() else None,
-                     sparse_tensor_module_names=self.sparse_tensor_module_names,
-                     skipped_steps=self.skipped_steps,
-                     global_steps=self.global_steps,
-                     global_samples=self.global_samples,
-                     dp_world_size=self.seq_dp_world_size,
-                     mp_world_size=self.mp_world_size,
-                     ds_config=self.config,
-                     ds_version=version)
+        state = dict(
+            module=self.module_state_dict(),
+            optimizer=self.optimizer.state_dict()
+            if self.optimizer and not self.zero_optimization() else None,
+            lr_scheduler=self.lr_scheduler.state_dict()
+            if self.lr_scheduler is not None else None,
+            csr_tensor_module_names=self.csr_tensor_module_names,
+            skipped_steps=self.skipped_steps,
+            global_steps=self.global_steps,
+            global_samples=self.global_samples,
+            dp_world_size=self.dp_world_size,
+            mp_world_size=self.mp_world_size,
+        )
         state.update(client_state)
 
         if self.save_non_zero_checkpoint:

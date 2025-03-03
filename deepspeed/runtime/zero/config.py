@@ -21,7 +21,16 @@ class DeepSpeedZeroConfig(DeepSpeedConfigObject):
         self.overlap_comm = None
         self.load_from_fp32_weights = None
         self.cpu_offload = None
-        self.elastic_checkpoint = None
+        self.cpu_offload_params = None
+        self.cpu_offload_use_pin_memory = None
+        self.sub_group_size = None
+
+        #Stage3 Specific Parameters
+        self.prefetch_bucket_size = None
+        self.param_persistence_threshold = None
+        self.max_live_parameters = None
+        self.max_reuse_distance = None
+        self.gather_fp16_weights_on_model_save = None
 
         if ZERO_OPTIMIZATION in param_dict.keys():
             zero_config_dict = param_dict[ZERO_OPTIMIZATION]
