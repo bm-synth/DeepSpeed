@@ -160,8 +160,7 @@ overview](/features/) for descriptions and usage.
   * Efficient and robust compressed training
   * Up to 2.5x convergence speedup for pre-training
 * [Performance Analysis and Debugging](https://www.deepspeed.ai/features/#performance-analysis-and-debugging)
-
-## DeepSpeed on Azure
+* [Mixture of Experts (MoE)](https://www.deepspeed.ai/tutorials/mixture-of-experts/)
 
 # Contributing
 DeepSpeed welcomes your contributions! Please see our
