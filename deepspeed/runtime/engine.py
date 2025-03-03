@@ -211,6 +211,8 @@ class DeepSpeedEngine(Module):
 
         self._set_distributed_vars(args)
 
+        dist.configure(self._config)
+
         self.monitor = MonitorMaster(self._config.monitor_config)
 
         see_memory_usage(

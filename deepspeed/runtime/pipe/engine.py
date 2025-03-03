@@ -12,9 +12,7 @@ import torch
 from deepspeed import comm as dist
 
 from deepspeed.utils import logger
-from deepspeed.utils.timer import ThroughputTimer
-from deepspeed.accelerator import get_accelerator
-from deepspeed.runtime.bf16_optimizer import BF16_Optimizer
+from deepspeed.utils.timer import SynchronizedWallClockTimer, ThroughputTimer
 
 from ..engine import DeepSpeedEngine, MEMORY_OPT_ALLREDUCE_SIZE
 from deepspeed.utils.timer import FORWARD_MICRO_TIMER, FORWARD_GLOBAL_TIMER, BACKWARD_MICRO_TIMER, \

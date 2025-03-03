@@ -124,6 +124,7 @@ class TorchBackend(Backend):
             torch.distributed.init_process_group(backend,
                                                  timeout=timeout,
                                                  init_method=init_method)
+        self.using_mpi = torch.distributed.get_backend() == 'mpi'
 
     @classmethod
     @disable_compiler_collective
@@ -274,9 +275,27 @@ class TorchBackend(Backend):
                                                 group=group,
                                                 async_op=async_op)
         else:
-            utils.logger.warning("unable to find torch.distributed.reduce_scatter_tensor. will fall back to "
-                                 "torch.distributed.reduce_scatter which will result in suboptimal performance. "
-                                 "please consider upgrading your pytorch installation.")
+            utils.logger.warning(
+                "unable to find torch.distributed._all_gather_base. will fall back to "
+                "torch.distributed.reduce_scatter which will result in suboptimal performance. "
+                "please consider upgrading your pytorch installation.")
+            pass
+
+    def reduce_scatter_base(self,
+                            output_tensor,
+                            input_tensor,
+                            group=None,
+                            async_op=False):
+        if self.has_reduce_scatter_base:
+            return torch.distributed._reduce_scatter_base(output_tensor,
+                                                          input_tensor,
+                                                          group=group,
+                                                          async_op=async_op)
+        else:
+            utils.logger.warning(
+                "unable to find torch.distributed._reduce_scatter_base. will fall back to "
+                "torch.distributed.reduce_scatter which will result in suboptimal performance. "
+                "please consider upgrading your pytorch installation.")
             pass
 
     @disable_compiler_collective

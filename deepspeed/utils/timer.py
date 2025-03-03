@@ -7,18 +7,6 @@ import time
 import torch
 from deepspeed.utils.logging import log_dist
 
-FORWARD_MICRO_TIMER = 'fwd_microstep'
-FORWARD_GLOBAL_TIMER = 'fwd'
-BACKWARD_MICRO_TIMER = 'bwd_microstep'
-BACKWARD_GLOBAL_TIMER = 'bwd'
-BACKWARD_INNER_MICRO_TIMER = 'bwd_inner_microstep'
-BACKWARD_INNER_GLOBAL_TIMER = 'bwd_inner'
-BACKWARD_REDUCE_MICRO_TIMER = 'bwd_allreduce_microstep'
-BACKWARD_REDUCE_GLOBAL_TIMER = 'bwd_allreduce'
-STEP_MICRO_TIMER = 'step_microstep'
-STEP_GLOBAL_TIMER = 'step'
-TIME_EPSILON = 1e-6
-
 try:
     import psutil
 
@@ -140,14 +128,18 @@ class SynchronizedWallClockTimer:
         log_dist(string, ranks=ranks or [0])
 
 
-class ThroughputTimer():
-    def __init__(self,
-                 batch_size,
-                 num_workers,
-                 start_step=2,
-                 steps_per_output=50,
-                 monitor_memory=False,
-                 logging_fn=None):
+
+class ThroughputTimer:
+    def __init__(
+        self,
+        batch_size,
+        num_workers,
+        start_step=2,
+        steps_per_output=50,
+        monitor_memory=False,
+        logging_fn=None,
+    ):
+        from deepspeed.utils import logger
         self.start_time = 0
         self.end_time = 0
         self.started = False

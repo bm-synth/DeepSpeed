@@ -54,58 +54,11 @@ zero_init_context = 0
 top_level_context = None
 
 
-class NoGatherHandle:
-
-    def __init__(self, param: Parameter) -> None:
-        if param.ds_status != ZeroParamStatus.INFLIGHT:
-            raise RuntimeError(f"expected param {param.ds_summary()} to be available")
-
-        if hasattr(param.ds_tensor, "ds_quant_scale"):
-            param.data = Init.quantizer_module.dequantize(param.ds_tensor.data, param.ds_tensor.ds_quant_scale).to(
-                device=get_accelerator().current_device_name(), non_blocking=True).view(param.ds_shape)
-        else:
-            param.data = param.ds_tensor.data.to(device=get_accelerator().current_device_name(),
-                                                 non_blocking=True).view(param.ds_shape)
-        self.__param = param
-
-    def wait(self, **kwargs) -> None:
-        if not get_accelerator().resolves_data_dependency():
-            get_accelerator().current_stream().synchronize()
-        self.__param.ds_status = ZeroParamStatus.AVAILABLE
-
-
-class NoGatherCoalescedHandle:
-
-    def __init__(self, params: List[Parameter]) -> None:
-        self.__params = params
-        self.__complete = False
-
-        for param in self.__params:
-            if param.ds_status != ZeroParamStatus.INFLIGHT:
-                raise RuntimeError(f"expected param {param.ds_summary()} to not be available")
-            if hasattr(param.ds_tensor, "ds_quant_scale"):
-                param.data = Init.quantizer_module.dequantize(param.ds_tensor.data, param.ds_tensor.ds_quant_scale).to(
-                    device=get_accelerator().current_device_name(), non_blocking=True).view(param.ds_shape)
-            else:
-                param.data = param.ds_tensor.data.to(device=get_accelerator().current_device_name(),
-                                                     non_blocking=True).view(param.ds_shape)
-
-    @instrument_w_nvtx
-    def wait(self, **kwargs) -> None:
-        if self.__complete:
-            return
-
-        if not get_accelerator().resolves_data_dependency():
-            get_accelerator().current_stream().synchronize()
-        for param in self.__params:
-            assert param.ds_status == ZeroParamStatus.INFLIGHT, f"expected param {param.ds_summary()} to be inflight"
-            param.ds_status = ZeroParamStatus.AVAILABLE
-
-        self.__complete = True
-
-
 def _dist_allgather_fn(input_tensor: Tensor, output_tensor: Tensor, group=None):
-    return instrument_w_nvtx(dist.allgather_fn)(output_tensor, input_tensor, group=group, async_op=True)
+    return instrument_w_nvtx(dist.allgather_fn)(output_tensor,
+                                                input_tensor,
+                                                group=group,
+                                                async_op=True)
 
 
 def print_rank_0(message, debug=False, force=False):
@@ -1296,39 +1249,15 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                     device=get_accelerator().current_device_name(),
                     requires_grad=False,
                 )
-                if not quantize:
-                    handles = _dist_allgather_fn(
-                        param_ds_tensor.to(get_accelerator().current_device_name()),
-                        param_buffer,
-                        ds_process_group,
-                    )
-                    param.data = param_buffer.narrow(0, 0, param.ds_numel).view(param.ds_shape).to(param.device)
-                    return AllGatherHandle(handles, param)
-                else:
-                    if hasattr(param_ds_tensor, "ds_quant_scale"):
-                        scales = param_ds_tensor.ds_quant_scale
-                        quantized_param = param_ds_tensor.data
-                    else:
-                        quantized_param, scales = self.quantizer_module.quantize(param_ds_tensor)
-                    handle = _dist_allgather_fn(quantized_param.to(get_accelerator().current_device_name()),
-                                                param_buffer, ds_process_group)
-
-                    quant_scale_buffer = torch.empty(
-                        scales.numel() * world_size,
-                        dtype=scales.dtype,
-                        device=get_accelerator().current_device_name(),
-                        requires_grad=False,
-                    )
-                    quant_handle = _dist_allgather_fn(scales.to(get_accelerator().current_device_name()),
-                                                      quant_scale_buffer, ds_process_group)
-                    quant_info = QuantizationInfo()
-                    quant_info.quantized_param = param_buffer.narrow(0, 0, param.ds_numel).view(param.ds_shape).to(
-                        param.device)
-                    quant_info.backend = self.quantizer_module
-                    quant_info.quant_handle = quant_handle
-                    quant_info.scale_buffer = quant_scale_buffer
-                    return AllGatherHandle(handle, param, quantization=quant_info)
-
+                handle = _dist_allgather_fn(
+                    param.ds_tensor.to(torch.cuda.current_device()),
+                    param_buffer,
+                    self.ds_process_group)
+                param.data = param_buffer.narrow(0,
+                                                 0,
+                                                 param.ds_numel).view(param.ds_shape).to(
+                                                     param.device)
+                return AllGatherHandle(handle, param)
             else:
                 if self.use_all_reduce_for_fetch_params and not quantize and not use_secondary_tensor:
                     # Use all_reduce instead of all_gather to fetch the module params

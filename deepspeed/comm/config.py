@@ -1,14 +1,23 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
+"""
+Copyright (c) Microsoft Corporation
+Licensed under the MIT license.
+"""
 
-# DeepSpeed Team
-
-from deepspeed.runtime.config_utils import DeepSpeedConfigModel
-
+from typing import Optional
+from deepspeed.runtime.config_utils import get_scalar_param
+from pydantic import BaseModel, validator, ValidationError, create_model
 from .constants import *
 
 
-class CommsLoggerConfig(DeepSpeedConfigModel):
+class CommsConfig(BaseModel):
+    class Config:
+        validate_all = True
+        validate_assignment = True
+        use_enum_values = True
+        extra = 'forbid'
+
+
+class CommsLoggerConfig(CommsConfig):
     enabled: bool = COMMS_LOGGER_ENABLED_DEFAULT
     prof_all: bool = COMMS_LOGGER_PROF_ALL_DEFAULT
     prof_ops: list = COMMS_LOGGER_PROF_OPS_DEFAULT
@@ -17,7 +26,6 @@ class CommsLoggerConfig(DeepSpeedConfigModel):
 
 
 class DeepSpeedCommsConfig:
-
     def __init__(self, ds_config):
         self.comms_logger_enabled = 'comms_logger' in ds_config
 
