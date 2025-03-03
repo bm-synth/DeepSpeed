@@ -31,10 +31,10 @@ void CheckCudaErrorAux(const char* file, unsigned line)
 
 namespace cg = cooperative_groups;
 
-template <typename T, int iterations>
-__global__ void attn_softmax_v2(T* vals,
-                                T* mask,
-                                T* alibi,
+template <int iterations>
+__global__ void attn_softmax_v2(__half* vals,
+                                __half* mask,
+                                __half* alibi,
                                 float layer_scale,
                                 bool triangular,
                                 bool recompute,
@@ -102,87 +102,73 @@ __global__ void attn_softmax_v2(T* vals,
                                 ((data_id + reduceWidth * 3) > window_stride);
 
             if (mask && alibi) {
-                low_data[i].x = low_x_check
-                                    ? conversion::to<float>(vals[data_id]) * layer_scale +
-                                          (conversion::to<float>(alibi[data_id + alibi_offset])) +
-                                          (conversion::to<float>(mask[data_id + mask_offset]))
-                                    : minus_infinity;
-                low_data[i].y =
-                    low_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth]) * layer_scale +
-                              (conversion::to<float>(alibi[data_id + alibi_offset + reduceWidth])) +
-                              (conversion::to<float>(mask[data_id + mask_offset + reduceWidth]))
-                        : minus_infinity;
-                high_data[i].x =
-                    high_x_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 2]) * layer_scale +
-                              (conversion::to<float>(
-                                  alibi[data_id + alibi_offset + reduceWidth * 2])) +
-                              (conversion::to<float>(mask[data_id + mask_offset + reduceWidth * 2]))
-                        : minus_infinity;
-                high_data[i].y =
-                    high_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 3]) * layer_scale +
-                              (conversion::to<float>(
-                                  alibi[data_id + alibi_offset + reduceWidth * 3])) +
-                              (conversion::to<float>(mask[data_id + mask_offset + reduceWidth * 3]))
-                        : minus_infinity;
-            } else if (mask) {
-                low_data[i].x = low_x_check
-                                    ? conversion::to<float>(vals[data_id]) * layer_scale +
-                                          (conversion::to<float>(mask[data_id + mask_offset]))
-                                    : minus_infinity;
-                low_data[i].y =
-                    low_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth]) * layer_scale +
-                              (conversion::to<float>(mask[data_id + mask_offset + reduceWidth]))
-                        : minus_infinity;
-                high_data[i].x =
-                    high_x_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 2]) * layer_scale +
-                              (conversion::to<float>(mask[data_id + mask_offset + reduceWidth * 2]))
-                        : minus_infinity;
-                high_data[i].y =
-                    high_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 3]) * layer_scale +
-                              (conversion::to<float>(mask[data_id + mask_offset + reduceWidth * 3]))
-                        : minus_infinity;
-            } else if (alibi) {
-                low_data[i].x = low_x_check
-                                    ? conversion::to<float>(vals[data_id]) * layer_scale +
-                                          (conversion::to<float>(alibi[data_id + alibi_offset]))
-                                    : minus_infinity;
-                low_data[i].y =
-                    low_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth]) * layer_scale +
-                              (conversion::to<float>(alibi[data_id + alibi_offset + reduceWidth]))
-                        : minus_infinity;
-                high_data[i].x =
-                    high_x_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 2]) * layer_scale +
-                              (conversion::to<float>(
-                                  alibi[data_id + alibi_offset + reduceWidth * 2]))
-                        : minus_infinity;
-                high_data[i].y =
-                    high_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 3]) * layer_scale +
-                              (conversion::to<float>(
-                                  alibi[data_id + alibi_offset + reduceWidth * 3]))
-                        : minus_infinity;
-            } else {
-                low_data[i].x = low_x_check ? conversion::to<float>(vals[data_id]) * layer_scale
+                low_data[i].x = low_x_check ? __half2float(vals[data_id]) * layer_scale +
+                                                  (__half2float(alibi[data_id + alibi_offset])) +
+                                                  (__half2float(mask[data_id + mask_offset]))
                                             : minus_infinity;
                 low_data[i].y =
-                    low_y_check ? conversion::to<float>(vals[data_id + reduceWidth]) * layer_scale
+                    low_y_check ? __half2float(vals[data_id + reduceWidth]) * layer_scale +
+                                      (__half2float(alibi[data_id + alibi_offset + reduceWidth])) +
+                                      (__half2float(mask[data_id + mask_offset + reduceWidth]))
                                 : minus_infinity;
                 high_data[i].x =
                     high_x_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 2]) * layer_scale
+                        ? __half2float(vals[data_id + reduceWidth * 2]) * layer_scale +
+                              (__half2float(alibi[data_id + alibi_offset + reduceWidth * 2])) +
+                              (__half2float(mask[data_id + mask_offset + reduceWidth * 2]))
                         : minus_infinity;
                 high_data[i].y =
                     high_y_check
-                        ? conversion::to<float>(vals[data_id + reduceWidth * 3]) * layer_scale
+                        ? __half2float(vals[data_id + reduceWidth * 3]) * layer_scale +
+                              (__half2float(alibi[data_id + alibi_offset + reduceWidth * 3])) +
+                              (__half2float(mask[data_id + mask_offset + reduceWidth * 3]))
                         : minus_infinity;
+            } else if (mask) {
+                low_data[i].x = low_x_check ? __half2float(vals[data_id]) * layer_scale +
+                                                  (__half2float(mask[data_id + mask_offset]))
+                                            : minus_infinity;
+                low_data[i].y = low_y_check
+                                    ? __half2float(vals[data_id + reduceWidth]) * layer_scale +
+                                          (__half2float(mask[data_id + mask_offset + reduceWidth]))
+                                    : minus_infinity;
+                high_data[i].x =
+                    high_x_check ? __half2float(vals[data_id + reduceWidth * 2]) * layer_scale +
+                                       (__half2float(mask[data_id + mask_offset + reduceWidth * 2]))
+                                 : minus_infinity;
+                high_data[i].y =
+                    high_y_check ? __half2float(vals[data_id + reduceWidth * 3]) * layer_scale +
+                                       (__half2float(mask[data_id + mask_offset + reduceWidth * 3]))
+                                 : minus_infinity;
+            } else if (alibi) {
+                low_data[i].x = low_x_check ? __half2float(vals[data_id]) * layer_scale +
+                                                  (__half2float(alibi[data_id + alibi_offset]))
+                                            : minus_infinity;
+                low_data[i].y =
+                    low_y_check ? __half2float(vals[data_id + reduceWidth]) * layer_scale +
+                                      (__half2float(alibi[data_id + alibi_offset + reduceWidth]))
+                                : minus_infinity;
+                high_data[i].x =
+                    high_x_check
+                        ? __half2float(vals[data_id + reduceWidth * 2]) * layer_scale +
+                              (__half2float(alibi[data_id + alibi_offset + reduceWidth * 2]))
+                        : minus_infinity;
+                high_data[i].y =
+                    high_y_check
+                        ? __half2float(vals[data_id + reduceWidth * 3]) * layer_scale +
+                              (__half2float(alibi[data_id + alibi_offset + reduceWidth * 3]))
+                        : minus_infinity;
+            } else {
+                low_data[i].x = low_x_check ? __half2float(vals[data_id]) * layer_scale
+                                            : minus_infinity;
+                low_data[i].y = low_y_check
+                                    ? __half2float(vals[data_id + reduceWidth]) * layer_scale
+                                    : minus_infinity;
+                high_data[i].x = high_x_check
+                                     ? __half2float(vals[data_id + reduceWidth * 2]) * layer_scale
+                                     : minus_infinity;
+                high_data[i].y = high_y_check
+                                     ? __half2float(vals[data_id + reduceWidth * 3]) * layer_scale
+                                     : minus_infinity;
             }
 
             // if(lane == 0) printf("%f , %d, %d \n", low_data[i].x, data_id, seq_id);
@@ -240,13 +226,13 @@ __global__ void attn_softmax_v2(T* vals,
         for (int i = 0; i < iterations; i++) {
             int data_id = i * (reduceWidth << 2) + (seq_lane);
             if (data_id < sequence_length) {
-                vals[data_id] = conversion::to<T>(low_data[i].x / sum);
+                vals[data_id] = __float2half(low_data[i].x / sum);
                 if ((data_id + reduceWidth) < sequence_length)
-                    vals[data_id + reduceWidth] = conversion::to<T>(low_data[i].y / sum);
+                    vals[data_id + reduceWidth] = __float2half(low_data[i].y / sum);
                 if ((data_id + reduceWidth * 2) < sequence_length)
-                    vals[data_id + reduceWidth * 2] = conversion::to<T>(high_data[i].x / sum);
+                    vals[data_id + reduceWidth * 2] = __float2half(high_data[i].x / sum);
                 if ((data_id + reduceWidth * 3) < sequence_length)
-                    vals[data_id + reduceWidth * 3] = conversion::to<T>(high_data[i].y / sum);
+                    vals[data_id + reduceWidth * 3] = __float2half(high_data[i].y / sum);
             }
         }
     }
@@ -326,35 +312,9 @@ __global__ void attn_softmax_v2(float* vals,
                 data[i].z = z_check ? vals[data_id + reduceWidth * 2] +
                                           attn_mask[data_id + mask_offset + reduceWidth * 2]
                                     : minus_infinity;
-                    if (attn_mask) {
-                        data[i].x += attn_mask[data_id + mask_offset];
-                        data[i].y += attn_mask[data_id + mask_offset + 1];
-                        data[i].z += attn_mask[data_id + mask_offset + 2];
-                        data[i].w += attn_mask[data_id + mask_offset + 3];
-                    }
-                } else {
-                    data[i].x = data_id > window_stride ? vals[data_id] : minus_infinity;
-                    data[i].y = (((!triangular || (data_id + 1) <= seq_id)) &&
-                                 (data_id + 1) > window_stride && (data_id + 1) < sequence_length)
-                                    ? (vals[data_id + 1])
+                data[i].w = w_check ? vals[data_id + reduceWidth * 3] +
+                                          attn_mask[data_id + mask_offset + reduceWidth * 3]
                                     : minus_infinity;
-                    data[i].z = (((!triangular || (data_id + 2) <= seq_id)) &&
-                                 (data_id + 2) > window_stride && (data_id + 2) < sequence_length)
-                                    ? (vals[data_id + 2])
-                                    : minus_infinity;
-                    data[i].w = minus_infinity;
-                    if (attn_mask) {
-                        data[i].x += attn_mask[data_id + mask_offset];
-                        if ((data_id + 1) < sequence_length)
-                            data[i].y += attn_mask[data_id + mask_offset + 1];
-                        if ((data_id + 2) < sequence_length)
-                            data[i].z += attn_mask[data_id + mask_offset + 2];
-                    }
-                }
-                max_val = (data[i].x > max_val ? data[i].x : max_val);
-                max_val = (data[i].y > max_val ? data[i].y : max_val);
-                max_val = (data[i].z > max_val ? data[i].z : max_val);
-                max_val = (data[i].w > max_val ? data[i].w : max_val);
             } else {
                 data[i].x = x_check ? vals[data_id] : minus_infinity;
                 data[i].y = y_check ? vals[data_id + reduceWidth] : minus_infinity;
@@ -430,23 +390,23 @@ __global__ void attn_softmax_v2(float* vals,
     }
 }
 
-#define LAUNCH_ATTN_SOFTMAX_V2(iterations)                                      \
-    attn_softmax_v2<T, iterations><<<grid, block, 0, stream>>>(vals,            \
-                                                               mask,            \
-                                                               alibi,           \
-                                                               layer_scale,     \
-                                                               triangular,      \
-                                                               recompute,       \
-                                                               local_attention, \
-                                                               window_size,     \
-                                                               total_count,     \
-                                                               heads,           \
-                                                               sequence_length, \
-                                                               num_seq,         \
-                                                               head_offset,     \
-                                                               mask_stride,     \
-                                                               mp_size,         \
-                                                               reduce_width);
+#define LAUNCH_ATTN_SOFTMAX_V2(iterations)                                   \
+    attn_softmax_v2<iterations><<<grid, block, 0, stream>>>(vals,            \
+                                                            mask,            \
+                                                            alibi,           \
+                                                            layer_scale,     \
+                                                            triangular,      \
+                                                            recompute,       \
+                                                            local_attention, \
+                                                            window_size,     \
+                                                            total_count,     \
+                                                            heads,           \
+                                                            sequence_length, \
+                                                            num_seq,         \
+                                                            head_offset,     \
+                                                            mask_stride,     \
+                                                            mp_size,         \
+                                                            reduce_width);
 
 template <typename T>
 void launch_attn_softmax_v2(T* vals,
@@ -493,25 +453,23 @@ void launch_attn_softmax_v2(T* vals,
     dim3 grid((total_count + partitions - 1) / partitions);
     dim3 block(attn_threads);
 
-    if (sequence_length <= 32768)
-        attn_softmax_v2<<<grid, block, 0, stream>>>(vals,
-                                                    mask,
-                                                    alibi,
-                                                    layer_scale,
-                                                    triangular,
-                                                    recompute,
-                                                    local_attention,
-                                                    window_size,
-                                                    total_count,
-                                                    heads,
-                                                    sequence_length,
-                                                    num_seq,
-                                                    head_offset,
-                                                    mask_stride,
-                                                    mp_size,
-                                                    iterations,
-                                                    reduce_width);
-    else
+    if (sequence_length <= 32768) {
+        if (iterations == 1) {
+            LAUNCH_ATTN_SOFTMAX_V2(1);
+        } else if (iterations == 2) {
+            LAUNCH_ATTN_SOFTMAX_V2(2);
+        } else if (iterations == 4) {
+            LAUNCH_ATTN_SOFTMAX_V2(4);
+        } else if (iterations == 8) {
+            LAUNCH_ATTN_SOFTMAX_V2(8);
+        } else if (iterations == 16) {
+            LAUNCH_ATTN_SOFTMAX_V2(16);
+        } else if (iterations == 32) {
+            LAUNCH_ATTN_SOFTMAX_V2(32);
+        } else if (iterations == 64) {
+            LAUNCH_ATTN_SOFTMAX_V2(64);
+        }
+    } else
         throw std::runtime_error("Unsupport Seq_Length!");
 }
 
