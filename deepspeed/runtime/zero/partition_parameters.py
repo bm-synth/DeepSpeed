@@ -841,10 +841,6 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             See :meth:`deepspeed.init_distributed` for more information.
 
         .. note::
-            Initializes ``deepspeed.comm`` if it has not already been done so.
-            See :meth:`deepspeed.init_distributed` for more information.
-
-        .. note::
             Only applicable to training with ZeRO-3.
 
         Examples
