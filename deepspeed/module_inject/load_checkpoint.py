@@ -15,6 +15,7 @@ from .layers import LinearLayer, Normalize, EmbeddingLayer, OPTEmbedding
 import torch
 import gc
 from deepspeed.accelerator import get_accelerator
+import re
 
 
 def load_model_with_checkpoint(r_module,
@@ -28,13 +29,9 @@ def load_model_with_checkpoint(r_module,
     error_msgs = []
 
     def prefix_check():
-        # if keys start with 'model.' or 'transformer.', don't skip level 0 prefix
+        # if keys start with 'model.', don't skip level 0 prefix
         for key in sd[0].keys():
-            # OPT models
             if re.match("^model[.]", key):
-                return False
-            # BLOOM models
-            if re.match("^transformer[.]", key):
                 return False
         return True
 
@@ -284,7 +281,7 @@ def load_model_with_checkpoint(r_module,
             else:
                 load_module_recursive(
                     child,
-                    prefix if (level == 0 and ckpt_type == 'pp') and container.policy.use_load_prefix else \
+                    prefix if (level == 0 and ckpt_type == 'pp') and skip_level_0_prefix else \
                     prefix + name + '.',
                     level + 1)
 
