@@ -679,8 +679,11 @@ class LocalSlidingWindowSparsityConfig(SparsityConfig):
     """Configuration class to store `Local Sliding Window` sparsity configuration - a purely-local sliding window attention.
     This class extends parent class of `SparsityConfig` and customizes it for `Local` sparsity.
     """
-
-    def __init__(self, num_heads, block=16, num_sliding_window_blocks=3, attention='unidirectional'):
+    def __init__(self,
+                 num_heads,
+                 block=16,
+                 num_sliding_window_blocks=3,
+                 attention='unidirectional'):
         """Initialize the Local Sliding Window Sparsity Pattern Config.
         For usage example please see, TODO DeepSpeed Sparse Transformer Tutorial
         Arguments:
@@ -706,13 +709,14 @@ class LocalSlidingWindowSparsityConfig(SparsityConfig):
         num_blocks = layout.shape[1]
         if (num_blocks < self.num_sliding_window_blocks):
             raise ValueError(
-                f'Number of sliding window blocks, {self.num_sliding_window_blocks}, must be smaller than overall number of blocks in a row, {num_blocks}!'
+                f'Number of sliding window blocks, {self.num_sliding_window_blocks}, must be smaller than overal number of blocks in a row, {num_blocks}!'
             )
 
         w = self.num_sliding_window_blocks // 2
         for row in range(0, num_blocks):
             start = max(0, row - w)
-            end = min(row + w + 1, num_blocks) if self.attention == "bidirectional" else row + 1
+            end = min(row + w + 1,
+                      num_blocks) if self.attention == "bidirectional" else row + 1
             layout[h, row, start:end] = 1
         return layout
 
