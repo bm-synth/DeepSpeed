@@ -680,23 +680,16 @@ class PartitionedTensor:
         # Allocate the full tensor as a flat buffer.
         full_numel = prod(self.full_size())
         flat_tensor = torch.zeros([full_numel], dtype=self.local_data.dtype, device=device)
-
-        # Prepare all-gather buffer
-        partition_tensors = []
-        for part_id in range(self.num_parts):
-            part_size = self.partition[part_id + 1] - self.partition[part_id]
-            buf = flat_tensor.narrow(0, start=self.partition[part_id], length=part_size)
-            if part_id == self.rank:
-                buf.copy_(self.local_data)
-            partition_tensors.append(buf)
-
-        # Collect the full tensor
-        dist.all_gather(partition_tensors, partition_tensors[self.rank], group=self.group)
-
-        for i in range(len(partition_tensors)):
-            partition_tensors[i].data = torch.zeros(1)
-            partition_tensors[i] = None
-
+        if self.even_split:
+            # Collect the full tensor
+            dist.all_gather_into_tensor(flat_tensor, self.local_data, group=self.group)
+        else:
+            for part_id in range(self.num_parts):
+                part_size = self.partition[part_id + 1] - self.partition[part_id]
+                buf = flat_tensor.narrow(0, start=self.partition[part_id], length=part_size)
+                if part_id == self.rank:
+                    buf.copy_(self.local_data)
+                dist.broadcast(buf, part_id, self.group)
         return flat_tensor.view(self.full_size()).clone().detach()
 
     def to_meta(self):
@@ -928,16 +921,22 @@ def align_dense_tensors(tensor_list, alignment):
     return padded_tensor_list
 
 
-def all_gather_all_partitions(global_flatten_group, partitioned_param_groups, dp_process_group):
-    for group_id, partitioned_params in enumerate(partitioned_param_groups):
-        # Sequential AllGather Best of both worlds
+def all_gather_into_tensor_dp_groups(groups_flat, partitioned_param_groups, dp_process_group):
+    for group_id, (group_flat, partitioned_params) in enumerate(zip(groups_flat, partitioned_param_groups)):
         partition_id = dist.get_rank(group=dp_process_group[group_id])
         dp_world_size = dist.get_world_size(group=dp_process_group[group_id])
-        dist.all_gather_into_tensor(global_flatten_group[group_id], partitioned_params[partition_id],
-                                    dp_process_group[group_id])
+        if dp_world_size == 1:
+            # no groups share optimizer states
+            # pipeline parallel with bf16 will default call this even if dp size = 1.
+            continue
+        dist.all_gather_into_tensor(group_flat, partitioned_params[partition_id], dp_process_group[group_id])
 
 
-def all_gather_dp_groups(partitioned_param_groups, dp_process_group, start_alignment_factor, allgather_bucket_size):
+def all_gather_dp_groups(groups_flat, partitioned_param_groups, dp_process_group, start_alignment_factor,
+                         allgather_bucket_size):
+    if dist.has_all_gather_into_tensor():
+        return all_gather_into_tensor_dp_groups(groups_flat, partitioned_param_groups, dp_process_group)
+
     for group_id, partitioned_params in enumerate(partitioned_param_groups):
         # Sequential AllGather Best of both worlds
         partition_id = dist.get_rank(group=dp_process_group[group_id])
