@@ -22,69 +22,9 @@ DS_IS_REPLACED_MODULE = 'ds_is_replaced_module'
 DS_TENSOR_MODEL_PARALLEL = 'tensor_model_parallel'
 
 
-class TensorParallelConv2d(nn.Module):
-
-    def __init__(self, conv, rank, world_size, shard_by_oc):
-        super().__init__()
-        self.rank = rank
-        self.world_size = world_size
-        self.shard_by_oc = shard_by_oc
-        self.shard_weights(conv)
-
-    # Split along the input/output channel depending on whether it is the last conv layer.
-    def shard_weights(self, conv):
-        if self.shard_by_oc:
-            total_size = conv.weight.shape[0]
-        else:
-            total_size = conv.weight.shape[1]
-        bias_data = None
-        cols_per_rank = [0]
-        for i in range(self.world_size - 1, -1, -1):
-            cols = total_size // self.world_size
-            if i < total_size % self.world_size:
-                cols += 1
-            cols_per_rank.append(cols_per_rank[-1] + cols)
-        weight_data = conv.weight.data
-        if self.shard_by_oc:
-            # not last conv layer, split output channel
-            weight_data = weight_data[cols_per_rank[self.rank]:cols_per_rank[self.rank + 1]]
-            if conv.bias is not None:
-                bias_data = conv.bias.data[cols_per_rank[self.rank]:cols_per_rank[self.rank + 1]]
-        else:
-            # last conv layer, split input channel
-            weight_data = weight_data[:, cols_per_rank[self.rank]:cols_per_rank[self.rank + 1]]
-            if conv.bias is not None:
-                bias_data = conv.bias.data / float(self.world_size)
-        self.conv = nn.Conv2d(weight_data.shape[1], weight_data.shape[0], conv.kernel_size, conv.stride, conv.padding,
-                              conv.dilation, conv.groups, conv.bias is not None, conv.padding_mode)
-        self.conv.weight = torch.nn.Parameter(weight_data)
-        if conv.bias is not None:
-            self.conv.bias = torch.nn.Parameter(bias_data)
-        del conv
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return self.conv(input)
-
-
-class TensorParallelOcShardConv2d(TensorParallelConv2d):
-
-    def __init__(self, conv, rank, world_size):
-        super().__init__(conv, rank, world_size, True)
-
-
-class TensorParallelIcShardConv2d(TensorParallelConv2d):
-
-    def __init__(self, conv, rank, world_size):
-        super().__init__(conv, rank, world_size, False)
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        out = self.conv(input)
-        if self.world_size > 1:
-            dist.inference_all_reduce(out)
-        return out
-
-
-class LinearAllreduce(nn.Module):
+def get_auto_tp_mode():
+    global DEEPSPEED_AUTOTP_MODE
+    return DEEPSPEED_AUTOTP_MODE
 
 
 def is_autotp_training_mode():
@@ -377,13 +317,8 @@ class LinearAllreduce(Replaced_Layer):
             output += self.bias
         return output
 
-    def extra_repr(self):
-        out_features, in_features = self.weight.shape if self.weight is not None else (None, None)
-        dtype = self.weight.dtype if self.weight is not None else None
-        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
-            in_features, out_features, self.bias is not None, dtype)
-        return extra_repr_str
-
+    @torch.no_grad()
+    def gather_params(self, params_list):
 
         for idx, param in enumerate(params_list):
             if param is None or idx > 0:
@@ -645,13 +580,6 @@ class LmHeadLinearAllreduce(LinearAllreduce):
             output += self.bias
         return output
 
-    def extra_repr(self):
-        out_features, in_features = self.weight.shape if self.weight is not None else (None, None)
-        dtype = self.weight.dtype if self.weight is not None else None
-        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
-            in_features, out_features, self.bias is not None, dtype)
-        return extra_repr_str
-
 
 class TensorParallelConv2d(nn.Module):
 
@@ -713,13 +641,6 @@ class TensorParallelIcShardConv2d(TensorParallelConv2d):
         if self.world_size > 1:
             dist.inference_all_reduce(out)
         return out
-
-    def extra_repr(self):
-        out_features, in_features = self.weight.shape
-        dtype = self.weight.dtype
-        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
-            in_features, out_features, self.bias is not None, dtype)
-        return extra_repr_str
 
 
 class Normalize(nn.Module):

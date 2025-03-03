@@ -913,6 +913,7 @@ class DeepSpeedConfig(object):
             **param_dict['weight_quantization']) if 'weight_quantization' in param_dict else None
 
         self.timers_config = get_timers_config(param_dict)
+        self.tensor_parallel_config = get_tensor_parallel_config(param_dict)
 
     def _batch_assertion(self):
 

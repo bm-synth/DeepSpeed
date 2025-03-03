@@ -15,7 +15,7 @@ from deepspeed.accelerator import get_accelerator
 from .replace_policy import replace_policies, generic_policies
 from .auto_tp import AutoTP, ReplaceWithTensorSlicing, Loading
 from .layers import TensorParallelOcShardConv2d, TensorParallelIcShardConv2d
-
+from deepspeed.module_inject.layers import is_autotp_training_mode
 from deepspeed import comm as dist
 from deepspeed.module_inject.tp_shard import set_num_kv_heads, set_n_embd, set_num_attention_heads, set_tp_grain_size
 

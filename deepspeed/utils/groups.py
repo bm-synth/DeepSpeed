@@ -48,8 +48,6 @@ _ALL_TO_ALL_GROUP = {}
 
 mesh_device = None
 
-mesh_device = None
-
 
 # Deprecated groups initialize function.
 def initialize(ep_size=1, mpu=None):
