@@ -112,6 +112,10 @@ SWAP_OUT_GRADIENT_TIMER = 'swap_out_gradient'
 
 class OptimizerSwapper(object):
 
+    @staticmethod
+    def parameter_id(param):
+        return param.ds_id
+
     def __init__(self, swap_config, aio_config, base_folder, optimizer, largest_numel, device, dtype, timers):
         self.swap_config = swap_config
         self.aio_config = aio_config
@@ -183,7 +187,7 @@ class OptimizerSwapper(object):
             self.timer_names.update(gradient_swapper.get_timer_names())
 
     def _swap_out_gradients(self, parameter, gradient_offsets, gradient_tensors, gradient_swapper):
-        if not id(parameter) in self.swap_params_info.keys():
+        if not OptimizerSwapper.parameter_id(parameter) in self.swap_params_info.keys():
             return
 
         swap_info = self.swap_params_info[OptimizerSwapper.parameter_id(parameter)]
