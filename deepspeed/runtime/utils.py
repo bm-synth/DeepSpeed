@@ -866,12 +866,11 @@ def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None, use_graph=F
             all_norms.append(t.data.abs().max().float())
         total_norm = torch.stack(all_norms).max()
         device_total_norm = total_norm.to(get_accelerator().current_device_name())
-        # Max across model parallel
         if mpu is not None:
-            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=mpu.get_model_parallel_group())
+            dist.all_reduce(device_total_norm, op=dist.ReduceOp.MAX, group=mpu.get_model_parallel_group())
         if moe_ep_group is not None:
-            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=moe_ep_group)
-        total_norm = total_norm_cuda[0].item()
+            dist.all_reduce(device_total_norm, op=dist.ReduceOp.MAX, group=moe_ep_group)
+        total_norm = device_total_norm.to(input_tensors[0].device)
     else:
 
         if 'norm_tensors_compute_buffer' not in graph_cache or len(
@@ -895,15 +894,8 @@ def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None, use_graph=F
 
         device_total_norm = compute_buffer[0].float().detach()
 
-        # Sum across model parallel
         if mpu is not None:
-            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.SUM, group=mpu.get_model_parallel_group())
-        if moe_ep_group is not None:
-            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.SUM, group=moe_ep_group)
-
-        total_norm = total_norm_cuda[0].item()**(1. / norm_type)
-
-        # MoE grads: sum across expert parallel group
+            dist.all_reduce(device_total_norm, op=dist.ReduceOp.SUM, group=mpu.get_model_parallel_group())
         if moe_ep_group is not None:
             dist.all_reduce(device_total_norm, op=dist.ReduceOp.SUM, group=moe_ep_group)
         total_norm = device_total_norm.to(input_tensors[0].device).pow(1. / norm_type)
