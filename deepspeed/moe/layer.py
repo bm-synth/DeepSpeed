@@ -26,7 +26,8 @@ class MoE(torch.nn.Module):
                  noisy_gate_policy: typing.Optional[str] = None,
                  drop_tokens: bool = True,
                  use_rts=True,
-                 use_tutel: bool = False):
+                 use_tutel: bool = False,
+                 enable_expert_tensor_parallelism: bool = False):
         """Initialize an MoE layer.
 
         Arguments:
@@ -51,6 +52,7 @@ class MoE(torch.nn.Module):
             use_rts (bool, optional): default=True, whether to use Random Token Selection.
 
             use_tutel (bool, optional): default=False, whether to use Tutel optimizations (if installed).
+            enable_expert_tensor_parallelism (bool, optional): default=False, whether to use tensor parallelism for experts
         """
 
         super(MoE, self).__init__()
@@ -105,9 +107,12 @@ class MoE(torch.nn.Module):
             print(
                 f"No existing process group found, creating a new group named: {self.expert_group_name}"
             )
-            if groups.mpu is None:
+            if (groups.mpu is None) or (not self.enable_expert_tensor_parallelism):
+                # Condition 1 - no groups.mpu means no tensor parallelism
+                # Condition 2 - disabling expert tensor parallelism on purpose
                 groups._create_expert_and_data_parallel(self.ep_size)
             else:
+                # expert tensor parallelism is enabled
                 groups._create_expert_data_and_model_parallel(self.ep_size,
                                                               mpu=groups.mpu)
         # Set the group handle for the MOELayer (deepspeed_moe) object

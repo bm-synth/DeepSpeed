@@ -43,10 +43,6 @@ _ZERO_PARAM_INTRA_PARALLEL_GROUP = None
 mpu = None
 # global object that stores tensor parallel world size for experts
 expert_tensor_parallel_world_size = 1
-# All to All quantized graident communication groups
-_ALL_TO_ALL_GROUP = {}
-
-mesh_device = None
 
 
 # Deprecated groups initialize function.
@@ -273,7 +269,7 @@ def _create_model_parallel(model_parallel_size_):
     return _DATA_PARALLEL_GROUP, _MODEL_PARALLEL_GROUP
 
 
-def _create_expert_and_data_parallel(expert_parallel_size_, use_data_before_expert_parallel_=False):
+def _create_expert_and_data_parallel(expert_parallel_size_):
     """
         Create expert and data parallel groups.
 
@@ -289,13 +285,14 @@ def _create_expert_and_data_parallel(expert_parallel_size_, use_data_before_expe
     """
     assert dist.is_initialized()
 
-    log_dist(f'Creating expert and data parallel groups with size {expert_parallel_size_}', ranks=[0])
+    log_dist(
+        f'Creating expert and data parallel groups with size {expert_parallel_size_}',
+        ranks=[0])
     world_size = dist.get_world_size()
     pp_world_size = 1 if mpu is None else bwc_pipeline_parallel_world_size(mpu)
     rank = dist.get_rank()
 
-    pp_stride = world_size // pp_world_size
-    _ensure_divisibility(pp_stride, expert_parallel_size_)
+    _ensure_divisibility(world_size, expert_parallel_size_)
 
     group_name = f"ep_size_{expert_parallel_size_}"
 
@@ -409,7 +406,7 @@ def _create_expert_data_and_model_parallel(expert_parallel_size_, mpu):
     model_parallel_size_ = mpu.get_model_parallel_world_size()
 
     global expert_tensor_parallel_world_size
-    expert_tensor_parallel_world_size = tensor_parallel_size_
+    expert_tensor_parallel_world_size = model_parallel_size_
 
     world_size = dist.get_world_size()
     rank = dist.get_rank()
@@ -419,12 +416,19 @@ def _create_expert_data_and_model_parallel(expert_parallel_size_, mpu):
     _ensure_divisibility(world_size, tensor_parallel_size_)
     _ensure_divisibility(dp_world_size, expert_parallel_size_)
 
+    _ensure_divisibility(world_size, model_parallel_size_)
+    _ensure_divisibility(dp_world_size, expert_parallel_size_)
+
     log_dist(
         f"Creating deepspeed groups with model parallel size {tensor_parallel_size_}, "
         f"pipeline parallel size {pp_world_size}, expert parallel size {expert_parallel_size_}, "
         f"world size {world_size}, dp world size {dp_world_size}", [0])
 
     global _EXPERT_PARALLEL_GROUP, _EXPERT_DATA_PARALLEL_GROUP
+
+    # Get world size and rank. Ensure some consistencies.
+    _DATA_PARALLEL_GROUP = mpu.get_data_parallel_group()
+    _MODEL_PARALLEL_GROUP = mpu.get_model_parallel_group()
 
     group_name = f"ep_size_{expert_parallel_size_}"
 
@@ -605,120 +609,6 @@ def _get_data_parallel_rank():
     return dist.get_rank(group=_get_data_parallel_group())
 
 
-def _get_sequence_parallel_world_size():
-    """Return world size for the model parallel group."""
-    global mpu
-    if mesh_device is not None:
-        return dist.get_world_size(mesh_device.get_group(mesh_dim="sequence_parallel"))
-    if mpu is not None and hasattr(mpu, 'get_sequence_parallel_world_size'):
-        return mpu.get_sequence_parallel_world_size()
-    return 1
-
-
-def _get_sequence_parallel_rank():
-    """Return my rank for the data parallel group."""
-    global mpu
-    if mpu is not None and hasattr(mpu, 'get_sequence_parallel_rank'):
-        return mpu.get_sequence_parallel_rank()
-    if mesh_device is not None:
-        return dist.get_rank(mesh_device.get_group(mesh_dim="sequence_parallel"))
-    return 0
-
-
-def _get_sequence_parallel_group():
-    global mpu
-    if mpu is None or not hasattr(mpu, 'get_sequence_parallel_group'):
-        if mesh_device is None:
-            raise KeyError("No sequence parallel group found")
-        return mesh_device.get_group(mesh_dim="sequence_parallel")
-    return mpu.get_sequence_parallel_group()
-
-
-def _get_sequence_data_parallel_world_size():
-    """Return world size for the model parallel group."""
-    global mpu
-    if mpu is not None and hasattr(mpu, 'get_sequence_data_parallel_world_size'):
-        return mpu.get_sequence_data_parallel_world_size()
-    return _get_data_parallel_world_size()
-
-
-def _get_sequence_data_parallel_rank():
-    """Return my rank for the data parallel group."""
-    global mpu
-    if mpu is not None and hasattr(mpu, 'get_sequence_data_parallel_rank'):
-        return mpu.get_sequence_data_parallel_rank()
-    return _get_data_parallel_rank()
-
-
-def _get_sequence_data_parallel_group():
-    global mpu
-    # When sequence parallelism is enabled, the process group for zero sharding and
-    # gradient allreduce must be across both dimensions of data and sequence parallelism.
-    if mpu is not None and hasattr(mpu, 'get_sequence_data_parallel_group'):
-        return mpu.get_sequence_data_parallel_group()
-    return _get_data_parallel_group()
-
-
 def _get_expert_model_parallel_world_size():
     global expert_tensor_parallel_world_size
     return expert_tensor_parallel_world_size
-
-
-def _create_zero_param_parallel_group(group_size):
-    """
-        Create parameter partitioning group within ZeRO data parallel groups.
-
-        Example - ZP + D parallel
-        world_size = 16
-        zero_hpz_partition_size = 2 # number of ranks with replicated params (dual partitioning)
-        zero_param_intra_parallel_group = [0, 1], [2,3], [4,5], [6,7], [8,9] - segmented (subgroup) with rep partition
-        data_parallel_group = [0,1,...,15] - all reduce is on ZeRO model
-    """
-    assert dist.is_initialized()
-    global _ZERO_PARAM_INTRA_PARALLEL_GROUP
-    # Only create group if it does not already exist
-    assert _ZERO_PARAM_INTRA_PARALLEL_GROUP is None, \
-        'ZeRO parameter intra parallel group is already initialized'
-
-    world_size = dist.get_world_size()
-    rank = dist.get_rank()
-
-    zero_param_parallel_size_ = min(group_size, world_size)
-    _ensure_divisibility(world_size, zero_param_parallel_size_)
-
-    # Build the ZeRO param intra parallel groups.
-    for i in range(world_size // zero_param_parallel_size_):
-        ranks = range(i * zero_param_parallel_size_, (i + 1) * zero_param_parallel_size_)
-        group = dist.new_group(ranks)
-        if i == (rank // zero_param_parallel_size_):
-            _ZERO_PARAM_INTRA_PARALLEL_GROUP = group
-
-
-def _get_zero_param_intra_parallel_group():
-    """Get the ZeRO parameter partitioning intra parallel group the caller rank belongs to."""
-    #assert _ZERO_PARAM_INTRA_PARALLEL_GROUP is not None, \
-    #    'ZeRO parameter partitioning group is not initialized'
-    #TODO: Add warning
-    return _ZERO_PARAM_INTRA_PARALLEL_GROUP
-
-
-def _zero_param_parallel_is_initialized():
-    """Check if ZeRO data parallel with parameter partititioning groups are initialized."""
-    ###TODO: assert that MPU is not set
-    if _ZERO_PARAM_INTRA_PARALLEL_GROUP is None and _DATA_PARALLEL_GROUP is None:
-        return False
-
-
-def _get_zero_param_intra_parallel_rank_in_mygroup():
-    """Return my rank for the ZeRO parameter inter parallel group."""
-    return dist.get_rank(group=_get_zero_param_intra_parallel_group())
-
-
-def _get_zero_param_intra_parallel_group_world_size():
-    """Return world size for the ZeRO parameter parallel group."""
-    return dist.get_world_size(group=_get_zero_param_intra_parallel_group())
-
-
-def _get_zero_param_intra_parallel_group_ranks():
-    """Return all ranks for the ZeRO parameter intra parallel group."""
-    return dist.get_all_ranks_from_group(group=_get_zero_param_intra_parallel_group())
