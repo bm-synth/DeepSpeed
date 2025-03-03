@@ -82,7 +82,10 @@ class QKVGemmOp(BaseOp):
             output, norm = self.qkv_gemm_func(input, weight, q_scale, bias, gamma, beta, self.config.epsilon, add_bias,
                                               q_int8, self.config.transposed_mode)
         else:
-            self.qkv_gemm_func = self.inference_cuda_module.qkv_gemm_fp32
+            output, norm = self.qkv_gemm_func(input, weight, q_scale, gamma, self.config.epsilon, q_int8,
+                                              self.config.transposed_mode)
+            if add_bias:
+                output += bias
 
     def forward(self,
                 input: torch.Tensor,
