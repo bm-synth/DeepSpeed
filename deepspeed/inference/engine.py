@@ -606,11 +606,9 @@ class InferenceEngine(Module):
                 for input in inputs:
                     if torch.is_tensor(input):
                         input = input.to(torch.cuda.current_device())
-                        if self.mp_world_size > 1:
-                            if not input.is_contiguous():
-                                input = input.contiguous()
-                            dist.broadcast(input, 0)
-
+                        if not input.is_contiguous():
+                            input = input.contiguous()
+                        dist.broadcast(input, 0)
                 for k in kwargs:
                     if torch.is_tensor(kwargs[k]):
                         kwargs[k] = kwargs[k].to(torch.cuda.current_device())
