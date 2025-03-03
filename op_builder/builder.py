@@ -119,8 +119,6 @@ class OpBuilder(ABC):
     def __init__(self, name):
         self.name = name
         self.jit_mode = False
-        self.build_for_cpu = False
-        self.enable_bf16 = False
         self.error_log = None
 
     @abstractmethod
