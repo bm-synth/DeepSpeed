@@ -884,7 +884,11 @@ class DeepSpeedEngine(Module):
 
     # Configure based on command line arguments
     def _configure_with_arguments(self, args, mpu):
-        self.local_rank = args.local_rank if hasattr(args, 'local_rank') else 0
+        if hasattr(args, 'local_rank') and args.local_rank >= 0:
+            self.local_rank = args.local_rank
+        else:
+            self.local_rank = int(os.environ.get("LOCAL_RANK", -1))
+
         config_file = args.deepspeed_config if hasattr(args,
                                                        'deepspeed_config') else None
         self._config = DeepSpeedConfig(config_file, mpu, param_dict=self.config_params)
