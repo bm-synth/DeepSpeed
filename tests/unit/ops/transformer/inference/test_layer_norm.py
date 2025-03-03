@@ -163,8 +163,8 @@ def test_layer_norm_residual_store_pre_ln_res(batch, seq_len, channels, dtype):
 @pytest.mark.parametrize("residual", [True, False])
 @pytest.mark.parametrize("input_bias", [True, False])
 def test_triton_layer_norm(M, N, dtype, residual, input_bias, eps=1e-5, device='cuda'):
-    if not deepspeed.get_accelerator().is_triton_supported():
-        pytest.skip("triton is not supported on this system")
+    if not deepspeed.HAS_TRITON:
+        pytest.skip("triton has to be installed for the test")
     dev = get_accelerator().device_name()
     torch.manual_seed(0)
     # create data
