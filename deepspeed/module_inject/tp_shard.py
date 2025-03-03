@@ -39,6 +39,11 @@ def get_num_attention_heads():
     return num_attention_heads
 
 
+def get_num_attention_heads():
+    global num_attention_heads
+    return num_attention_heads
+
+
 def get_shard_size(total_size, mp_size, name=None, rank=None):
     global num_kv_heads
     last_linear = ["lm_head", "embed_out"]
