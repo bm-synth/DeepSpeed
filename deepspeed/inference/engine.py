@@ -19,7 +19,7 @@ from ..utils import logger, init_distributed
 from ..pipe import PipelineModule
 from ..moe.utils import has_moe_layers
 from ..module_inject import LinearAllreduce, LinearLayer, Normalize, ReplaceWithTensorSlicing
-from ..module_inject.replace_policy import DSPolicy
+from ..module_inject.replace_policy import TransformerPolicy
 
 import torch.distributed as dist
 import deepspeed.utils.groups as groups
@@ -50,18 +50,6 @@ class InferenceEngine(Module):
 
         if hasattr(self.module, "config"):
             TransformerPolicy.hf_model_config = self.module.config
-
-        if config.dtype not in get_accelerator().supported_dtypes():
-            raise ValueError(
-                f"Data type {config.dtype} is not supported by {get_accelerator().device_name()} accelerator")
-
-        # todo: keep this self.injection_dict because we don't use to change config.injection_policy API
-        # todo: this will get changed when Molly's PR on auto injection dict is merged
-        self.injection_dict = config.injection_policy
-
-        # todo: refactor the mp_group and mp_size related in the next refactor
-        self.mp_group = config.tensor_parallel.tp_group
-        self.mpu = config.tensor_parallel.mpu
 
         # todo: keep this self.injection_dict because we don't use to change config.injection_policy API
         # todo: this will get changed when Molly's PR on auto injection dict is merged
@@ -122,7 +110,6 @@ class InferenceEngine(Module):
         # retain this from the old conditional argument being passed to apply_injection_policy()
         if not config.replace_with_kernel_inject:
             config.checkpoint = None
-
         if self.injection_dict:
             for client_module, injection_policy in self.injection_dict.items():
                 # construct the tuple and pass that instead of a string or dict.

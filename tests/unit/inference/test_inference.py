@@ -24,19 +24,8 @@ from transformers import pipeline
 from transformers.models.t5.modeling_t5 import T5Block
 from transformers.models.roberta.modeling_roberta import RobertaLayer
 from huggingface_hub import HfApi
-from packaging import version as pkg_version
-from torch import nn
-from transformers import pipeline
-from transformers.models.t5.modeling_t5 import T5Block
-from transformers.models.roberta.modeling_roberta import RobertaLayer
-
-from deepspeed.accelerator import get_accelerator
-from deepspeed.git_version_info import torch_info
 from deepspeed.model_implementations import DeepSpeedTransformerInference
-from deepspeed.ops.op_builder import InferenceBuilder
-from deepspeed.ops.op_builder import OpBuilder
-
-from unit.common import DistributedTest
+from torch import nn
 
 rocm_version = OpBuilder.installed_rocm_version()
 if rocm_version != (0, 0):
@@ -327,9 +316,7 @@ def assert_fn(model_w_task):
     return assert_fn
 
 
-# Used to verify DeepSpeed kernel injection worked with a model
 def check_injection(model):
-
     def verify_injection(module):
         for child in module.children():
             if isinstance(child, nn.ModuleList):
@@ -342,46 +329,9 @@ def check_injection(model):
     verify_injection(model)
 
 
-# Used to Get Device name
-def getDeviceId(local_rank):
-    device = torch.device(f"{get_accelerator().device_name(local_rank)}")
-    return device
-
-
-# Verify that test is valid
-def validate_test(model_w_task, dtype, enable_cuda_graph, enable_triton):
-    model, task = model_w_task
-    msg = ""
-    if enable_cuda_graph and (torch_info["cuda_version"] == "0.0"):
-        msg = "CUDA not detected, cannot use CUDA Graph"
-    elif enable_cuda_graph and pkg_version.parse(torch.__version__) < pkg_version.parse("1.10"):
-        msg = "CUDA Graph is only available in torch versions >= 1.10"
-    elif "gpt-j-6b" in model:
-        if dtype != torch.half:
-            msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
-        elif enable_cuda_graph:
-            msg = f"Not enough GPU memory to run {model} with CUDA Graph enabled"
-    elif "gpt-neox-20b" in model:  # TODO: remove this when neox issues resolved
-        msg = "Skipping gpt-neox-20b for now"
-    elif ("gpt-neox-20b" in model) and (dtype != torch.half):
-        msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
-    elif ("bloom" in model) and (dtype != torch.half):
-        msg = f"Bloom models only support half precision, cannot use dtype {dtype}"
-    elif (model not in _bert_models + _roberta_models) and enable_cuda_graph:
-        msg = "Non bert/roberta models do no support CUDA Graph"
-    elif enable_triton and not (dtype in [torch.half]):
-        msg = "Triton is for fp16"
-    elif enable_triton and not deepspeed.HAS_TRITON:
-        msg = "triton needs to be installed for the test"
-    elif (model not in _bert_models + _roberta_models) and enable_triton:
-        msg = "Triton kernels do not support Non bert/roberta models yet"
-
-    # These should be removed once we fix several inference tests failing
-    if model in [
-            "EleutherAI/pythia-70m-deduped", "distilbert/distilbert-base-cased-distilled-squad", "EleutherAI/gpt-j-6b"
-    ]:
-        msg = "Test is currently broken"
-    return msg
+"""
+Tests
+"""
 
 
 @pytest.mark.inference
@@ -431,18 +381,14 @@ class TestModelTask(DistributedTest):
         get_accelerator().synchronize()
         bs_time = time.time() - start
 
-        args = {
-            'mp_size': 1,
-            'dtype': dtype,
-            'replace_with_kernel_inject': True,
-            'enable_cuda_graph': enable_cuda_graph,
-            'use_triton': enable_triton,
-            'triton_autotune': False,
-        }
-        if pipe.tokenizer.model_max_length < deepspeed.ops.transformer.inference.config.DeepSpeedInferenceConfig(
-        ).max_out_tokens:
-            args.update({'max_out_tokens': pipe.tokenizer.model_max_length})
-        pipe.model = deepspeed.init_inference(pipe.model, **args)
+        pipe.model = deepspeed.init_inference(
+            pipe.model,
+            mp_size=1,
+            dtype=dtype,
+            replace_method="auto",
+            replace_with_kernel_inject=True,
+            enable_cuda_graph=enable_cuda_graph,
+        )
         check_injection(pipe.model)
         # Warm-up queries for perf measurement
         #for i in range(10):
@@ -515,6 +461,7 @@ class TestMPSize(DistributedTest):
                                               dtype=dtype,
                                               replace_method="auto",
                                               replace_with_kernel_inject=True)
+        check_injection(pipe.model)
         # Switch device to GPU so that input tensors are not on CPU
         pipe.device = torch.device(get_accelerator().device_name(local_rank))
         ds_output = pipe(query, **inf_kwargs)
