@@ -5,6 +5,8 @@
 
 from types import MethodType
 from collections import OrderedDict
+from functools import reduce
+from operator import mul
 
 import torch
 from deepspeed import comm as dist
