@@ -15,17 +15,14 @@ from torch.nn.modules import Module
 from torch.nn.parameter import Parameter
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
-from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
-from contextlib import contextmanager
+from torch.distributed.distributed_c10d import _get_global_rank
+from tensorboardX import SummaryWriter
 
-from typing import Callable, Dict, Union, Iterable, Container
+from typing import Callable, Dict, Optional, Union, Iterable
 
-import deepspeed
-
-from deepspeed import comm as dist
-from deepspeed.runtime.utils import see_memory_usage, DummyOptim
-from .zero.offload_config import OffloadDeviceEnum, OffloadStateTypeEnum
-from deepspeed.runtime.zero.stage_1_and_2 import DeepSpeedZeroOptimizer
+from deepspeed.runtime.utils import see_memory_usage
+from deepspeed.runtime.zero.stage2 import FP16_DeepSpeedZeroOptimizer
+from deepspeed.runtime.zero.stage1 import FP16_DeepSpeedZeroOptimizer_Stage1
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
 from deepspeed.runtime.zero.utils import is_zero_supported_optimizer, _initialize_parameter_parallel_groups
 from deepspeed.runtime.activation_checkpointing import checkpointing as activation_checkpointing
@@ -59,6 +56,10 @@ from ..ops.adam import FusedAdam
 from deepspeed.profiling.flops_profiler.profiler import FlopsProfiler
 
 MEMORY_OPT_ALLREDUCE_SIZE = 500000000
+
+DeepSpeedOptimizerCallable = \
+    Callable[[Union[Iterable[Parameter], Dict[str, Iterable]]], Optimizer]
+DeepSpeedSchedulerCallable = Callable[[Optimizer], _LRScheduler]
 
 try:
     import apex
@@ -773,29 +774,14 @@ class DeepSpeedEngine(Module):
             else:
                 grad_accum_dtype = model_dtype
         else:
-            grad_accum_dtype = DtypeEnum(self._config.grad_accum_dtype).value
-
-        return (model_dtype, grad_accum_dtype)
-
-    def _optimizer_has_ckpt_event_prologue(self):
-        return self.optimizer is not None and hasattr(self.optimizer, 'checkpoint_event_prologue')
-
-    def _optimizer_has_ckpt_event_epilogue(self):
-        return self.optimizer is not None and hasattr(self.optimizer, 'checkpoint_event_epilogue')
-
-    def _configure_lr_scheduler(self):
-        if self.client_lr_scheduler:
-            if isinstance(self.client_lr_scheduler, Callable):
-                log_dist('DeepSpeed using client callable to create LR scheduler', ranks=[0])
-                self.lr_scheduler = self.client_lr_scheduler(self.basic_optimizer)
-            else:
-                log_dist('DeepSpeed using client LR scheduler', ranks=[0])
-                self.lr_scheduler = self.client_lr_scheduler
-        else:
-            # load lr scheduler from json configuration if lr scheduler is not defined and passed in
-            lr_scheduler = self._scheduler_from_config(self.optimizer)
-            log_dist(f"DeepSpeed using configured LR scheduler = {self.scheduler_name()}", ranks=[0])
-            self.lr_scheduler = lr_scheduler
+            if isinstance(client_lr_scheduler, _LRScheduler):
+                if self.global_rank == 0:
+                    logger.info('DeepSpeed using client LR scheduler')
+                self.lr_scheduler = client_lr_scheduler
+            elif isinstance(client_lr_scheduler, Callable):
+                if self.global_rank == 0:
+                    logger.info('DeepSpeed using client callable to create LR scheduler')
+                self.lr_scheduler = client_lr_scheduler(self.basic_optimizer)
 
         log_dist(f'DeepSpeed LR Scheduler = {self.lr_scheduler}', ranks=[0])
 
@@ -921,6 +907,9 @@ class DeepSpeedEngine(Module):
 
     # Validate configuration based on command line arguments
     def _do_sanity_check(self):
+        assert isinstance(self.client_optimizer, (type(None), Optimizer, Callable)), \
+            f'Client Optimizer is of unexpected type {type(self.client_optimizer)}'
+
         if not self.client_optimizer:
             if self.optimizer_name() is not None:
                 assert self._is_supported_optimizer(self.optimizer_name()), \
@@ -930,6 +919,14 @@ class DeepSpeedEngine(Module):
         ) == ONEBIT_LAMB_OPTIMIZER:
             assert self.dynamic_loss_scale(), \
                 'DeepSpeed {} optimizer requires dynamic loss scaling'.format(self.optimizer_name())
+
+        assert isinstance(self.client_lr_scheduler, (type(None), _LRScheduler, Callable)), \
+            f'Client LR Scheduler is of unexpected type {type(self.client_lr_scheduler)}'
+
+        # Detect invalid combinations of client optimizer and client scheduler
+        if isinstance(self.client_lr_scheduler, _LRScheduler):
+            assert isinstance(self.client_optimizer, Optimizer), \
+                f'Client Optimizer (type = {type(self.client_optimizer)} is not instantiated but Client LR Scheduler is instantiated'
 
     def _broadcast_model(self):
 
@@ -1061,16 +1058,35 @@ class DeepSpeedEngine(Module):
         for name, param in self.module.named_parameters():
             param_id = id(param)
 
-        if client_optimizer is not None:
-            client_optimizer.param_groups[:] = [
-                pg for pg in client_optimizer.param_groups if len(pg["params"]) != 0
-            ]
-            logger.info(
-                "Removing param_group that has no 'params'in the client Optimizer")
+            def ids_list(group):
+                return [id(param) for param in group]
 
-            basic_optimizer = client_optimizer
-            if self.global_rank == 0:
-                logger.info('Using client Optimizer as basic optimizer')
+            occurance = sum([
+                ids_list(group['params']).count(param_id)
+                if param_id in ids_list(group['params']) else 0
+                for group in optimizer.param_groups
+            ])
+            assert occurance <= 1, f"Parameter with name: {name} occurs multiple times in optimizer.param_groups. Make sure it only appears once to prevent undefined behaviour."
+
+    # Configure optimizer
+    def _configure_optimizer(self, client_optimizer, model_parameters):
+        if client_optimizer is not None:
+            if isinstance(client_optimizer, Optimizer):
+                client_optimizer.param_groups[:] = [
+                    pg for pg in client_optimizer.param_groups if len(pg["params"]) != 0
+                ]
+                if self.global_rank == 0:
+                    logger.info(
+                        "Removing param_group that has no 'params' in the client Optimizer"
+                    )
+
+                basic_optimizer = client_optimizer
+                if self.global_rank == 0:
+                    logger.info('Using client Optimizer as basic optimizer')
+            else:
+                basic_optimizer = client_optimizer(model_parameters)
+                if self.global_rank == 0:
+                    logger.info('Using client callable to create basic optimizer')
         else:
             basic_optimizer = self._configure_basic_optimizer(model_parameters)
             if self.global_rank == 0:
@@ -1084,15 +1100,13 @@ class DeepSpeedEngine(Module):
             ])
             assert occurrence <= 1, f"Parameter with name: {name} occurs multiple times in optimizer.param_groups. Make sure it only appears once to prevent undefined behavior."
 
-    def _do_optimizer_sanity_check(self, basic_optimizer):
-        model_dtype, grad_accum_dtype = self.get_data_types()
-        zero_enabled = self.zero_optimization()
-        amp_enabled = self.amp_enabled()
-        # config based assertions
-        assert (
-            not (amp_enabled and zero_enabled)
-        ), "Amp and ZeRO are not currently compatible, please use (legacy) fp16 mode which performs similar to amp opt_mode=O2"
-        if zero_enabled:
+        self.basic_optimizer = basic_optimizer
+        if self.global_rank == 0:
+            logger.info('DeepSpeed Basic Optimizer = {}'.format(
+                basic_optimizer.__class__.__name__))
+
+        if self.zero_optimization():
+            assert not self.amp_enabled(), "Amp and ZeRO are not currently compatible, please use (legacy) fp16 mode which performs similar to amp opt_mode=O2"
             if not is_zero_supported_optimizer(basic_optimizer):
                 assert (
                     self.zero_allow_untested_optimizer()
@@ -1187,6 +1201,8 @@ class DeepSpeedEngine(Module):
 
     def _configure_basic_optimizer(self, model_parameters):
         optimizer_parameters = self.optimizer_params()
+        if optimizer_parameters is None:
+            optimizer_parameters = {}
         # print(optimizer_parameters.keys())
         if 'max_grad_norm' in optimizer_parameters.keys():
             raise ValueError(
