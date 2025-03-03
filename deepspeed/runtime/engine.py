@@ -2590,7 +2590,7 @@ class DeepSpeedEngine(Module):
             params_to_fetch = []
 
     def _get_zero_ckpt_prefix(self, dp_rank, bf16_mode):
-        return f'bf16_zero_pp_rank_{dp_rank}' if bf16_mode else f'zero_pp_rank_{dp_rank}'
+        return f'{"bf16_" if bf16_mode else ""}zero_pp_rank_{dp_rank}'
 
     def _get_rank_zero_ckpt_name(self,
                                  checkpoints_path,
@@ -2602,7 +2602,7 @@ class DeepSpeedEngine(Module):
         zero_ckpt_name = os.path.join(
             checkpoints_path,
             str(tag),
-            file_prefix + "_mp_rank_{:02d}".format(mp_rank) + "_optim_states.pt",
+            f"{file_prefix}_mp_rank_{mp_rank:02d}_optim_states.pt",
         )
         return zero_ckpt_name
 
