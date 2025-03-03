@@ -584,6 +584,18 @@ def main(args=None):
     logger.info(f"cmd = {' '.join(cmd)}")
     result = subprocess.Popen(cmd, env=env)
 
+    def sigkill_handler(signum, frame):
+        result.send_signal(signal.SIGINT)
+        time.sleep(0.1)
+        result.send_signal(signal.SIGTERM)
+        result_kill = subprocess.Popen(kill_cmd, env=env)
+        result_kill.wait()
+        time.sleep(1)
+        sys.exit(1)
+
+    if args.launcher == PDSH_LAUNCHER and multi_node_exec:
+        signal.signal(signal.SIGINT, sigkill_handler)
+
     result.wait()
 
     # In case of failure must propagate the error-condition back to the caller (usually shell). The
