@@ -112,6 +112,11 @@ class DeepSpeedTransformerInference(nn.Module):
         if cls.workspace is not None:
             cls.workspace.reset_cache()
 
+    @classmethod
+    def reset_cache(cls):
+        if inference_cuda_module is not None:
+            inference_cuda_module.reset_cache()
+
     def forward(
             self,
             input=None,

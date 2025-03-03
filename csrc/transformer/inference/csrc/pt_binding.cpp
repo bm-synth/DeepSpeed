@@ -468,7 +468,7 @@ void attention_unfused(T* prev_key_cont,
 #endif
 }
 
-void reset_cache() { InferenceContext::Instance().reset_tokens(); }
+void reset_cache() { Context::Instance().reset_tokens(); }
 
 template <typename T>
 std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
@@ -2099,62 +2099,19 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("_vector_add", &_vector_add, "DeepSpeed vector add (CUDA)");
     m.def("apply_rotary_pos_emb", &apply_rotary_pos_emb, "DeepSpeed mlp with fp16 (CUDA)");
     m.def("moe_res_matmul", &moe_res_matmul, "DeepSpeed moe residual matmul (CUDA)");
+    m.def("add_padding_fp32", &add_padding<float>, "DeepSpeed residual add with fp32 (CUDA)");
+    m.def("add_padding_fp16", &add_padding<__half>, "DeepSpeed residual add with fp16 (CUDA)");
+    m.def("pad_transform_fp32",
+          &padd_add_transform<float>,
+          "DeepSpeed residual add with fp32 (CUDA)");
+    m.def("pad_transform_fp16",
+          &padd_add_transform<__half>,
+          "DeepSpeed residual add with fp16 (CUDA)");
+    m.def("allocate_workspace_fp32",
+          &allocate_workspace<float>,
+          "DeepSpeed memory allocation for GPT inference with fp32 (CUDA)");
+    m.def("allocate_workspace_fp16",
+          &allocate_workspace<__half>,
+          "DeepSpeed memory allocation for GPT inference with fp16 (CUDA)");
     m.def("reset_cache", &reset_cache, "Reset Cache for generation tasks");
-    m.def("release_workspace", &ds_release_workspace, "DeepSpeed Release Workspace");
-    m.def("retake_workspace", &ds_retake_workspace, "DeepSpeed Retake Workspace");
-
-    // The following functions are templated and need to be explicitly instantiated and bound
-    // to different python methods
-#define DEF_OPS(_name, _dtype)                                                                    \
-    m.def("softmax_" #_name, &ds_softmax<_dtype>, "DeepSpeed SoftMax with " #_name " (CUDA)");    \
-    m.def("softmax_context_" #_name,                                                              \
-          &ds_softmax_context<_dtype>,                                                            \
-          "DeepSpeed attention with " #_name " (CUDA)");                                          \
-    m.def("bias_gelu_" #_name, &ds_bias_gelu<_dtype>, "DeepSpeed Gelu with " #_name " (CUDA)");   \
-    m.def("bias_add_" #_name, &ds_bias_add<_dtype>, "DeepSpeed Bias Add with " #_name " (CUDA)"); \
-    m.def("bias_relu_" #_name, &ds_bias_relu<_dtype>, "DeepSpeed ReLU with " #_name " (CUDA)");   \
-    m.def("bias_residual_" #_name,                                                                \
-          &ds_bias_residual<_dtype>,                                                              \
-          "DeepSpeed residual-bias add with " #_name " (CUDA)");                                  \
-    m.def("qkv_gemm_" #_name, &ds_qkv_gemm<_dtype>, "DeepSpeed qkv gemm with " #_name " (CUDA)"); \
-    m.def("rms_qkv_gemm_" #_name,                                                                 \
-          &ds_rms_qkv<_dtype>,                                                                    \
-          "DeepSpeed rms qkv gemm with " #_name " (CUDA)");                                       \
-    m.def("mlp_gemm_" #_name, &ds_mlp_gemm<_dtype>, "DeepSpeed mlp with " #_name " (CUDA)");      \
-    m.def("rms_mlp_gemm_" #_name,                                                                 \
-          &ds_rms_mlp_gemm<_dtype>,                                                               \
-          "DeepSpeed rms mlp gemm with " #_name " (CUDA)");                                       \
-    m.def("vector_matmul_" #_name,                                                                \
-          &ds_vector_matmul<_dtype>,                                                              \
-          "DeepSpeed vector-MM with " #_name " (CUDA)");                                          \
-    m.def("linear_layer_" #_name,                                                                 \
-          &ds_linear_layer<_dtype>,                                                               \
-          "DeepSpeed linear_layer with " #_name " (CUDA)");                                       \
-    m.def("fused_gemm_gelu_" #_name,                                                              \
-          &fused_gemm_gelu<_dtype>,                                                               \
-          "DeepSpeed mlp with " #_name " (CUDA)");                                                \
-    m.def("residual_add_bias_" #_name,                                                            \
-          &residual_add_bias<_dtype>,                                                             \
-          "DeepSpeed residual add with " #_name " (CUDA)");                                       \
-    m.def("einsum_sec_sm_ecm_" #_name,                                                            \
-          &einsum_sec_sm_ecm<_dtype>,                                                             \
-          "DeepSpeed vector-MM with " #_name " (CUDA)");                                          \
-    m.def("add_padding_" #_name,                                                                  \
-          &add_padding<_dtype>,                                                                   \
-          "DeepSpeed residual add with " #_name " (CUDA)");                                       \
-    m.def("pad_transform_" #_name,                                                                \
-          &padd_add_transform<_dtype>,                                                            \
-          "DeepSpeed residual add with " #_name " (CUDA)");                                       \
-    m.def("allocate_workspace_" #_name,                                                           \
-          &allocate_workspace<_dtype>,                                                            \
-          "DeepSpeed memory allocation for GPT inference with " #_name " (CUDA)");                \
-    m.def("dequantize_" #_name,                                                                   \
-          &ds_dequantize<_dtype>,                                                                 \
-          "DeepSpeed dequantize with " #_name " (CUDA)");
-
-    DEF_OPS(fp32, float);
-    DEF_OPS(fp16, __half);
-#ifdef BF16_AVAILABLE
-    DEF_OPS(bf16, __nv_bfloat16);
-#endif
 }
