@@ -43,6 +43,13 @@ try:
 except ImportError:
     tabulate = None
 
+try:
+    import mlflow
+    has_mlflow = True
+except Exception as e:
+    print("MLFlow does not exist. Disabling MLFlow logging")
+    has_mlflow = False
+
 ZERO_OPTIMIZATION_STAGE = "stage"
 OFFLOAD_OPTIMIZER = "offload_optimizer"
 OFFLOAD_PARAM = "offload_param"
@@ -112,6 +119,8 @@ class Autotuner:
         self.records = {}
         self.optimal_cmd = None
         self.optmal_ds_config = None
+
+        self.mlflow_parent_id = None
 
     def print_tuning_results(self):
         """Print the autotuning results in tabular format.
@@ -523,10 +532,8 @@ class Autotuner:
                 logger.info(
                     f"The model might be runable with ZERO 3 (which requires at least {memory_to_string(required_gpu_mem, postfix='B')} memory), adding DEFAULT_TUNING_SPACE_ZERO_3 to the global tuning space"
                 )
-                _, _, next_metric_val = self.tune_space(DEFAULT_TUNING_SPACE_ZERO_3,
-                                                        prev_max_mbs=max_mbs,
-                                                        prev_best_mbs=mbs,
-                                                        prev_best_metric_val=metric_val)
+                _, _, next_metric_val = self.tune_space(
+                    DEFAULT_TUNING_SPACE_ZERO_3, prev_max_mbs = max_mbs, prev_best_mbs=mbs, prev_best_metric_val=metric_val)
                 if has_mlflow:
                     mlflow.log_metric(f"z3{self.metric()}", next_metric_val)
         else:
