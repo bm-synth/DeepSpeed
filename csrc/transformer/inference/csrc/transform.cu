@@ -229,7 +229,8 @@ void launch_bias_add_transform_0213(T* output,
                                     bool rotate_every_two,
                                     cudaStream_t stream,
                                     int trans_count,
-                                    int max_out_tokens)
+                                    int max_out_tokens,
+                                    float rope_theta)
 {
     hidden_dim >>= 3;
     int head_ext = 1;  // (hidden_dim - 1) / MAX_THREADS + 1;
@@ -273,7 +274,8 @@ void launch_bias_add_transform_0213(T* output,
                                                     bool,         \
                                                     cudaStream_t, \
                                                     int,          \
-                                                    int)
+                                                    int,          \
+                                                    float)
 
 #ifdef BF16_AVAILABLE
 template void launch_bias_add_transform_0213(__nv_bfloat16* output,

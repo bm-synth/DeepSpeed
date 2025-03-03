@@ -487,10 +487,7 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
                                            unsigned layer_id,
                                            unsigned num_layers,
                                            at::Tensor& alibi,
-                                           float rope_theta,
-                                           bool is_prompt,
-                                           std::optional<at::Tensor> token_idx,
-                                           std::optional<at::Tensor> position_ids)
+                                           float rope_theta)
 {
     unsigned bsz = query_key_value.size(0);
     unsigned seq_len = query_key_value.size(1);
@@ -538,7 +535,8 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
                                       rotate_every_two,
                                       InferenceContext::Instance().GetCurrentStream(),
                                       3,
-                                      InferenceContext::Instance().GetMaxTokenLength());
+                                      InferenceContext::Instance().GetMaxTokenLength(),
+                                      rope_theta);
     if (rotary_dim > 0 && rotate_half)
         launch_apply_rotary_pos_emb(query_cont,
                                     kv_cache,
@@ -548,8 +546,7 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
                                     (is_prompt ? 0 : soft_len - 1),
                                     heads,
                                     bsz,
-                                    rotate_half,
-                                    rotate_every_two,
+                                    rope_theta,
                                     InferenceContext::Instance().GetCurrentStream(),
                                     InferenceContext::Instance().GetMaxTokenLength());
 
@@ -1251,7 +1248,8 @@ at::Tensor ds_linear_layer(at::Tensor& input,
                            bool add_bias,
                            bool do_flash_attn,
                            int num_heads,
-                           bool transposed_mode)
+                           bool transposed_mode,
+                           float rope_theta)
 {
     auto input_cont = input.contiguous();
     auto options = at::TensorOptions()
@@ -2061,8 +2059,7 @@ std::vector<at::Tensor> apply_rotary_pos_emb(at::Tensor& mixed_query,
                                            offset,
                                            num_heads,
                                            bsz,
-                                           rotate_half,
-                                           rotate_every_two,
+                                           rope_theta,
                                            InferenceContext::Instance().GetCurrentStream(),
                                            InferenceContext::Instance().GetMaxTokenLength());
     else
@@ -2074,8 +2071,7 @@ std::vector<at::Tensor> apply_rotary_pos_emb(at::Tensor& mixed_query,
                                             offset,
                                             num_heads,
                                             bsz,
-                                            rotate_half,
-                                            rotate_every_two,
+                                            rope_theta,
                                             InferenceContext::Instance().GetCurrentStream(),
                                             InferenceContext::Instance().GetMaxTokenLength());
     return {query_cont, key_cont};

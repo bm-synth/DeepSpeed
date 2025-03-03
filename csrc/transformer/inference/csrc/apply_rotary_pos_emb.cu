@@ -19,16 +19,21 @@
 
 namespace cg = cooperative_groups;
 
-template <typename T>
-__global__ void apply_rotary_pos_emb(T* mixed_query,
-                                     T* key_layer,
-                                     unsigned rotary_dim,
-                                     unsigned seq_len,
-                                     unsigned seq_offset,
-                                     unsigned num_heads,
-                                     unsigned head_size,
-                                     unsigned total_count,
-                                     int max_out_tokens)
+namespace rot_half {
+constexpr int threads = 256;
+}  // namespace rot_half
+
+template <typename T, int threadsPerHead, int granularity>
+__global__ void apply_rotary_pos_half(T* mixed_query,
+                                      T* key_layer,
+                                      unsigned rotary_dim,
+                                      unsigned seq_len,
+                                      unsigned seq_offset,
+                                      unsigned num_heads,
+                                      unsigned head_size,
+                                      unsigned total_count,
+                                      float rope_theta,
+                                      int max_out_tokens)
 {
     constexpr int T_per_thread = granularity / sizeof(T);
     constexpr int heads_per_block = rot_half::threads / threadsPerHead;
@@ -92,18 +97,17 @@ __global__ void apply_rotary_pos_emb(T* mixed_query,
     }
 }
 
-__global__ void apply_rotary_pos_emb1(float* mixed_query,
-                                      float* key_layer,
-                                      unsigned rotary_dim,
-                                      unsigned seq_len,
-                                      unsigned seq_offset,
-                                      unsigned num_heads,
-                                      unsigned head_size,
-                                      unsigned total_count,
-                                      int max_out_tokens)
-{
-    cg::thread_block b = cg::this_thread_block();
-    cg::thread_block_tile<WARP_SIZE> g = cg::tiled_partition<WARP_SIZE>(b);
+#define LAUNCH_ROT_POS_EMB_HALF(HEAD_THREADS, ALIGNMENT)                                       \
+    apply_rotary_pos_half<T, HEAD_THREADS, ALIGNMENT><<<grid, block, 0, stream>>>(mixed_query, \
+                                                                                  key_layer,   \
+                                                                                  rotary_dim,  \
+                                                                                  seq_len,     \
+                                                                                  offset,      \
+                                                                                  num_heads,   \
+                                                                                  head_size,   \
+                                                                                  total_count, \
+                                                                                  rope_theta,  \
+                                                                                  max_out_tokens);
 
     int id = threadIdx.x;
     int gid = id >> 5;
@@ -258,6 +262,8 @@ void launch_apply_rotary_pos_emb(T* mixed_query,
                                                  float,        \
                                                  cudaStream_t, \
                                                  int);
+
+INSTANTIATE_LAUNCH_ROTARY_POS_EMB(float);
 #ifdef BF16_AVAILABLE
 template void launch_apply_rotary_pos_emb<__nv_bfloat16>(__nv_bfloat16*,
                                                          __nv_bfloat16*,

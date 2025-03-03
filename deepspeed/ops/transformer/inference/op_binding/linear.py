@@ -26,7 +26,7 @@ class LinearOp(BaseOp):
         except AttributeError:
             self.linear_func = self.linear_fallback
 
-    def linear_fallback(self, input, weight, bias, add_bias, do_flash_attn, num_heads, transpose):
+    def linear_fallback(self, input, weight, bias, add_bias, do_flash_attn, num_heads, transpose, rope_theta):
         raise NotImplementedError
 
     def forward(self,
@@ -39,7 +39,7 @@ class LinearOp(BaseOp):
                 external_cache: bool = None,
                 num_layers: int = None):
         qkv_out = self.linear_func(input, weight, bias, add_bias, do_flash_attn, num_heads,
-                                   self.config.transposed_mode)
+                                   self.config.transposed_mode, self.config.rope_theta)
         return qkv_out
 
     @staticmethod
