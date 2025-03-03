@@ -23,7 +23,6 @@ from deepspeed.utils.timer import FORWARD_MICRO_TIMER, FORWARD_GLOBAL_TIMER, BAC
 
 from ..utils import PartitionedTensor
 from ..dataloader import RepeatingLoader
-from ..zero.config import ZeroStageEnum
 from ..activation_checkpointing import checkpointing as ds_checkpointing
 
 from .module import PipelineModule, PipelineError
