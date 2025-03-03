@@ -213,12 +213,13 @@ def top1gating(logits: Tensor,
     # if we don't want to drop any tokens
     if not drop_tokens:
         new_capacity = torch.max(exp_counts).to(logits.device)
-        # Communicate across all processes to pick the maximum capacity.
-        dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=dist.get_world_group())
+        # Communicate across expert processes to pick the maximum capacity.
+        if ep_group is not None:
+            dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=ep_group)
         if groups._get_expert_model_parallel_world_size() == 1:
             # If the non-expert is tensor-parallel, we need to pad the capacity to 'tp'.
             # This is since we are going to activate drop_tokens() to drop duplicate tokens.
-            tp = 1 if groups.mpu is None else groups.mpu.get_tensor_model_parallel_world_size()
+            tp = 1 if groups.mpu is None else bwc_tensor_model_parallel_world_size(mpu=groups.mpu)
             new_capacity = torch.ceil(new_capacity / tp).mul(tp).to(new_capacity.dtype)
         # Make sure the capacity value does not exceed the number of tokens.
         capacity = min(new_capacity, torch.tensor(mask1.size(0)))
@@ -290,6 +291,7 @@ def top2gating(logits: Tensor,
                capacity_factor: float,
                min_capacity: int,
                drop_tokens: bool = True,
+               ep_group: Union[torch.distributed.ProcessGroup, None] = None,
                top2_2nd_expert_sampling: bool = True) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     """Implements Top2Gating on logits."""
     # everything is in fp32 in this function
@@ -332,11 +334,12 @@ def top2gating(logits: Tensor,
     else:
         # Do not drop tokens - set capacity according to current expert assignments
         new_capacity = torch.max(exp_counts)
-        dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=dist.get_world_group())
+        if ep_group is not None:
+            dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=ep_group)
         if groups._get_expert_model_parallel_world_size() == 1:
             # If the non-expert is tensor-parallel, we need to pad the capacity to 'tp'.
             # This is since we are going to activate drop_tokens() to drop duplicate tokens.
-            tp = 1 if groups.mpu is None else groups.mpu.get_tensor_model_parallel_world_size()
+            tp = 1 if groups.mpu is None else bwc_tensor_model_parallel_world_size(mpu=groups.mpu)
             new_capacity = torch.ceil(new_capacity / tp).mul(tp).to(new_capacity.dtype)
         capacity = new_capacity
 
@@ -471,6 +474,7 @@ class TopKGate(Module):
                  noisy_gate_policy: Optional[str] = None,
                  drop_tokens: bool = True,
                  use_rts: bool = True,
+                 ep_group: Union[torch.distributed.ProcessGroup, None] = None,
                  top2_2nd_expert_sampling: bool = True) -> None:
         super().__init__()
 
@@ -478,6 +482,7 @@ class TopKGate(Module):
         if k != 1 and k != 2:
             raise ValueError('Only top-1 and top-2 gatings are supported.')
         self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
+        self.ep_group = ep_group
         self.k = k
         self.capacity_factor = capacity_factor
         self.eval_capacity_factor = eval_capacity_factor
@@ -489,6 +494,10 @@ class TopKGate(Module):
         self.drop_tokens = drop_tokens
         self.use_rts = use_rts
         self.top2_2nd_expert_sampling = top2_2nd_expert_sampling
+
+    def _set_ep_group(self, ep_group):
+        assert self.ep_group is None, f'Attempting to override an existing ep_group'
+        self.ep_group = ep_group
 
     def forward(self,
                 input: torch.Tensor,
@@ -511,7 +520,7 @@ class TopKGate(Module):
 
         elif self.k == 2:
             gate_output = top2gating(logits, self.capacity_factor if self.training else self.eval_capacity_factor,
-                                     self.min_capacity, self.drop_tokens, self.top2_2nd_expert_sampling)
+                                     self.min_capacity, self.drop_tokens, self.ep_group, self.top2_2nd_expert_sampling)
 
         if self.wall_clock_breakdown:
             self.timers(TOPK_GATE_TIMER).stop()
