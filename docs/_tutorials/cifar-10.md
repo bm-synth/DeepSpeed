@@ -16,7 +16,7 @@ First we will go over how to run the original CIFAR-10 model. Then we will proce
 
 ## Running Original CIFAR-10
 
-Original model code from [CIFAR-10 Tutorial](https://github.com/pytorch/tutorials/blob/main/beginner_source/blitz/cifar10_tutorial.py), We've copied this repo under [DeepSpeedExamples/training/cifar/](https://github.com/microsoft/DeepSpeedExamples/tree/master/training/cifar) and made it available as a submodule. To download, execute:
+Original model code from the [CIFAR-10 Tutorial](https://github.com/pytorch/tutorials/blob/main/beginner_source/blitz/cifar10_tutorial.py), We've copied this repo under [DeepSpeedExamples/training/cifar/](https://github.com/microsoft/DeepSpeedExamples/tree/master/training/cifar) and made it available as a submodule. To download, execute:
 
 ```bash
 git submodule update --init --recursive
@@ -123,16 +123,16 @@ def initialize(args,
                collate_fn=None):
 ```
 
-Here we initialize DeepSpeed with CIFAR-10 model (`net`), `args`, `parameters` and `trainset`:
+Here we initialize DeepSpeed with the CIFAR-10 model (`net`), `args`, `parameters` and `trainset`:
 
 ```python
  parameters = filter(lambda p: p.requires_grad, net.parameters())
  args=add_argument()
 
  # Initialize DeepSpeed to use the following features
- # 1) Distributed model
- # 2) Distributed data loader
- # 3) DeepSpeed optimizer
+ # 1) Distributed model.
+ # 2) Distributed data loader.
+ # 3) DeepSpeed optimizer.
  model_engine, optimizer, trainloader, _ = deepspeed.initialize(args=args, model=net, model_parameters=parameters, training_data=trainset)
 
 ```
