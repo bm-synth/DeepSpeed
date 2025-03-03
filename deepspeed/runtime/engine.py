@@ -1522,7 +1522,8 @@ class DeepSpeedEngine(Module):
                                    timers=timers,
                                    grad_acc_dtype=self.get_data_types()[1],
                                    graph_harvesting=self.graph_harvesting(),
-                                   immediate_grad_update=self._config.bfloat16_immediate_grad_update)
+                                   immediate_grad_update=self._config.bfloat16_immediate_grad_update,
+                                   has_moe_layers=self.has_moe_layers)
 
         return optimizer
 
@@ -1986,9 +1987,6 @@ class DeepSpeedEngine(Module):
                 self.optimizer.reduce_gradients(pipeline_parallel=self.pipeline_parallelism)
             else:
                 grads = None
-                if hasattr(self.optimizer, "get_grads_for_reduction"):
-                    # This is currently for BF16 optimizer
-                    grads = self.optimizer.get_grads_for_reduction()
                 self.buffered_allreduce_fallback(grads=grads, elements_per_buffer=bucket_size)
 
     @instrument_w_nvtx
@@ -2419,10 +2417,10 @@ class DeepSpeedEngine(Module):
 
             dist.all_reduce(tensor_to_allreduce, group=dp_group)
             if self.gradient_average:
-                if self.gradient_predivide_factor() != dist.get_world_size(group=dp_group):
-                    tensor_to_allreduce.mul_(self.gradient_predivide_factor() / dist.get_world_size(group=dp_group))
+                if self.gradient_predivide_factor() != dp_world_size:
+                    tensor_to_allreduce.mul_(self.gradient_predivide_factor() / dp_world_size)
         else:
-            tensor_to_allreduce.mul_(1. / dist.get_world_size(group=dp_group))
+            tensor_to_allreduce.mul_(1. / dp_world_size)
             dist.all_reduce(tensor_to_allreduce, group=dp_group)
 
         if self.communication_data_type != tensor.dtype and tensor is not tensor_to_allreduce:
@@ -2497,26 +2495,35 @@ class DeepSpeedEngine(Module):
                 self.allreduce_no_retain(dense_bucket, dp_group=dp_group, numel_per_bucket=elements_per_buffer)
 
     def _reduce_expert_gradients(self, expert_grads, elements_per_buffer):
+        # to maintain the gradients value unaffected by ep_size setting,
+        # utilize dp_world_size for allreduce average
+        dp_world_size = dist.get_world_size(groups._get_data_parallel_group())
         for ep_name, expert_grads_group in expert_grads.items():
+            ep_dp_group = groups._get_expert_data_parallel_group(ep_name)
             split_sparse_tensor_buckets, split_dense_tensor_buckets = split_half_float_double_sparse(
                 expert_grads_group)
 
             for _, sparse_bucket_tuple in enumerate(split_sparse_tensor_buckets):
                 if sparse_bucket_tuple:
                     bucket_type, sparse_bucket = sparse_bucket_tuple
-                    self.sparse_allreduce_no_retain(sparse_bucket, groups._get_expert_data_parallel_group(ep_name))
+                    self.sparse_allreduce_no_retain(sparse_bucket, dp_group=ep_dp_group, dp_world_size=dp_world_size)
 
             for _, dense_bucket_tuple in enumerate(split_dense_tensor_buckets):
                 if dense_bucket_tuple:
                     bucket_type, dense_bucket = dense_bucket_tuple
                     # Separate between diff groups
                     self.allreduce_no_retain(dense_bucket,
-                                             dp_group=groups._get_expert_data_parallel_group(ep_name),
-                                             numel_per_bucket=elements_per_buffer)
+                                             dp_group=ep_dp_group,
+                                             numel_per_bucket=elements_per_buffer,
+                                             dp_world_size=dp_world_size)
 
     def buffered_allreduce_fallback(self, grads=None, elements_per_buffer=500000000):
         if grads is None:
-            non_expert_grads, expert_grads = self._get_gradients_for_reduction()
+            if hasattr(self.optimizer, "get_grads_for_reduction"):
+                # This is currently for BF16 optimizer
+                non_expert_grads, expert_grads = self.optimizer.get_grads_for_reduction()
+            else:
+                non_expert_grads, expert_grads = self._get_gradients_for_reduction()
         else:
             assert not self.has_moe_layers, "attempting to reduce grads in unsupported way w.r.t. MoE"
             non_expert_grads = grads
@@ -2541,7 +2548,7 @@ class DeepSpeedEngine(Module):
             sparse_list.append(self.sparse_allreduce(sparse, dp_group, dp_world_size))
         return sparse_list
 
-    def sparse_allreduce(self, sparse, dp_group):
+    def sparse_allreduce(self, sparse, dp_group, dp_world_size=None):
         original_data_type = sparse.values.dtype
         if self.communication_data_type != sparse.values.dtype:
             if self.communication_data_type in (torch.float16, torch.bfloat16):
@@ -2553,12 +2560,13 @@ class DeepSpeedEngine(Module):
             indices = sparse.indices
             values = sparse.values
 
+        if dp_world_size is None:
+            dp_world_size = dist.get_world_size(group=dp_group)
         if self.postscale_gradients():
             if self.gradient_average:
-                values.mul_(self.gradient_predivide_factor() /
-                            (dist.get_world_size(group=dp_group) / float(self.sequence_parallel_size)))
+                values.mul_(self.gradient_predivide_factor() / (dp_world_size / float(self.sequence_parallel_size)))
         else:
-            values.mul_(1. / (dist.get_world_size(group=dp_group) / float(self.sequence_parallel_size)))
+            values.mul_(1. / (dp_world_size / float(self.sequence_parallel_size)))
 
         indices_device_list = self.sparse_all_gather(indices, dp_group)
         values_device_list = self.sparse_all_gather(values, dp_group)
