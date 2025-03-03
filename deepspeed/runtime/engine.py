@@ -2343,16 +2343,10 @@ class DeepSpeedEngine(Module):
         return self._get_optimizer_param("type")
 
     def get_mom(self):
-        if self.optimizer_name() in ["SGD", "RMSprop"]:
-            return self._get_optimizer_param("momentum")
+        if self.optimizer_name() in ['SGD', 'RMSprop']:
+            return self._get_optimizer_param('momentum')
         else:
-            return self._get_optimizer_param("betas")
-
-    def get_pld_theta(self):
-        if self.progressive_layer_drop:
-            return self.progressive_layer_drop.get_theta()
-        else:
-            return None
+            return self._get_optimizer_param('betas')
 
     def _report_progress(self, step):
         lr = self.get_lr()
