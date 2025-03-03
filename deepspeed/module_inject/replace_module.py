@@ -388,7 +388,6 @@ def replace_transformer_layer(orig_layer_impl, model, checkpoint_dict, config, m
                                              checkpoint=checkpoint_file)
             pbar.update(1)
             gc.collect()
-        replaced_module = set_lm_head(replaced_module)
         # conv2d tp module replace
         # Now is for yuan model. Add model list and conv policy to decide whether to replace conv.
         if 'Yuan' in str(replaced_module):
