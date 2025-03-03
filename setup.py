@@ -406,6 +406,11 @@ with open('deepspeed/git_version_info_installed.py', 'w') as fd:
 
 print(f'install_requires={install_requires}')
 
+# Parse README.md to make long_description for PyPI page.
+thisdir = os.path.abspath(os.path.dirname(__file__))
+with open(os.path.join(thisdir, 'README.md'), encoding='utf-8') as fin:
+    readme_text = fin.read()
+
 setup(name='deepspeed',
       version=ds_version,
       description='DeepSpeed library',
