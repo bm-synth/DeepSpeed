@@ -39,8 +39,16 @@ INFERENCE_MODEL_TIMER = "model-forward-inference"
 
 class InferenceEngine(Module):
     inference_mp_group = None
-    inference_ep_group = None
-    expert_mp_group = None
+
+    def __init__(self,
+                 model,
+                 mp_size=1,
+                 mpu=None,
+                 checkpoint=None,
+                 dtype=None,
+                 injection_dict=None,
+                 replace_method='auto',
+                 quantization_setting=None):
 
     def __init__(self, model, config):
         """
@@ -106,7 +114,7 @@ class InferenceEngine(Module):
             self.mp_world_size = dist.get_world_size(
                 group=self.mpu.get_model_parallel_group())
             self.mp_group = self.mpu.get_model_parallel_group()
-        elif self.mp_world_size > 1 and not dist.is_initialized():
+        elif self.mp_world_size > 1:
             self._create_model_parallel_group()
 
         # apply injection policy
@@ -176,28 +184,19 @@ class InferenceEngine(Module):
         # this is being passed to replace_transformer_layer(config=self.user_model_config_dict)
         self.config = getattr(self.module, 'config', None) if config.config is None else config.config
 
-    def remove_mask_prepare_for_bloom(self):
-        if hasattr(self.module, 'transformer'):
-            if hasattr(self.module.transformer, '_prepare_attn_mask'):
-                self.module.transformer._prepare_attn_mask = lambda attention_mask, *args, **kwargs: attention_mask
+    def _create_model_parallel_group(self):
+        # Call the init process
+        if InferenceEngine.inference_mp_group is None:
+            init_distributed()
 
-    def build_alibi_tensor(self):
-        if hasattr(self.module, 'transformer'):
-            if hasattr(self.module.transformer, 'build_alibi_tensor'):
-                self.module.transformer.build_alibi_tensor = build_bloom_alibi_tensor
-            if hasattr(self.module.transformer, 'build_mpt_alibi_tensor'):
-                self.module.transformer.build_mpt_alibi_tensor_orig = self.module.transformer.build_mpt_alibi_tensor
-                self.module.transformer.__class__.build_mpt_alibi_tensor = build_mpt_alibi_tensor
-        if hasattr(self.module, 'model'):
-            if hasattr(self.module.model, 'get_alibi_mask'):
-                self.module.model.get_alibi_mask_orig = self.module.model.get_alibi_mask
-                self.module.model.__class__.get_alibi_mask = get_alibi_mask
+            local_rank = int(os.getenv('LOCAL_RANK', '0'))
+            torch.cuda.set_device(local_rank)
 
-        local_rank = int(os.getenv('LOCAL_RANK', '0'))
-        torch.cuda.set_device(local_rank)
-
-        ranks = [i for i in range(self.mp_world_size)]
-        self.mp_group = dist.new_group(ranks)
+            ranks = [i for i in range(self.mp_world_size)]
+            self.mp_group = dist.new_group(ranks)
+            InferenceEngine.inference_mp_group = self.mp_group
+        else:
+            self.mp_group = InferenceEngine.inference_mp_group
 
     def _check_quantize_setting(self, quantization_setting):
         self.quatize_bits = 8
