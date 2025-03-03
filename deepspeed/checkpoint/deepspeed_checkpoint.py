@@ -1,17 +1,15 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 import os
-import re
 from typing import Dict
 import torch
 
 from .reshape_3d_utils import model_3d_desc
-from .reshape_utils import (basic_folder_validation, merge_state, partition_data, get_files, get_files_with_prefix)
+from .reshape_utils import (basic_folder_validation,
+                            merge_state,
+                            partition_data,
+                            get_files,
+                            get_files_with_prefix)
 
-from .constants import (MODEL_FILE_PREFIX, LAYER_FILE_PREFIX)
+from .constants import (ZERO_FILE_PREFIX, MODEL_FILE_PREFIX, LAYER_FILE_PREFIX)
 
 from .reshape_meg_2d import reshape_meg_2d_parallel, meg_2d_parallel_map
 from .zero_checkpoint import ZeROCheckpoint
@@ -22,58 +20,62 @@ FINAL_LAYER_NORM_INDEX = -1
 ARGS_KEY = 'args'
 CHECKPOINT_INFO_KEY = 'checkpoint_info'
 ITERATION_KEY = 'iteration'
-LAYER_FILE_PREFIX_PATTERN = r'layer_(\d+)-model_.*'
 
 SEQUENTIAL_LAYERS = [
-    'input_layernorm.weight', 'input_layernorm.bias', 'self_attention.dense.bias', 'post_attention_layernorm.weight',
-    'post_attention_layernorm.bias', 'mlp.dense_4h_to_h.bias', 'position_embeddings.weight'
+    'input_layernorm.weight',
+    'input_layernorm.bias',
+    'self_attention.dense.bias',
+    'post_attention_layernorm.weight',
+    'post_attention_layernorm.bias',
+    'mlp.dense_4h_to_h.bias',
+    'position_embeddings.weight'
 ]
 
 LAYER_CONCAT_DIM = {'self_attention.dense.weight': 1, 'mlp.dense_4h_to_h.weight': 1}
 
 
 class DeepSpeedCheckpoint(object):
-
-    def __init__(self,
-                 dir,
-                 tp_degree=None,
-                 pp_degree=None,
-                 dp_degree=None,
-                 final_layer_norm_idx=FINAL_LAYER_NORM_INDEX):
-        self.final_layer_norm_idx = final_layer_norm_idx
+    def __init__(self, dir, tp_degree=None, pp_degree=None, dp_degree=None):
         self.dir = dir
-
-        pipeline_parallel = len(get_files_with_prefix(get_files(dir), LAYER_FILE_PREFIX)) > 0
-
-        self._validate_folder(dir, pipeline_parallel)
-
-        self.zero_checkpoint = ZeROCheckpoint(dir)
+        self._validate_folder(dir)
 
         self.file_list = get_files(dir)
+        self.zero_files = get_files_with_prefix(self.file_list, ZERO_FILE_PREFIX)
         self.layer_files = get_files_with_prefix(self.file_list, LAYER_FILE_PREFIX)
         self.mp_rank_files = get_files_with_prefix(self.file_list, MODEL_FILE_PREFIX)
 
         self.layer_keys = self._get_layer_keys()
         self.layer_count = len(self.layer_keys)
+        self.original_tp_degree = len(
+            get_files_with_prefix(self.layer_files,
+                                  f'{LAYER_FILE_PREFIX}01'))
+        self.original_pp_degree = len(self.mp_rank_files) // self.original_tp_degree
+        self.original_dp_degree = max(
+            1,
+            len(self.zero_files) // (self.original_pp_degree * self.original_tp_degree))
 
-        self.tp_degree = self.zero_checkpoint.get_src_tp_degree() if tp_degree is None else tp_degree
-        self.pp_degree = self.zero_checkpoint.get_src_pp_degree() if pp_degree is None else pp_degree
-        self.dp_degree = self.zero_checkpoint.get_src_dp_degree() if dp_degree is None else dp_degree
+        self.tp_degree = self.original_tp_degree if tp_degree is None else tp_degree
+        self.pp_degree = self.original_pp_degree if pp_degree is None else pp_degree
+        self.dp_degree = self.original_dp_degree if dp_degree is None else dp_degree
 
-        self.original_world_size = self.zero_checkpoint.get_src_tp_degree() * self.zero_checkpoint.get_src_pp_degree(
-        ) * self.zero_checkpoint.get_src_dp_degree()
+        self.original_world_size = self.original_tp_degree * self.original_pp_degree * self.original_dp_degree
         self.world_size = self.tp_degree * self.pp_degree * self.dp_degree
 
-        self.old_2d_map = meg_2d_parallel_map(self.zero_checkpoint.get_src_pp_degree(),
-                                              self.zero_checkpoint.get_src_tp_degree())
+        self.old_2d_map = meg_2d_parallel_map(self.original_pp_degree,
+                                              self.original_tp_degree)
         self.old_2d_map.simple_init()
-        self.new_2d_map = reshape_meg_2d_parallel(old_pp_degree=self.zero_checkpoint.get_src_pp_degree(),
-                                                  old_tp_degree=self.zero_checkpoint.get_src_tp_degree(),
+        self.new_2d_map = reshape_meg_2d_parallel(old_pp_degree=self.original_pp_degree,
+                                                  old_tp_degree=self.original_tp_degree,
                                                   new_pp_degree=self.pp_degree,
                                                   new_tp_degree=self.tp_degree)
 
-        if self.is_change_pp_degree() or self.is_change_tp_degree() or self.is_change_dp_degree():
-            self.zero_checkpoint.reshape(model_3d_desc(self.pp_degree, self.tp_degree, self.dp_degree))
+        self.zero_checkpoint = ZeROCheckpoint(dir)
+        if self.is_change_pp_degree() or self.is_change_tp_degree(
+        ) or self.is_change_dp_degree():
+            self.zero_checkpoint.reshape(
+                model_3d_desc(self.pp_degree,
+                              self.tp_degree,
+                              self.dp_degree))
 
         self.global_state = {}
 
@@ -81,17 +83,18 @@ class DeepSpeedCheckpoint(object):
         self.pp_to_transformer_map = self._build_pp_transformer_map()
         self.transformer_file_map = self._build_transformer_file_map()
         self.tp_to_embedding_map = self._build_tp_other_layer_map(EMBEDDING_LAYER_INDEX)
-        self.tp_to_final_norm_map = self._build_tp_other_layer_map(self.final_layer_norm_idx)
+        self.tp_to_final_norm_map = self._build_tp_other_layer_map(
+            FINAL_LAYER_NORM_INDEX)
         self._build_global_state()
 
     def is_change_tp_degree(self):
-        return self.tp_degree != self.zero_checkpoint.get_src_tp_degree()
+        return self.tp_degree != self.original_tp_degree
 
     def is_change_pp_degree(self):
-        return self.pp_degree != self.zero_checkpoint.get_src_pp_degree()
+        return self.pp_degree != self.original_pp_degree
 
     def is_change_dp_degree(self):
-        return self.dp_degree != self.zero_checkpoint.get_src_dp_degree()
+        return self.dp_degree != self.original_dp_degree
 
     def show_2d_mapping(self):
         print(f'reshaped 2d map ---- begin')
@@ -109,14 +112,14 @@ class DeepSpeedCheckpoint(object):
     def show_tp_final_norm_map(self):
         self._dump_mapping(self.tp_to_final_norm_map, 'tp_to_final_norm_layers')
 
-    def show_pp_transformer_map(self):
-        self._dump_mapping(self.pp_to_transformer_map, 'pp_to_transformer_layers')
+    def show_pp_tranformer_map(self):
+        self._dump_mapping(self.pp_to_transformer_map, 'pp_to_tranformer_layers')
 
     def show_transformer_file_map(self):
-        self._dump_mapping(self.transformer_file_map, 'rank_to_transformer_files')
+        self._dump_mapping(self.transformer_file_map, 'rank_to_tranformer_files')
 
     def _build_global_state(self):
-        sd = torch.load(self.mp_rank_files[0], map_location=torch.device('cpu'), weights_only=False)
+        sd = torch.load(self.mp_rank_files[0], map_location=torch.device('cpu'))
         self.global_state[ITERATION_KEY] = sd.get(ITERATION_KEY, 0)
         self.global_state[ARGS_KEY] = sd.get(ARGS_KEY, None)
 
@@ -127,17 +130,19 @@ class DeepSpeedCheckpoint(object):
                                                        keys_to_ignore=[PARAM_SHAPES])
 
     def get_zero_files(self, pp_index, tp_index, dp_index) -> list:
-        return self.zero_checkpoint.get_files_for_rank(pp_index=pp_index, tp_index=tp_index, dp_index=dp_index)
+        return self.zero_checkpoint.get_files_for_rank(pp_index=pp_index,
+                                                       tp_index=tp_index,
+                                                       dp_index=dp_index)
 
     def get_embedding_layer_id(self):
         return self.layer_keys[EMBEDDING_LAYER_INDEX]
 
     def get_final_norm_layer_id(self):
-        return self.layer_keys[self.final_layer_norm_idx]
+        return self.layer_keys[FINAL_LAYER_NORM_INDEX]
 
     def get_iteration(self):
         if not ITERATION_KEY in self.global_state:
-            sd = torch.load(self.mp_rank_files[0], map_location=torch.device('cpu'), weights_only=False)
+            sd = torch.load(self.mp_rank_files[0], map_location=torch.device('cpu'))
             self.global_state[ITERATION_KEY] = sd.get(ITERATION_KEY, 0)
 
         return self.global_state[ITERATION_KEY]
@@ -145,7 +150,8 @@ class DeepSpeedCheckpoint(object):
     def get_embedding_state(self, tp_index: int) -> Dict:
         assert tp_index in self.tp_to_embedding_map.keys()
         sd_list = [
-            torch.load(fname, map_location=torch.device('cpu'), weights_only=False)
+            torch.load(fname,
+                       map_location=torch.device('cpu'))
             for fname in self.tp_to_embedding_map[tp_index]
         ]
         sd = self._merge_state_dicts(sd_list)
@@ -157,7 +163,7 @@ class DeepSpeedCheckpoint(object):
 
     def _get_checkpoint_value(self, key):
         if not key in self.global_state:
-            sd = torch.load(self.mp_rank_files[0], map_location=torch.device('cpu'), weights_only=False)
+            sd = torch.load(self.mp_rank_files[0], map_location=torch.device('cpu'))
             self.global_state[key] = sd.get(key, None)
 
         return self.global_state[key]
@@ -165,14 +171,17 @@ class DeepSpeedCheckpoint(object):
     def get_args(self):
         return self._get_checkpoint_value(ARGS_KEY)
 
-    def get_checkpoint_info(self, info_key=CHECKPOINT_INFO_KEY):
-        return self._get_checkpoint_value(info_key)
+    def get_checkpoint_info(self):
+        return self._get_checkpoint_value(CHECKPOINT_INFO_KEY)
 
     def get_2d_parallel_state(self, tp_index: int, pp_index: int) -> dict:
         assert tp_index < self.tp_degree
         assert pp_index < self.pp_degree
         fname_list = self.get_2d_parallel_files(tp_index=tp_index, pp_index=pp_index)
-        sd_list = [torch.load(fname, map_location=torch.device('cpu'), weights_only=False) for fname in fname_list]
+        sd_list = [
+            torch.load(fname,
+                       map_location=torch.device('cpu')) for fname in fname_list
+        ]
 
         merged_sd = None
         for sd in sd_list:
@@ -188,7 +197,10 @@ class DeepSpeedCheckpoint(object):
         assert pp_index < self.pp_degree
         t_list = []
         for fname_list in self.transformer_file_map[(tp_index, pp_index)]:
-            sd_list = [torch.load(fname, map_location=torch.device('cpu'), weights_only=False) for fname in fname_list]
+            sd_list = [
+                torch.load(fname,
+                           map_location=torch.device('cpu')) for fname in fname_list
+            ]
             sd = self._merge_state_dicts(sd_list)
             t_list.append(sd)
         return t_list
@@ -199,7 +211,8 @@ class DeepSpeedCheckpoint(object):
 
     def get_final_norm_state(self, tp_index: int) -> Dict:
         assert tp_index in self.tp_to_final_norm_map.keys()
-        sd = torch.load(self.tp_to_final_norm_map[tp_index][0], map_location=torch.device('cpu'), weights_only=False)
+        sd = torch.load(self.tp_to_final_norm_map[tp_index][0],
+                        map_location=torch.device('cpu'))
         return sd
 
     def get_final_norm_files(self, tp_index: int) -> list:
@@ -207,11 +220,9 @@ class DeepSpeedCheckpoint(object):
         return self.tp_to_final_norm_map[tp_index]
 
     def _build_tp_other_layer_map(self, layer_index: int):
-        data_map = {}
-        if len(self.layer_files) < 1:
-            return data_map
-        assert layer_index <= len(self.layer_files)
-        layer_files = get_files_with_prefix(self.layer_files, self.layer_keys[layer_index])
+        assert layer_index < len(self.layer_files)
+        layer_files = get_files_with_prefix(self.layer_files,
+                                            self.layer_keys[layer_index])
         layer_file_partitions = partition_data(layer_files, self.tp_degree)
         data_map = {i: flist for i, flist in enumerate(layer_file_partitions)}
         return data_map
@@ -224,13 +235,13 @@ class DeepSpeedCheckpoint(object):
 
     def _build_pp_transformer_map(self):
         data_map = {}
-        if self.pp_degree > 0:
-            transformer_layers = self.layer_keys[1:self.final_layer_norm_idx]
-            layers_per_pp = len(transformer_layers) // self.pp_degree
-            data_map = {
-                i: transformer_layers[i * layers_per_pp:(i + 1) * layers_per_pp]
-                for i in range(0, self.pp_degree)
-            }
+        transformer_layers = self.layer_keys[1:-1]
+        layers_per_pp = len(transformer_layers) // self.pp_degree
+        data_map = {
+            i: transformer_layers[i * layers_per_pp:(i + 1) * layers_per_pp]
+            for i in range(0,
+                           self.pp_degree)
+        }
         return data_map
 
     def _dump_mapping(self, data_map, map_tag=None):
@@ -240,16 +251,16 @@ class DeepSpeedCheckpoint(object):
             print(f'{k} = {v}')
 
     def _build_transformer_file_map(self):
-        transformer_layer_keys = self.layer_keys[1:self.final_layer_norm_idx]
+        transformer_layer_keys = self.layer_keys[1:-1]
         file_map = {}
         # XXX: this is not guaranteed
-        layers_per_pp = 1
-        if self.pp_degree > 0:
-            layers_per_pp = len(transformer_layer_keys) // self.pp_degree
+        layers_per_pp = len(transformer_layer_keys) // self.pp_degree
+        if layers_per_pp == 0:
+            layers_per_pp = 1
         #print(f"{transformer_layer_keys} {layers_per_pp}")
         for key_index, layer_key in enumerate(transformer_layer_keys):
             pp_index = key_index // layers_per_pp
-            layer_files = get_files_with_prefix(self.layer_files, layer_key + '-')
+            layer_files = get_files_with_prefix(self.layer_files, layer_key)
             layer_file_partitions = partition_data(layer_files, self.tp_degree)
             for tp_index in range(self.tp_degree):
                 map_key = (tp_index, pp_index)
@@ -261,8 +272,8 @@ class DeepSpeedCheckpoint(object):
 
     def _sanity_check(self):
         assert len(self.mp_rank_files) % self.tp_degree == 0
-        assert self.zero_checkpoint.num_files % (self.pp_degree * self.tp_degree) == 0
-        assert self.zero_checkpoint.num_files % (self.tp_degree) == 0
+        assert len(self.zero_files) % (self.pp_degree * self.tp_degree) == 0
+        assert len(self.layer_keys) > 2
         # XXX: fix me - isn't always the case
         # only true with  --pp-partition-method 'type:transformer|embedding' \
         # assert (len(self.layer_keys) - 2) % self.pp_degree == 0
@@ -274,13 +285,11 @@ class DeepSpeedCheckpoint(object):
 
     def _get_layer_keys(self):
         key_set = set()
+        key_len = len(LAYER_FILE_PREFIX) + 2
         for file_path in self.layer_files:
             _, fname = os.path.split(file_path)
-            layer_id = re.search(LAYER_FILE_PREFIX_PATTERN, fname).group(1)
-            key_set.add(layer_id)
-        sorted_ids = sorted(list(key_set), key=int)
-        layer_keys = [LAYER_FILE_PREFIX + str(layer_id) for layer_id in sorted_ids]
-        return layer_keys
+            key_set.add(fname[:key_len])
+        return sorted(list(key_set))
 
     def _merge_state_dicts(self, sd_list):
         merged_sd = {}
@@ -293,15 +302,15 @@ class DeepSpeedCheckpoint(object):
 
         return merged_sd
 
-    def _validate_folder(self, dir, pipeline_parallel):
+    def _validate_folder(self, dir):
         basic_folder_validation(dir)
 
         file_list = get_files(dir)
-        file_prefix_list = [MODEL_FILE_PREFIX]
-        if pipeline_parallel:
-            file_prefix_list.extend([LAYER_FILE_PREFIX, f'{LAYER_FILE_PREFIX}01'])
-        for file_prefix in file_prefix_list:
+
+        for file_prefix in [
+                MODEL_FILE_PREFIX,
+                LAYER_FILE_PREFIX,
+                f'{LAYER_FILE_PREFIX}01'
+        ]:
             ckpt_files = get_files_with_prefix(file_list, file_prefix)
-            assert len(
-                ckpt_files
-            ) > 0, f'{dir} seems a bogus DeepSpeed checkpoint folder: Cannot find {file_prefix}* files in there.'
+            assert len(ckpt_files) > 0, f'{dir} seems a bogus DeepSpeed checkpoint folder: Cannot find {file_prefix}* files in there.'

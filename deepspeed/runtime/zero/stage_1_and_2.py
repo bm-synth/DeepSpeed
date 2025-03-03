@@ -18,15 +18,17 @@ from deepspeed.runtime.utils import (bwc_tensor_model_parallel_rank,
                                      align_dense_tensors,
                                      all_gather_dp_groups)
 
-from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION_GRADIENTS
+from deepspeed.runtime.zero.constants import ZERO_OPTIMIZATION_GRADIENTS, ZERO_OPTIMIZATION_OPTIMIZER_STATES
 from deepspeed.runtime.zero.offload_constants import OFFLOAD_CPU_DEVICE, OFFLOAD_OPTIMIZER
 from deepspeed.ops.adam import DeepSpeedCPUAdam
 from deepspeed.utils import logger
 from deepspeed.utils.bwc import bwc_tensor_model_parallel_rank
 from deepspeed.moe.utils import is_moe_param
 from deepspeed.git_version_info import version
+
 from deepspeed.runtime.constants import PIPE_REPLICATED
 from deepspeed.checkpoint.constants import (DS_VERSION,
+                                            GROUP_PADDINGS,
                                             PARTITION_COUNT,
                                             SINGLE_PARTITION_OF_FP32_GROUPS,
                                             BASE_OPTIMIZER_STATE,
@@ -314,15 +316,6 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             ]
             self.bit16_groups.append(trainable_parameters)
 
-            # Record padding required to align group to world size
-            if partition_id == dist.get_world_size(
-                    group=self.real_dp_process_group[i]) - 1:
-                padding = get_alignment_padding(self.bit16_groups[i],
-                                                self.partition_count[i])
-            else:
-                padding = 0
-            self.groups_padding.append(padding)
-
             # not sure why apex was cloning the weights before flattening
             # removing cloning here
 
@@ -374,6 +367,15 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             del flattened_buffer
 
             see_memory_usage(f"After flattening and moving param group {i} to GPU", force=False)
+
+            # Record padding required for alignment
+            if partition_id == dist.get_world_size(
+                    group=self.real_dp_process_group[i]) - 1:
+                padding = self.bit16_groups_flat[i].numel() - sum(
+                    [t.numel() for t in self.round_robin_bit16_groups[i]])
+            else:
+                padding = 0
+            self.groups_padding.append(padding)
 
             if dist.get_rank(group=self.real_dp_process_group[i]) == 0:
                 see_memory_usage(f"After Flattening and after emptying param group {i} cache", force=False)
@@ -2228,7 +2230,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         state_dict[SINGLE_PARTITION_OF_FP32_GROUPS] = fp32_groups_without_padding
 
         state_dict[
-            ZERO_STAGE] = ZeroStageEnum.gradients if self.partition_gradients else ZeroStageEnum.optimizer_states
+            ZERO_STAGE] = ZERO_OPTIMIZATION_GRADIENTS if self.partition_gradients else ZERO_OPTIMIZATION_OPTIMIZER_STATES
         state_dict[GROUP_PADDINGS] = self.groups_padding
         state_dict[PARTITION_COUNT] = self.partition_count
 
@@ -2349,36 +2351,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                         state_dict_list,
                         load_optimizer_states=True,
                         load_from_fp32_weights=False,
-                        checkpoint_folder=None,
-                        load_serial=None,
-                        param_shapes=None):
-        if checkpoint_folder:
-            self._load_universal_checkpoint(checkpoint_folder, load_optimizer_states, load_from_fp32_weights)
-        else:
-            self._load_legacy_checkpoint(state_dict_list, load_optimizer_states, load_from_fp32_weights)
-
-    def _load_universal_checkpoint(self, checkpoint_folder, load_optimizer_states, load_from_fp32_weights):
-        self.load_hp_checkpoint_state_from_checkpoint_dir("bit16_groups", checkpoint_folder)
-
-    def _load_global_state(self, sd):
-        self.loss_scaler = sd.get(LOSS_SCALER, self.loss_scaler)
-        self.dynamic_loss_scale = sd.get('dynamic_loss_scale', self.dynamic_loss_scale)
-        self.overflow = sd.get('overflow', self.overflow)
-        self.clip_grad = sd.get(CLIP_GRAD, self.clip_grad)
-
-        ckpt_version = sd.get(DS_VERSION, False)
-        assert ckpt_version, f"Empty ds_version in checkpoint, not clear how to proceed"
-        ckpt_version = pkg_version.parse(ckpt_version)
-
-        # zero stage 1 mode
-        if not self.partition_gradients:
-            required_version = pkg_version.parse("0.3.17")
-            error_str = f"ZeRO stage 1 changed in {required_version} and is not backwards compatible " \
-                "with older stage 1 checkpoints. If you'd like to load an old ZeRO-1 checkpoint " \
-                "please use an older version of DeepSpeed (<= 0.5.8) and set 'legacy_stage1': true in your zero config json."
-            assert required_version <= ckpt_version, f"Old version: {ckpt_version} {error_str}"
-
-    def _load_legacy_checkpoint(self, state_dict_list, load_optimizer_states=True, load_from_fp32_weights=False):
+                        checkpoint_folder=None):
         r"""Loading ZeRO checkpoint
 
         Arguments:
