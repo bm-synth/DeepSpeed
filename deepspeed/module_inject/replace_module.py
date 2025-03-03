@@ -461,22 +461,34 @@ def replace_transformer_layer(orig_layer_impl,
         def _replace(child, name, conv_linear_layer):
             mp_replace = ReplaceWithTensorSlicing(mp_group=mp_group)
             if name in all_reduce_linears:
-                new_weight = torch.empty(
-                    (child.weight.shape[0]
-                     if conv_linear_layer else child.weight.shape[1] // mp_size,
-                     child.weight.shape[1]
-                     if conv_linear_layer else child.weight.shape[0]),
-                    device=child.weight.device,
-                    dtype=torch.half if fp16 else torch.float)
-                if not conv_linear_layer:
-                    child.weight.data.view(-1).copy_(
-                        child.weight.data.transpose(-1,
-                                                    -2).contiguous().view(-1))
-                    child.weight.data = child.weight.data.reshape(
-                        child.weight.data.shape[-1],
-                        child.weight.data.shape[-2])
-                data = mp_replace.copy(new_weight,
-                                       child.weight.data).to(torch.cuda.current_device())
+                new_weight = torch.empty((
+                    weight_shape[1] if conv_linear_layer else weight_shape[0],
+                    (weight_shape[0] if conv_linear_layer else weight_shape[1]) //
+                    mp_size,
+                ),
+                                         device=child.weight.device,
+                                         dtype=child.weight.dtype)
+                if z_inference:
+                    with deepspeed.zero.GatheredParameters(child.weight,
+                                                           modifier_rank=0):
+                        data = child.weight.data.to(new_weight.device)
+                        if conv_linear_layer:
+                            data = data.transpose(-1, -2).contiguous()
+                        data = mp_replace.copy(new_weight, data)
+                    child.weight.ds_tensor = torch.empty(1)
+                else:
+                    if conv_linear_layer:
+                        child.weight.data = child.weight.data.transpose(-1,
+                                                                        -2).contiguous()
+                    data = mp_replace.copy(new_weight, child.weight.data)
+                new_bias = torch.empty((weight_shape[0]),
+                                       device=child.weight.device,
+                                       dtype=child.weight.dtype)
+                if z_inference:
+                    with deepspeed.zero.GatheredParameters(child.bias, modifier_rank=0):
+                        new_bias.data.copy_(child.bias.data)
+                elif child.bias:
+                    new_bias.data.copy_(child.bias.data)
                 return LinearAllreduce(data, child.bias if child.bias is None else \
                             child.bias.to(torch.cuda.current_device()), mp_group)
             else:
@@ -516,7 +528,9 @@ def replace_transformer_layer(orig_layer_impl,
                                       child.weight.shape[1] // mp_size),
                                      device=child.weight.device,
                                      dtype=child.weight.dtype)
-            data = mp_replace.copy(new_weight, child.weight.data)
+            data = mp_replace.copy(new_weight,
+                                   child.weight.ds_tensor.data if hasattr(child.weight, 'ds_tensor') else \
+                                   child.weight.data)
             new_embedding = nn.Embedding(child.weight.shape[0],
                                          child.weight.shape[1] // mp_size)
             new_embedding.weight.data.copy_(data)
