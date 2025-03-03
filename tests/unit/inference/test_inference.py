@@ -363,7 +363,7 @@ class TestModelTask(DistributedTest):
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
 
         # Load the model on CPU first to avoid OOM for large models @fp32
-        pipe = pipeline(task, model=model, device=-1, framework="pt")
+        pipe = pipeline(task, model=model, device=torch.device("cpu"), framework="pt")
         if dtype == torch.half:
             pipe.model.half()
 
@@ -516,13 +516,64 @@ class TestInjectionPolicy(DistributedTest):
 
         # We have to load these large models on CPU with pipeline because not
         # enough GPU memory
-        pipe = pipeline(task, model=model, device=-1, framework="pt")
+        pipe = pipeline(task, model=model, device=torch.device("cpu"), framework="pt")
         bs_output = pipe(query, **inf_kwargs)
 
         pipe.model = deepspeed.init_inference(pipe.model,
                                               mp_size=world_size,
                                               dtype=dtype,
                                               injection_policy=injection_policy)
+        # Switch device to GPU so that input tensors are not on CPU
+        pipe.device = torch.device(f"cuda:{local_rank}")
+        ds_output = pipe(query, **inf_kwargs)
+
+        print(local_rank, "baseline", bs_output)
+        print(local_rank, "deepspeed", ds_output)
+        assert assert_fn(bs_output, ds_output)
+
+
+@pytest.mark.seq_inference
+@pytest.mark.parametrize(
+    "model_w_task",
+    [
+        ("Helsinki-NLP/opus-mt-en-de",
+         "translation"),
+    ],
+    ids=[
+        "marian",
+    ],
+)
+@pytest.mark.parametrize("dtype", [torch.float16], ids=["fp16"])
+@pytest.mark.parametrize("enable_cuda_graph", [False], ids=["noCG"])
+class TestAutoTensorParallelism(DistributedTest):
+    world_size = [2]
+
+    def test(
+        self,
+        model_w_task,
+        query,
+        inf_kwargs,
+        assert_fn,
+        invalid_model_task_config,
+        dtype,
+        enable_cuda_graph,
+    ):
+        if invalid_model_task_config:
+            pytest.skip(invalid_model_task_config)
+
+        model, task = model_w_task
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        world_size = int(os.getenv("WORLD_SIZE", "2"))
+
+        # We have to load these large models on CPU with pipeline because not
+        # enough GPU memory
+        pipe = pipeline(task, model=model, device=torch.device("cpu"), framework="pt")
+        bs_output = pipe(query, **inf_kwargs)
+
+        pipe.model = deepspeed.init_inference(pipe.model,
+                                              mp_size=world_size,
+                                              dtype=dtype,
+                                              replace_method="")
         # Switch device to GPU so that input tensors are not on CPU
         pipe.device = torch.device(f"cuda:{local_rank}")
         ds_output = pipe(query, **inf_kwargs)
