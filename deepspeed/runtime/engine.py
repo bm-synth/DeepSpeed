@@ -1498,30 +1498,13 @@ class DeepSpeedEngine(Module):
 
         return pld
 
-    def _configure_curriculum_scheduler_legacy(self):
-        scheduler = CurriculumScheduler(self.curriculum_params_legacy())
-        return scheduler
-
-    @staticmethod
     def is_map_style_dataset(obj):
         return hasattr(obj, "__getitem__") and hasattr(obj, "__len__")
 
-    @staticmethod
     def is_iterable_style_dataset(obj):
-        return isinstance(obj, torch.utils.data.IterableDataset)  # hasattr(obj, "__iter__") should work as well
-
-    def dataloader_drop_last(self):
-        return self._config.dataloader_drop_last
-
-    def was_step_applied(self) -> bool:
-        """Returns True if the latest ``step()`` produced in parameter updates.
-        Note that a ``False`` return is not an error condition. Steps are frequently
-        no-ops, such as between gradient accumulation boundaries or when overflows
-        occur.
-        Returns:
-            bool: Whether the latest ``step()`` modified model parameters.
-        """
-        return self._step_applied
+        return isinstance(obj,
+                          torch.utils.data.IterableDataset
+                          )  # hasattr(obj, "__iter__") should work as well
 
     def deepspeed_io(self,
                      dataset,
@@ -1531,7 +1514,7 @@ class DeepSpeedEngine(Module):
                      data_sampler=None,
                      collate_fn=None,
                      num_local_io_workers=None):
-        if not (self.is_map_style_dataset(dataset) or self.is_iterable_style_dataset(dataset)):
+        if not (is_map_style_dataset(dataset) or is_iterable_style_dataset(dataset)):
             raise ValueError("Training data must be a torch Dataset")
 
         if batch_size is None:
