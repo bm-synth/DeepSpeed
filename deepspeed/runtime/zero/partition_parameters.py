@@ -1551,10 +1551,12 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             # if param.ds_tensor is not None:
             #    assert id(param.data) == id(param.ds_tensor.data), \
             #    "After the parameters are initially partitioned, make sure we are not recreating the partition."
-            #print_rank_0(f"After Partitioning Param {param.ds_id} {param.ds_tensor.size()} {param.ds_tensor}",force=False)
-    @instrument_w_nvtx
-    def _partition_param(self, param, buffer=None, has_been_updated=False, free_data=True):
+            #print_rank_0(f"After Partitioning Param {param.ds_id}")
+            # self._param_status(param)
+
+    def _partition_param(self, param, buffer=None, has_been_updated=False):
         assert param.ds_status is not ZeroParamStatus.INFLIGHT, f" {param} Cannot partition a param in flight"
+
         global reuse_buffers
         print_rank_0(f"Param id {param.ds_id} status is {param.ds_status}", force=False)
         if param.ds_status is ZeroParamStatus.AVAILABLE:
