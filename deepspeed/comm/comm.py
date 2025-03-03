@@ -325,10 +325,12 @@ def allgather_fn(output_tensor, input_tensor, group=None, async_op=False, debug=
     if cdb.has_all_gather_into_tensor():
         return all_gather_into_tensor(output_tensor, input_tensor, group=group, async_op=async_op, debug=debug)
     else:
-        if get_rank() == 0:
-            utils.logger.warning_once("unable to find torch.distributed.all_gather_into_tensor. will fall back to "
-                                      "torch.distributed.all_gather which will result in suboptimal performance. "
-                                      "please consider upgrading your pytorch installation.")
+        if not has_warned_all_gather and get_rank() == 0:
+            utils.logger.warning(
+                "unable to find torch.distributed._all_gather_base. will fall back to "
+                "torch.distributed.all_gather which will result in suboptimal performance. "
+                "please consider upgrading your pytorch installation.")
+            has_warned_all_gather = True
         output_tensors = list(torch.chunk(output_tensor, cdb.get_world_size(group)))
         return all_gather(output_tensors, input_tensor, group=group, async_op=async_op, debug=debug)
 
