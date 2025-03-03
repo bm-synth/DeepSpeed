@@ -13,20 +13,6 @@ from deepspeed.runtime.base_optimizer import DeepSpeedOptimizer
 from deepspeed.runtime.utils import get_global_norm, get_flattened_grad_norm, CheckOverflow, get_weight_norm, get_norm_with_moe_layers, is_model_parallel_parameter
 from deepspeed.runtime.fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, MIN_LOSS_SCALE
 from deepspeed.utils import logger, log_dist
-from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, CLIP_GRAD
-from deepspeed.accelerator import get_accelerator
-from deepspeed.moe.utils import is_moe_param_group
-from deepspeed.runtime.constants import PIPE_REPLICATED
-from deepspeed.utils.bwc import bwc_tensor_model_parallel_rank
-
-OVERFLOW_CHECK_TIMER = 'overflow_check'
-COMPUTE_NORM_TIMER = 'compute_norm'
-UNSCALE_AND_CLIP_TIMER = 'unscale_and_clip'
-BASIC_STEP_TIMER = 'basic_step'
-UPDATE_FP16_TIMER = 'update_fp16'
-
-OVERFLOW_TIMERS = [COMPUTE_NORM_TIMER, OVERFLOW_CHECK_TIMER]
-STEP_TIMERS = OVERFLOW_TIMERS + [UNSCALE_AND_CLIP_TIMER, BASIC_STEP_TIMER, UPDATE_FP16_TIMER]
 
 
 class FP16_Optimizer(DeepSpeedOptimizer):
@@ -286,11 +272,30 @@ class FP16_Optimizer(DeepSpeedOptimizer):
             self.timers.log(OVERFLOW_TIMERS)
             return self.overflow
 
-        grads_groups_flat = []
-        non_experts_grads_for_norm = []
-        expert_grads_for_norm = {}
-        assert len(self.fp16_groups) == len(self.optimizer.param_groups)
+        # First determine if there is overflow.
+        self.start_timers([OVERFLOW_CHECK])
+        fp16_params = []
+        for i, group in enumerate(self.fp16_groups):
+            fp16_params.extend([p for p in group if p.grad is not None])
+        self.overflow = self.overflow_checker.has_overflow(fp16_params)
+        self.stop_timers([OVERFLOW_CHECK])
+        prev_scale = self.cur_scale
+        self._update_scale(self.overflow)
+        if self.overflow:
+            if self.verbose:
+                log_dist(
+                    "Overflow detected. Skipping step. Attempted loss "
+                    f"scale: {prev_scale}, reducing to {self.cur_scale}",
+                    ranks=[0])
+            # Clear gradients
+            for i, group in enumerate(self.fp16_groups):
+                for p in group:
+                    p.grad = None
 
+            self.log_timers(OVERFLOW_TIMERS)
+            return self.overflow
+
+        grads_groups_flat = []
         for i, group in enumerate(self.fp16_groups):
             data_type = self.fp32_groups_flat[i].dtype
 
@@ -311,26 +316,9 @@ class FP16_Optimizer(DeepSpeedOptimizer):
                 if param_group['name'] not in expert_grads_for_norm:
                     expert_grads_for_norm[param_group['name']] = []
 
-                expert_grads_for_norm[param_group['name']].append(self.fp32_groups_flat[i])
-            else:
-                # retrieves the required mask for calculating the norm of flat_grad
-                # perform this collect operation only once
-                if not self.has_executed_step:
-                    cur_flat_grad_norm_mask = self._get_norm_mask_idx(group)
-                    self.flatten_grad_norm_mask_list.append(cur_flat_grad_norm_mask)
-
-                non_experts_grads_for_norm.append(self.fp32_groups_flat[i])
-
-        if self.overflow:
-            if self.verbose:
-                print("[deepspeed] OVERFLOW! Skipping step. Attempted loss "
-                      "scale: {}, reducing to {}".format(prev_scale,
-                                                         self.cur_scale))
-            self.log_timers(OVERFLOW_TIMERS)
-            grads_groups_flat = None
-            return self.overflow
-
-        self.timers(COMPUTE_NORM_TIMER).start()
+        self.start_timers([UNSCALE_AND_CLIP])
+        self.unscale_and_clip_grads(grads_groups_flat, [all_groups_norm])
+        self.stop_timers([UNSCALE_AND_CLIP])
 
         all_groups_norm = get_flattened_grad_norm(non_experts_grads_for_norm,
                                                   mpu=self.mpu,
