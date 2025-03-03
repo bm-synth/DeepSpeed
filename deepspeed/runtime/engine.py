@@ -1837,6 +1837,14 @@ class DeepSpeedEngine(Module):
             data_parallel_world_size = self.mpu.get_data_parallel_world_size()
             data_parallel_rank = self.mpu.get_data_parallel_rank()
 
+        if data_sampler is None and (route == ROUTE_PREDICT or route == ROUTE_EVAL):
+            data_sampler = torch.utils.data.DistributedSampler(
+                dataset,
+                num_replicas=data_parallel_world_size,
+                rank=data_parallel_rank,
+                shuffle=False,
+            )
+
         deepspeed_dataloader_config = {}
         if self.curriculum_learning_enabled():
             deepspeed_dataloader_config = {
