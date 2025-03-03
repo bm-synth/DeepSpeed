@@ -144,6 +144,7 @@ class DeepSpeedEngine(Module):
         self.moe_layers = []
         self._step_applied = False
         self._global_grad_norm = None
+        self._is_gradient_accumulation_boundary = None
 
         # for debug purposes - can then debug print: debug_get_module_name(module)
         debug_extract_module_and_param_names(model)
@@ -1929,7 +1930,6 @@ class DeepSpeedEngine(Module):
         Query whether the current micro-batch is at the boundary of
         gradient accumulation, and thus will trigger gradient reductions and
         an optimizer step.
-
         Returns:
             bool: if the current step is a gradient accumulation boundary.
 
@@ -1941,13 +1941,14 @@ class DeepSpeedEngine(Module):
             return self._is_gradient_accumulation_boundary
 
     def set_gradient_accumulation_boundary(self, is_boundary):
-        """
-        Manually overrides the DeepSpeed engine's gradient accumulation boundary state, this is an optional
+        """Manually overrides the DeepSpeed engine's gradient accumulation boundary state, this is an optional
         feature and should be used with care. The state should be set before to the intended
-        value before each forward/backward. The final forward/backward should have the
+        value before each forward/backward. The final fordward/backward should have the
         boundary state set to True. This style allows client code to only call engine.step() once after all
         the gradient accumulation passes are complete. See example below:
+
         .. code-block:: python
+
         engine.set_gradient_accumulation_boundary(False)
         for _ in range(gradient_accumulation_steps - 1):
             micro_batch = next(data_loader)
@@ -1958,6 +1959,7 @@ class DeepSpeedEngine(Module):
         loss = engine(micro_batch)
         engine.backward(loss)
         engine.step()
+
         Arguments:
             is_boundary (bool): are we at a gradient accumulation boundary or not?
         """
