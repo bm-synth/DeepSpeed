@@ -150,17 +150,13 @@ class DistributedTest(ABC):
         else:
             world_size = self.world_size
 
-    def __call__(self, request=None):
+    def __call__(self, request):
         self._fixture_kwargs = self._get_fixture_kwargs(request, self.run)
         world_size = self.world_size
         if self.requires_cuda_env and not get_accelerator().is_available():
             pytest.skip("only supported in accelerator environments.")
 
-        if isinstance(world_size, int):
-            world_size = [world_size]
-        for procs in world_size:
-            self._launch_procs(procs)
-            time.sleep(0.5)
+        self._launch_with_file_store(request, world_size)
 
     def _get_current_test_func(self, request):
         # DistributedTest subclasses may have multiple test methods
@@ -179,7 +175,7 @@ class DistributedTest(ABC):
                 pass  # test methods can have kwargs that are not fixtures
         return test_kwargs
 
-    def _launch_daemonic_procs(self, num_procs):
+    def _launch_daemonic_procs(self, num_procs, init_method):
         # Create process pool or use cached one
         master_port = None
 
@@ -204,48 +200,9 @@ class DistributedTest(ABC):
             pool = mp.Pool(processes=num_procs)
             master_port = get_master_port()
 
-        # Wait for all other processes to complete
-        for p in processes:
-            p.join(DEEPSPEED_UNIT_WORKER_TIMEOUT)
-
-        failed = [(rank, p) for rank, p in enumerate(processes) if p.exitcode != 0]
-        for rank, p in failed:
-            # If it still hasn't terminated, kill it because it hung.
-            if p.exitcode is None:
-                p.terminate()
-                pytest.fail(f'Worker {rank} hung.', pytrace=False)
-            if p.exitcode < 0:
-                pytest.fail(f'Worker {rank} killed by signal {-p.exitcode}', pytrace=False)
-            if p.exitcode > 0:
-                pytest.fail(f'Worker {rank} exited with code {p.exitcode}', pytrace=False)
-
-        if not skip_msg.empty():
-            # This assumed all skip messages are the same, it may be useful to
-            # add a check here to assert all exit messages are equal
-            pytest.skip(skip_msg.get())
-
-    def _dist_init(self, local_rank, num_procs, skip_msg):
-        """Initialize deepspeed.comm and execute the user function. """
-        if self.set_dist_env:
-            os.environ['MASTER_ADDR'] = '127.0.0.1'
-            os.environ['MASTER_PORT'] = get_master_port()
-            os.environ['LOCAL_RANK'] = str(local_rank)
-            # NOTE: unit tests don't support multi-node so local_rank == global rank
-            os.environ['RANK'] = str(local_rank)
-            os.environ['WORLD_SIZE'] = str(num_procs)
-
-        # turn off NCCL logging if set
-        os.environ.pop('NCCL_DEBUG', None)
-
-        if get_accelerator().is_available():
-            set_accelerator_visible()
-
-        if self.init_distributed:
-            deepspeed.init_distributed(dist_backend=self.backend)
-            dist.barrier()
-
-        if get_accelerator().is_available():
-            get_accelerator().set_device(local_rank)
+        # Run the test
+        args = [(local_rank, num_procs, master_port, init_method) for local_rank in range(num_procs)]
+        skip_msgs_async = pool.starmap_async(self._dist_run, args)
 
         try:
             skip_msgs = skip_msgs_async.get(self.exec_timeout)
@@ -260,7 +217,7 @@ class DistributedTest(ABC):
             self._close_pool(pool, num_procs)
 
 
-    def _launch_non_daemonic_procs(self, num_procs):
+    def _launch_non_daemonic_procs(self, num_procs, init_method):
         assert not self.reuse_dist_env, "Cannot reuse distributed environment with non-daemonic processes"
 
         master_port = get_master_port()
@@ -269,7 +226,7 @@ class DistributedTest(ABC):
         prev_start_method = mp.get_start_method()
         mp.set_start_method('spawn', force=True)
         for local_rank in range(num_procs):
-            p = mp.Process(target=self._dist_run, args=(local_rank, num_procs, master_port, skip_msg))
+            p = mp.Process(target=self._dist_run, args=(local_rank, num_procs, master_port, init_method, skip_msg))
             p.start()
             processes.append(p)
         mp.set_start_method(prev_start_method, force=True)
@@ -311,7 +268,7 @@ class DistributedTest(ABC):
             # add a check here to assert all exit messages are equal
             pytest.skip(skip_msg.get())
 
-    def _launch_procs(self, num_procs):
+    def _launch_procs(self, num_procs, init_method):
         # Verify we have enough accelerator devices to run this test
         if get_accelerator().is_available() and get_accelerator().device_count() < num_procs:
             pytest.skip(
@@ -326,11 +283,11 @@ class DistributedTest(ABC):
         mp.set_start_method('forkserver', force=True)
 
         if self.non_daemonic_procs:
-            self._launch_non_daemonic_procs(num_procs)
+            self._launch_non_daemonic_procs(num_procs, init_method)
         else:
-            self._launch_daemonic_procs(num_procs)
+            self._launch_daemonic_procs(num_procs, init_method)
 
-    def _dist_run(self, local_rank, num_procs, master_port, skip_msg=""):
+    def _dist_run(self, local_rank, num_procs, master_port, init_method, skip_msg=""):
         if not dist.is_initialized():
             """ Initialize deepspeed.comm and execute the user function. """
             if self.set_dist_env:
@@ -353,7 +310,10 @@ class DistributedTest(ABC):
                 get_accelerator().set_device(local_rank)
 
             if self.init_distributed:
-                deepspeed.init_distributed(dist_backend=self.backend)
+                deepspeed.init_distributed(dist_backend=self.backend,
+                                           init_method=init_method,
+                                           rank=local_rank,
+                                           world_size=num_procs)
                 dist.barrier()
 
         try:
@@ -370,16 +330,26 @@ class DistributedTest(ABC):
         def dist_launcher(num_procs, *func_args, **func_kwargs):
             """Launch processes and gracefully handle failures. """
 
-            # Spawn all workers on subprocesses.
-            processes = []
-            for local_rank in range(num_procs):
-                p = Process(target=dist_init,
-                            args=(local_rank,
-                                  num_procs,
-                                  *func_args),
-                            kwargs=func_kwargs)
-                p.start()
-                processes.append(p)
+    def _launch_with_file_store(self, request, world_size):
+        tmpdir = request.getfixturevalue("tmpdir")
+        dist_file_store = tmpdir.join("dist_file_store")
+        assert not os.path.exists(dist_file_store)
+        init_method = f"file://{dist_file_store}"
+
+        if isinstance(world_size, int):
+            world_size = [world_size]
+        for procs in world_size:
+            try:
+                self._launch_procs(procs, init_method)
+            finally:
+                if os.path.exists(dist_file_store):
+                    os.remove(dist_file_store)
+            time.sleep(0.5)
+
+    def _dist_destroy(self):
+        if (dist is not None) and dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
 
             # Now loop and wait for a test to complete. The spin-wait here isn't a big
             # deal because the number of processes will be O(#GPUs) << O(#CPUs).
@@ -484,11 +454,7 @@ class DistributedTest(DistributedExec):
         else:
             world_size = self._fixture_kwargs.get("world_size", self.world_size)
 
-        if isinstance(world_size, int):
-            world_size = [world_size]
-        for procs in world_size:
-            self._launch_procs(procs)
-            time.sleep(0.5)
+        self._launch_with_file_store(request, world_size)
 
     def _get_current_test_func(self, request):
         # DistributedTest subclasses may have multiple test methods
