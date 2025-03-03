@@ -377,8 +377,13 @@ class LinearAllreduce(Replaced_Layer):
             output += self.bias
         return output
 
-    @torch.no_grad()
-    def gather_params(self, params_list):
+    def extra_repr(self):
+        out_features, in_features = self.weight.shape if self.weight is not None else (None, None)
+        dtype = self.weight.dtype if self.weight is not None else None
+        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
+            in_features, out_features, self.bias is not None, dtype)
+        return extra_repr_str
+
 
         for idx, param in enumerate(params_list):
             if param is None or idx > 0:
@@ -640,6 +645,13 @@ class LmHeadLinearAllreduce(LinearAllreduce):
             output += self.bias
         return output
 
+    def extra_repr(self):
+        out_features, in_features = self.weight.shape if self.weight is not None else (None, None)
+        dtype = self.weight.dtype if self.weight is not None else None
+        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
+            in_features, out_features, self.bias is not None, dtype)
+        return extra_repr_str
+
 
 class TensorParallelConv2d(nn.Module):
 
@@ -701,6 +713,13 @@ class TensorParallelIcShardConv2d(TensorParallelConv2d):
         if self.world_size > 1:
             dist.inference_all_reduce(out)
         return out
+
+    def extra_repr(self):
+        out_features, in_features = self.weight.shape
+        dtype = self.weight.dtype
+        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
+            in_features, out_features, self.bias is not None, dtype)
+        return extra_repr_str
 
 
 class Normalize(nn.Module):
