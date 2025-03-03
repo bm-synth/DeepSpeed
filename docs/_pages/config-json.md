@@ -354,9 +354,9 @@ Enabling and configuring ZeRO memory optimizations
 
 ***cpu_offload***: [boolean]
 
-| Description                                                                                                              | Default |
-| ------------------------------------------------------------------------------------------------------------------------ | ------- |
-| Enable offloading of optimizer memory and computation to CPU. This frees up GPU memory for larger models or batch sizes. | `False` |
+| Description                                                                                                                                | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| For use with ZeRO stage 1, enable backward hooks to reduce gradients during the backward pass or wait until the end of the backward pass.  | `True`  |
 
 ***cpu_offload_params***: [boolean]
 
@@ -366,9 +366,9 @@ Enabling and configuring ZeRO memory optimizations
 
 ***cpu_offload_use_pin_memory***: [boolean]
 
-| Description                                                                              | Default |
-| ---------------------------------------------------------------------------------------- | ------- |
-| Use pinned CPU memory when offloading. Can improve performance. Valid only with stage 3. | `False` |
+| Description                                                                                                                                                                                                                    | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| Enable offloading of optimizer state to CPU or NVMe, and optimizer computation to CPU. This frees up GPU memory for larger models or batch sizes. Valid only with stage 2 and 3. See [here](#optimizer-offloading) for more details. | `False` |
 
 ***stage3_max_live_parameters***: [integer]
 
@@ -403,7 +403,7 @@ Enabling and configuring ZeRO memory optimizations
 
 ***cpu_offload***: [boolean]
 
-**Deprecated:** **cpu_offload** is disabled and will be removed in future, please use `offload_optimizer` instead.
+**Deprecated:** **cpu_offload** is deprecated and will be removed in future, please use `offload_optimizer` instead.
 {: .notice--warning}
 
 | Description                                                                                                              | Default |
