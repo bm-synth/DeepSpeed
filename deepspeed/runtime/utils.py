@@ -95,75 +95,26 @@ def set_random_seed(seed):
     torch.manual_seed(seed)
 
 
-def is_model_parallel_parameter(p) -> bool:
-    if hasattr(p, 'model_parallel') and p.model_parallel:
-        return True
-
-    if hasattr(p, 'tensor_model_parallel') and p.tensor_model_parallel:
-        return True
-
-    return False
-
-
-def copy_to_device(item, device, criterion_func):
+def move_to_device(item, device):
     """
-    Return a copy of tensor on specified device.
-    Works on individual tensors, and tensors contained/nested in lists, tuples, and dicts.
-    Parameters:
-        item: tensor to copy or (possibly nested) container of tensors to copy.
-        device: target device
-        criterion_func: Function to restrict copy operation to items meet criterion
-
-    Returns:
-        None
-    """
-    if criterion_func(item):
-        return item.to(device)
-    elif isinstance(item, list):
-        return [copy_to_device(v, device, criterion_func) for v in item]
-    elif isinstance(item, tuple):
-        return tuple([copy_to_device(v, device, criterion_func) for v in item])
-    elif isinstance(item, dict):
-        return {k: copy_to_device(v, device, criterion_func) for k, v in item.items()}
-    else:
-        return item
-
-
-def move_to_device(item, device, criterion_func):
-    """
-    Move tensor on to specified device by changing the storage.
-    Works on individual tensors, and tensors contained/nested in lists, tuples, and dicts.
+    Move tensor onto device. Works on individual tensors, and tensors contained/nested in lists, tuples, and dicts.
     Parameters:
         item: tensor to move or (possibly nested) container of tensors to move.
         device: target device
-        criterion_func: Function to restrict move operation to items meet criterion
 
     Returns:
         None
     """
-    if criterion_func(item):
-        device_copy = item.to(device)
-        item.data = device_copy.data
-        return item
+    if torch.is_tensor(item):
+        return item.to(device)
     elif isinstance(item, list):
-        return [move_to_device(v, device, criterion_func) for v in item]
+        return [move_to_device(v, device) for v in item]
     elif isinstance(item, tuple):
-        return tuple([move_to_device(v, device, criterion_func) for v in item])
+        return tuple([move_to_device(v, device) for v in item])
     elif isinstance(item, dict):
-        return {k: move_to_device(v, device, criterion_func) for k, v in item.items()}
+        return {k: move_to_device(v, device) for k, v in item.items()}
     else:
         return item
-
-
-def get_norm_with_moe_layers_fast(all_groups_norm, group):
-    # This implementation standardizes the grad_norm across ranks. A more precise implementation can be found in 'get_norm_with_moe_layers'.
-    # Need to allreduce (avg) the norms across different ranks because moe params will not be synced during allreduce
-    scaled_norm = all_groups_norm * 1.0 / float(dist.get_world_size(group=group))
-    scaled_norm_tensor = torch.tensor(scaled_norm, device=get_accelerator().current_device_name(), dtype=torch.float)
-    dist.all_reduce(scaled_norm_tensor, group=group)
-    all_groups_norm = scaled_norm_tensor.item()
-    #print(f"old = {all_groups_norm_old} and new = {all_groups_norm} at rank: {deepspeed.comm.get_rank()}")
-    return all_groups_norm
 
 
 class CheckOverflow(object):
