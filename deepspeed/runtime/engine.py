@@ -2622,19 +2622,12 @@ class DeepSpeedEngine(Module):
             load_module_strict: Optional. Boolean to strictly enforce that the keys in state_dict of module and checkpoint match.
             load_optimizer_states: Optional. Boolean to load the training optimizer states from Checkpoint. Ex. ADAM's momentum and variance
             load_lr_scheduler_states: Optional. Boolean to add the learning rate scheduler states from Checkpoint.
-            load_module_only: Optional. Boolean to load only the model weights from the checkpoint. Ex. warmstarting.
-            custom_load_fn: Optional. Custom model load function.
-
         Returns:
             A tuple of ``load_path`` and ``client_state``.
+
             *``load_path``: Path of the loaded checkpoint. ``None`` if loading the checkpoint failed.
+
             *``client_state``: State dictionary used for loading required training states in the client code.
-
-        Important: under ZeRO3, one cannot load checkpoint with ``engine.load_checkpoint()`` right
-        after ``engine.save_checkpoint()``. It is because ``engine.module`` is partitioned, and
-        ``load_checkpoint()`` wants a pristine model. If insisting to do so, please reinitialize engine
-        before ``load_checkpoint()``.
-
         """
 
         if tag is None:
