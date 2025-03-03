@@ -896,9 +896,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 defined, otherwise GPU.
             pin_memory (bool, optional): Potentially increase performance by
                 using pinned memory for model weights. ``remote_device`` must be
-                ``"cpu"``. Defaults to ``False``.
-            config_dict_or_path (dict or ``json file``, optional): If provided, provides configuration.
-            config (``json file`` or dict, optional): If provided, provides configuration
+                ``"cpu"``. Defaults to pin_memory value in config, otherwise ``False``.
+            config_dict_or_path (dict or ``json file``, optional): If provided, provides configuration
                 for swapping fp16 params to NVMe.
             param_dict (dict, optional): Instead of requiring a deepspeed_config you can pass your deepspeed config
                 as a dictionary instead for swapping fp16 params to NVMe.
@@ -1004,6 +1003,10 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
         self.rank = dist.get_rank(group=self.ds_process_group)
         self.dp_world_size = dist.get_world_size(group=self.ds_process_group)
+
+        if _ds_config is not None and _ds_config.zero_config.offload_param is not None:
+            remote_device = _ds_config.zero_config.offload_param[OFFLOAD_PARAM_DEVICE]
+            pin_memory = _ds_config.zero_config.offload_param[OFFLOAD_PARAM_PIN_MEMORY]
 
         self._validate_remote_device(remote_device, _ds_config)
 
