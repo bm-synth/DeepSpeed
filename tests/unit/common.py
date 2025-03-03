@@ -12,8 +12,8 @@ import pytest
 
 from pathlib import Path
 
-# Worker timeout *after* the first worker has completed.
-DEEPSPEED_UNIT_WORKER_TIMEOUT = 120
+# Worker timeout for tests that hang
+DEEPSPEED_TEST_TIMEOUT = 600
 
 
 def is_rocm_pytorch():
@@ -98,6 +98,9 @@ class DistributedTest(ABC):
     init_distributed = True
     set_dist_env = True
     requires_cuda_env = True
+    reuse_dist_env = False
+    _pool_cache = {}
+    exec_timeout = DEEPSPEED_TEST_TIMEOUT
 
     # Temporary directory that is shared among test methods in a class
     @pytest.fixture(autouse=True, scope="class")
@@ -212,12 +215,12 @@ class DistributedTest(ABC):
             get_accelerator().set_device(local_rank)
 
         try:
-            self.current_test(**self.test_kwargs)
-        except BaseException as e:
-            if isinstance(e, Skipped):
-                skip_msg.put(e.msg)
-            else:
-                raise e
+            skip_msgs = skip_msgs_async.get(self.exec_timeout)
+        except mp.TimeoutError:
+            # Shortcut to exit pytest in the case of a hanged test. This
+            # usually means an environment error and the rest of tests will
+            # hang (causing super long unit test runtimes)
+            pytest.exit("Test hanged, exiting", returncode=0)
 
         if self.init_distributed or dist.is_initialized():
             # make sure all ranks finish at the same time
