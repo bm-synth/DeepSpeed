@@ -9,50 +9,90 @@
  <img src="docs/assets/images/DeepSpeed_dark_transparent.svg#gh-dark-mode-only" width="400px">
 </div>
 
-<!--
-Remove until pypi issue is resolved: https://status.python.org/incidents/2jj696st6yn5
-[![Downloads](https://pepy.tech/badge/deepspeed/month)](https://pepy.tech/project/deepspeed)
--->
 ## Latest News
-* [2022/07/20] [DeepSpeed Compression: A composable library for extreme compression and zero-cost quantization](https://www.microsoft.com/en-us/research/blog/deepspeed-compression-a-composable-library-for-extreme-compression-and-zero-cost-quantization/)
-    * [Tutorial](https://www.deepspeed.ai/tutorials/model-compression/) and [Code examples](https://github.com/microsoft/DeepSpeedExamples/tree/master/model_compression).
-    * 50x model size reduction via [XTC](https://arxiv.org/abs/2206.01859) and 5000x compression cost reduction via [ZeroQuant](https://arxiv.org/abs/2206.01861).
-* [2022/03/21] [Supporting efficient large model training on AMD Instinct GPUs with DeepSpeed](https://cloudblogs.microsoft.com/opensource/2022/03/21/supporting-efficient-large-model-training-on-amd-instinct-gpus-with-deepspeed/)
-* [2022/03/07] [Maximizing Communication Efficiency for Large-scale Training via 0/1 Adam](https://www.deepspeed.ai/tutorials/zero-one-adam/)
-* [2022/01/19] [DeepSpeed: Advancing MoE inference and training to power next-generation AI scale](https://www.microsoft.com/en-us/research/blog/deepspeed-advancing-moe-inference-and-training-to-power-next-generation-ai-scale/)
-    * [Mixture of Experts (MoE) for NLG tutorial](https://www.deepspeed.ai/tutorials/mixture-of-experts-nlg/).
-    * [Mixture of Experts (MoE) Inference tutorial](https://www.deepspeed.ai/tutorials/moe-inference-tutorial).
-* [2021/11/15] [Autotuning: Automatically discover the optimal DeepSpeed configuration that delivers good training speed](https://www.deepspeed.ai/news/2021/11/15/autotuning.html)
-* [2021/10/11] [Using DeepSpeed and Megatron to Train Megatron-Turing NLG 530B, the World’s Largest and Most Powerful Generative Language Model](https://www.microsoft.com/en-us/research/blog/using-deepspeed-and-megatron-to-train-megatron-turing-nlg-530b-the-worlds-largest-and-most-powerful-generative-language-model/)
-  * Read more on how to [train large models with DeepSpeed](https://www.deepspeed.ai/tutorials/large-models-w-deepspeed/)
+<b> DeepSpeed trained the world's most powerful language models ([MT-530B](https://www.microsoft.com/en-us/research/blog/using-deepspeed-and-megatron-to-train-megatron-turing-nlg-530b-the-worlds-largest-and-most-powerful-generative-language-model/), [BLOOM](https://huggingface.co/blog/bloom-megatron-deepspeed)); [learn how](https://www.deepspeed.ai/tutorials/large-models-w-deepspeed/).</b>
 
-### DeepSpeed is hiring, [come join us!](https://careers.microsoft.com/us/en/search-results?keywords=http:%2F%2Fdeepspeed.ai)
+* [2022/07] [DeepSpeed Compression: A composable library for extreme compression](https://www.microsoft.com/en-us/research/blog/deepspeed-compression-a-composable-library-for-extreme-compression-and-zero-cost-quantization/)
+* [2022/03] [Supporting efficient large model training on AMD Instinct GPUs with DeepSpeed](https://cloudblogs.microsoft.com/opensource/2022/03/21/supporting-efficient-large-model-training-on-amd-instinct-gpus-with-deepspeed/)
+* [2022/03] [Maximizing Communication Efficiency for Large-scale Training via 0/1 Adam](https://www.deepspeed.ai/tutorials/zero-one-adam/)
+* [2022/01] [DeepSpeed: Advancing MoE inference and training to power next-generation AI scale](https://www.microsoft.com/en-us/research/blog/deepspeed-advancing-moe-inference-and-training-to-power-next-generation-ai-scale/)
+* [2021/11] [Autotuning: Automatically discover the optimal DeepSpeed configuration](https://www.deepspeed.ai/news/2021/11/15/autotuning.html)
+
 ---
 
-[DeepSpeed](https://www.deepspeed.ai/) is a deep learning optimization
-library that makes distributed training easy, efficient, and effective.
+# Extreme Speed and Scale for DL Training and Inference
 
-<p align="center"><i><b>10x Larger Models</b></i></p>
-<p align="center"><i><b>5x Faster Training</b></i></p>
-<p align="center"><i><b>Minimal Code Change</b></i></p>
+[DeepSpeed](https://www.deepspeed.ai/) is an easy-to-use deep learning optimization software suite that enables unprecedented scale and speed for Deep Learning Training and Inference. With DeepSpeed you can:
 
-DeepSpeed delivers extreme-scale model training for everyone, from data scientists training on massive supercomputers to those training on low-end clusters or even on a single GPU:
-* Extreme scale: Using current generation of GPU clusters with hundreds of devices,  3D parallelism of DeepSpeed can efficiently train deep learning models with trillions of parameters.
-* Extremely memory efficient: With just a single GPU, ZeRO-Offload of DeepSpeed can train models with over 10B parameters, 10x bigger than the state of arts, democratizing multi-billion-parameter model training such that many deep learning scientists can explore bigger and better models.
-* Extremely long sequence length: Sparse attention of DeepSpeed powers an order-of-magnitude longer input sequence and obtains up to 6x faster execution comparing with dense transformers.
-* Extremely communication efficient: 3D parallelism improves communication efficiency allows users to train multi-billion-parameter models 2–7x faster on clusters with limited network bandwidth.  1-bit Adam, 0/1 Adam and 1-bit LAMB reduce communication volume by up to 26x while achieving similar convergence efficiency to Adam/LAMB, allowing for scaling to different types of GPU clusters and networks.
+* Train/Inference dense or sparse models with billions or trillions of parameters
+* Achieve excellent system throughput and efficiently scale to thousands of GPUs
+* Train/Inference on resource constrained GPU systems
+* Achieve unprecedented low latency and high thoughput for inference
+* Achieve extreme compression for an unparalleled inference latency and model size reduction with low costs
 
-Early adopters of DeepSpeed have already produced
-a language model (LM) with over 17B parameters called
-[Turing-NLG](https://www.microsoft.com/en-us/research/blog/turing-nlg-a-17-billion-parameter-language-model-by-microsoft),
-establishing a new SOTA in the LM category.
+---
+
+# DeepSpeed's three innovation pillars
+
+<img src="docs/assets/images/3pillars.png" width="800px">
+
+
+## DeepSpeed-Training
+
+DeepSpeed offers a confluence of system innovations, that has made large scale DL training effective, and efficient, greatly improved ease of use, and redefined the DL training landscape in terms of scale that is possible. These innovations such as ZeRO, 3D-Parallelism, DeepSpeed-MoE, ZeRO-Infinity, etc. fall under the training pillar. Learn more: [DeepSpeed-Training](/_pages/training)
+
+## DeepSpeed-Inference
+
+DeepSpeed brings together innovations in parallelism technology such as tensor, pipeline, expert and ZeRO-parallelism, and combines them with high performance custom inference kernels, communication optimizations and heterogeneous memory technologies to enable inference at an unprecedented scale, while achieving unparalleled latency, thoughput and cost reduction. This systematic composition of system technologies for inference falls under the inference pillar. Learn more: [DeepSpeed-Inference](/_pages/inference)
+
+
+## DeepSpeed-Compression
+
+To further increase the inference efficiency, DeepSpeed offers easy-to-use and flexible-to-compose compression techniques for researchers and practitioners to compress their models while delivering faster speed, smaller model size, and significantly reduced compression cost. Moreover, SoTA innovations on compression like ZeroQuant and XTC are included under the compression pillar. Learn more: [DeepSpeed-Compression](/_pages/compression)
+
+---
+
+# DeepSpeed Software Suite
+
+## DeepSpeed Library
+
+   The [DeepSpeed](https://github.com/microsoft/deepspeed) library (this repository) implements and packages the innovations and technologies in DeepSpeed Training, Inference and Compression Pillars into a single easy-to-use, open-sourced repository. It allows for easy composition of multitude of features within a single training, infernece or compression pipeline. The DeepSpeed Library is heavily adopted by the DL community, and has been used to enable some of the most powerful models (see [DeepSpeed Adoption](#deepspeed-adoption)).
+
+## Model Implementations for Inference (MII)
+
+   [Model Implementations for Inference (MII)](https://github.com/microsoft/deepspeed-mii) is an open-sourced repository for making low-latency and high-throughput inference accessible to all data scientists by alleviating the need to apply complex system optimization techniques themselves. Out-of-box, MII offers support for thousands of widely used DL models, optimized using DeepSpeed-Inference, that can be deployed with a few lines of code, while achieving significant latency reduction compared to their vanilla open-sourced versions.
+
+## DeepSpeed on Azure
+
+   DeepSpeed users are diverse and have access to different environments. We recommend to try DeepSpeed on Azure as it is the simplest and easiest method. The recommended method to try DeepSpeed on Azure is through AzureML [recipes](https://github.com/Azure/azureml-examples/tree/main/python-sdk/workflows/train/deepspeed). The job submission and data preparation scripts have been made available [here](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples/azureml). For more details on how to use DeepSpeed on Azure, please follow the [Azure tutorial](https://www.deepspeed.ai/tutorials/azure/).
+
+---
+
+# DeepSpeed Adoption
 
 DeepSpeed is an important part of Microsoft’s new
 [AI at Scale](https://www.microsoft.com/en-us/research/project/ai-at-scale/)
 initiative to enable next-generation AI capabilities at scale, where you can find more
 information [here](https://innovation.microsoft.com/en-us/exploring-ai-at-scale).
 
-**_For further documentation, tutorials, and technical deep-dives please see [deepspeed.ai](https://www.deepspeed.ai/)!_**
+DeepSpeed has been used to train many different large-scale models, below is a list of several examples that we are aware of (if you'd like to include your model please submit a PR):
+
+  * [Megatron-Turing NLG (530B)](https://www.microsoft.com/en-us/research/blog/using-deepspeed-and-megatron-to-train-megatron-turing-nlg-530b-the-worlds-largest-and-most-powerful-generative-language-model/)
+  * [Jurassic-1 (178B)](https://uploads-ssl.webflow.com/60fd4503684b466578c0d307/61138924626a6981ee09caf6_jurassic_tech_paper.pdf)
+  * [BLOOM (176B)](https://huggingface.co/blog/bloom-megatron-deepspeed)
+  * [YaLM (100B)](https://github.com/yandex/YaLM-100B)
+  * [GPT-NeoX (20B)](https://github.com/EleutherAI/gpt-neox)
+
+DeepSpeed has been integrated with several different popular open-source DL frameworks such as:
+
+|                                                                                                | Documentation                                |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------- |
+<img src="docs/assets/images/transformers-light.png#gh-light-mode-only" width="250px"><img src="docs/assets/images/transformers-dark.png#gh-dark-mode-only" width="250px"> | [Transformers with DeepSpeed](https://huggingface.co/docs/transformers/main/main_classes/deepspeed) |
+| <img src="docs/assets/images/accelerate-light.png#gh-light-mode-only" width="250px"><img src="docs/assets/images/accelerate-dark.png#gh-dark-mode-only" width="250px"> | [Accelerate with DeepSpeed](https://huggingface.co/docs/accelerate/main/en/deepspeed) |
+| <img src="docs/assets/images/lightning-light.svg#gh-light-mode-only" width="200px"><img src="docs/assets/images/lightning-dark.svg#gh-dark-mode-only" width="200px"> | [Lightning with DeepSpeed](https://pytorch-lightning.readthedocs.io/en/stable/api/pytorch_lightning.strategies.DeepSpeedStrategy.html) |
+| <img src="docs/assets/images/mosaicml.svg" width="200px"> | [MosaicML with DeepSpeed](https://docs.mosaicml.com/en/v0.8.0/trainer/using_the_trainer.html?highlight=deepspeed#deepspeed-integration) |
+
+---
 
 # Build Pipeline Status
 
@@ -64,38 +104,7 @@ information [here](https://innovation.microsoft.com/en-us/exploring-ai-at-scale)
 | Integrations | [![nv-transformers-v100](https://github.com/microsoft/DeepSpeed/actions/workflows/nv-transformers-v100.yml/badge.svg)](https://github.com/microsoft/DeepSpeed/actions/workflows/nv-transformers-v100.yml) [![nv-lightning-v100](https://github.com/microsoft/DeepSpeed/actions/workflows/nv-lightning-v100.yml/badge.svg)](https://github.com/microsoft/DeepSpeed/actions/workflows/nv-lightning-v100.yml) |
 | Misc | [![Formatting](https://github.com/microsoft/DeepSpeed/actions/workflows/formatting.yml/badge.svg)](https://github.com/microsoft/DeepSpeed/actions/workflows/formatting.yml) [![pages-build-deployment](https://github.com/microsoft/DeepSpeed/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/microsoft/DeepSpeed/actions/workflows/pages/pages-build-deployment) [![Documentation Status](https://readthedocs.org/projects/deepspeed/badge/?version=latest)](https://deepspeed.readthedocs.io/en/latest/?badge=latest)|
 
-
-# Table of Contents
-
-| Section                                 | Description                                 |
-| --------------------------------------- | ------------------------------------------- |
-| [Why DeepSpeed?](#why-deepspeed)        |  DeepSpeed overview                         |
-| [Install](#installation)                |  Installation details                       |
-| [Features](#features)                   |  Feature list and overview                  |
-| [Further Reading](#further-reading)     |  Documentation, tutorials, etc.             |
-| [Contributing](#contributing)           |  Instructions for contributing              |
-| [Publications](#publications)           |  Publications related to DeepSpeed          |
-| [Videos](#videos)                       |  Videos related to DeepSpeed                |
-
-# Why DeepSpeed?
-Training advanced deep learning models is challenging. Beyond model design,
-model scientists also need to set up the state-of-the-art training techniques
-such as distributed training, mixed precision, gradient accumulation, and
-checkpointing. Yet still, scientists may not achieve the desired system
-performance and convergence rate. Large model sizes are even more challenging:
-a large model easily runs out of memory with pure data parallelism and it is
-difficult to use model parallelism. DeepSpeed addresses these challenges to
-accelerate model development *and* training.
-
-## Distributed, Effective, and Efficient Training with Ease
-The DeepSpeed API is a lightweight wrapper on [PyTorch](https://pytorch.org/). This
-means that you can use everything you love in PyTorch and without learning a new
-platform. In addition, DeepSpeed manages all of the boilerplate state-of-the-art
-training techniques, such as distributed training, mixed precision, gradient
-accumulation, and checkpoints so that you can focus on your model development. Most
-importantly, you can leverage the distinctive efficiency and effectiveness benefit of
-DeepSpeed to boost speed and scale with just a few lines of code changes to your PyTorch
-models.
+# Installation
 
 ## Speed
 DeepSpeed achieves high performance and fast convergence through a combination of
@@ -197,314 +206,21 @@ On Windows you can build wheel with following steps, currently only inference mo
 4. Run `python setup.py bdist_wheel` to build wheel in `dist` folder
 
 # Features
-Below we provide a brief feature list, see our detailed [feature
-overview](https://www.deepspeed.ai/features/) for descriptions and usage.
 
-* [Distributed Training with Mixed Precision](https://www.deepspeed.ai/features/#distributed-training-with-mixed-precision)
-    * 16-bit mixed precision
-    * Single-GPU/Multi-GPU/Multi-Node
-* [Model Parallelism](https://www.deepspeed.ai/features/#model-parallelism)
-  * Support for Custom Model Parallelism
-  * Integration with Megatron-LM
-* [Pipeline Parallelism](https://www.deepspeed.ai/tutorials/pipeline/)
-  * 3D Parallelism
-* [The Zero Redundancy Optimizer (ZeRO)](https://www.deepspeed.ai/tutorials/zero/)
-  * Optimizer State and Gradient Partitioning
-  * Activation Partitioning
-  * Constant Buffer Optimization
-  * Contiguous Memory Optimization
-* [ZeRO-Offload](https://www.deepspeed.ai/tutorials/zero-offload/)
-  * Leverage both CPU/GPU memory for model training
-  * Support 10B model training on a single GPU
-* [Ultra-fast dense transformer kernels](https://www.deepspeed.ai/2020/05/18/bert-record.html)
-* [Sparse attention](https://www.deepspeed.ai/2020/09/08/sparse-attention-news.html)
-  * Memory- and compute-efficient sparse kernels
-  * Support 10x longer sequences than dense
-  * Flexible support to different sparse structures
-* [1-bit Adam](https://www.deepspeed.ai/2020/09/08/onebit-adam-blog-post.html), [0/1 Adam](https://www.deepspeed.ai/tutorials/zero-one-adam/) and [1-bit LAMB](https://www.deepspeed.ai/tutorials/onebit-lamb/)
-  * Custom communication collective
-  * Up to 26x communication volume saving
-* [Additional Memory and Bandwidth Optimizations](https://www.deepspeed.ai/features/#additional-memory-and-bandwidth-optimizations)
-  * Smart Gradient Accumulation
-  * Communication/Computation Overlap
-* [Training Features](https://www.deepspeed.ai/features/#training-features)
-    * Simplified training API
-    * Gradient Clipping
-    * Automatic loss scaling with mixed precision
-* [Training Optimizers](https://www.deepspeed.ai/features/#training-optimizers)
-    * Fused Adam optimizer and arbitrary `torch.optim.Optimizer`
-    * Memory bandwidth optimized FP16 Optimizer
-    * Large Batch Training with LAMB Optimizer
-    * Memory efficient Training with ZeRO Optimizer
-* [Training Agnostic Checkpointing](https://www.deepspeed.ai/features/#training-agnostic-checkpointing)
-* [Advanced Parameter Search](https://www.deepspeed.ai/features/#advanced-parameter-search)
-    * Learning Rate Range Test
-    * 1Cycle Learning Rate Schedule
-* [Simplified Data Loader](https://www.deepspeed.ai/features/#simplified-data-loader)
-* [Curriculum Learning](https://www.deepspeed.ai/tutorials/curriculum-learning/)
-  * A curriculum learning-based data pipeline that presents easier or simpler examples earlier during training
-  * Stable and 3.3x faster GPT-2 pre-training with 8x/4x larger batch size/learning rate while maintaining token-wise convergence speed
-  * Complementary to many other DeepSpeed features
-* [Performance Analysis and Debugging](https://www.deepspeed.ai/features/#performance-analysis-and-debugging)
-* [Mixture of Experts (MoE)](https://www.deepspeed.ai/tutorials/mixture-of-experts/)
-
-# Getting Started
-
-
-## Installation
-
-* Please see our [Azure tutorial](https://www.deepspeed.ai/tutorials/azure/) to get started with DeepSpeed on Azure!
-* If you're not on Azure, we recommend using our docker image via `docker pull deepspeed/deepspeed:latest` which contains a pre-installed version of DeepSpeed and all the necessary dependencies.
-* If you want to install DeepSpeed manually, we provide an install script `install.sh` to help install on a local machine or across an entire cluster.
-
-## Writing DeepSpeed Models
-DeepSpeed model training is accomplished using the DeepSpeed engine. The engine
-can wrap any arbitrary model of type `torch.nn.module` and has a minimal set of APIs
-for training and checkpointing the model. Please see the tutorials for detailed
-examples.
-
-To initialize the DeepSpeed engine:
-```python
-model_engine, optimizer, _, _ = deepspeed.initialize(args=cmd_args,
-                                                     model=model,
-                                                     model_parameters=params)
-```
-
-`deepspeed.inialize` ensures that all of the necessary setup required for
-distributed data parallel or mixed precision training are done
-appropriately under the hood.  In addition to wrapping the model, DeepSpeed can
-construct and manage the training optimizer, data loader, and the learning rate
-scheduler based on the parameters passed to `deepspeed.initialze` and the
-DeepSpeed [configuration file](#deepspeed-configuration).
-
-
-### Training
-
-Once the DeepSpeed engine has been initialized, it can be used to train the
-model using three simple APIs for forward propagation (`()`), backward
-propagation (`backward`), and weight updates (`step`).
-
-```python
-for step, batch in enumerate(data_loader):
-    #forward() method
-    loss = model_engine(batch)
-
-    #runs backpropagation
-    model_engine.backward(loss)
-
-    #weight update
-    model_engine.step()
-```
-
-
-Under the hood, DeepSpeed automatically performs the necessary operations
-required for distributed data parallel training, in mixed precision, with a
-pre-defined learning rate schedule:
-
-* **Gradient Averaging**: in distributed data parallel training, `backward`
-  ensures that gradients are averaged across data parallel processes after
-  training on an `train_batch_size`.
-
-* **Loss Scaling**: in FP16/mixed precision training, the DeepSpeed
-  engine automatically handles scaling the loss to avoid precision loss in the
-  gradients.
-
-* **Learning Rate Schedule**: if using DeepSpeed's learning rate
-  schedule, then DeepSpeed automatically handles any updates to the learning
-  rate when `step` is executed.
-
-
-
-### Model Checkpointing
-Saving and loading the training state is handled via the `save_checkpoint` and
-`load_checkpoint` API in DeepSpeed which takes two arguments to uniquely
-identify a checkpoint:
-  * `ckpt_dir`: the directory where checkpoints will be saved.
-  * `ckpt_id`: an identifier that uniquely identifies a checkpoint in the directory.
-    In the following code snippet, we use the loss value as the checkpoint identifier.
-
-```python
-#load checkpoint
-_, client_sd = model_engine.load_checkpoint(args.load_dir, args.ckpt_id)
-step = client_sd['step']
-
-#advance data loader to ckpt step
-dataloader_to_step(data_loader, step + 1)
-
-for step, batch in enumerate(data_loader):
-
-    #forward() method
-    loss = model_engine(batch)
-
-    #runs backpropagation
-    model_engine.backward(loss)
-
-    #weight update
-    model_engine.step()
-
-    #save checkpoint
-    if step % args.save_interval:
-        client_sd['step'] = step
-        ckpt_id = loss.item()
-        model_engine.save_checkpoint(args.save_dir, ckpt_id, client_sd = client_sd)
-```
-
-DeepSpeed can automatically save and restore the model, optimizer, and the
-learning rate scheduler states while hiding away these details from the user.
-However, the user may want to save other data in addition to these that are
-unique to a given model training. To support these items, `save_checkpoint`
-accepts a client state dictionary `client_sd` for saving. These items can be
-retrieved from `load_checkpoint` as a return argument. In the example above,
-the `step` value is stored as part of the `client_sd`.
-
-
-## DeepSpeed Configuration
-DeepSpeed features can be enabled, disabled, or configured using a config JSON
-file that should be specified as `args.deepspeed_config`. Available configs are at
-[deepspeed/pt/deepspeed_constants.py](deepspeed/pt/deepspeed_constants.py).
-A sample config file is shown below. For a full set of features see [core API
-doc](https://deepspeed.readthedocs.io/en/latest/).
-
-```json
-{
-  "train_batch_size": 8,
-  "gradient_accumulation_steps": 1,
-  "optimizer": {
-    "type": "Adam",
-    "params": {
-      "lr": 0.00015
-    }
-  },
-  "fp16": {
-    "enabled": true
-  },
-  "zero_optimization": true
-}
-```
-
-## Multi-Node Environment Variables
-
-When training across multiple nodes we have found it useful to support
-propagating user-defined environment variables. By default DeepSpeed will
-propagate all NCCL and PYTHON related environment variables that are set. If
-you would like to propagate additional variables you can specify them in a
-dot-file named `.deepspeed_env` that contains a new-line separated list of
-`VAR=VAL` entries. The DeepSpeed launcher will look in the local path you are
-executing from and also in your home directory (`~/`).
-
-As a concrete example, some clusters require special NCCL variables to set
-prior to training. The user can simply add these variables to a
-`.deepspeed_env` file in their home directory that looks like this:
-```
-NCCL_IB_DISABLE=1
-NCCL_SOCKET_IFNAME=eth0
-```
-DeepSpeed will then make sure that these environment variables are set when
-launching each process on every node across their training job.
-
-# Launching DeepSpeed Training
-DeepSpeed installs the entry point `deepspeed` to launch distributed training.
-We illustrate an example usage of DeepSpeed with the following assumptions:
-
-1. You have already integrated DeepSpeed into your model
-2. `client_entry.py` is the entry script for your model
-3. `client args` is the `argparse` command line arguments
-4. `ds_config.json` is the configuration file for DeepSpeed
-
-
-## Resource Configuration (multi-node)
-DeepSpeed configures multi-node compute resources with hostfiles that are compatible with
-[OpenMPI](https://www.open-mpi.org/) and [Horovod](https://github.com/horovod/horovod).
-A hostfile is a list of *hostnames* (or SSH aliases), which are machines accessible via passwordless
-SSH, and *slot counts*, which specify the number of GPUs available on the system. For
-example,
-```
-worker-1 slots=4
-worker-2 slots=4
-```
-specifies that two machines named *worker-1* and *worker-2* each have four GPUs to use
-for training.
-
-Hostfiles are specified with the `--hostfile` command line option. If no hostfile is
-specified, DeepSpeed searches for `/job/hostfile`. If no hostfile is specified or found,
-DeepSpeed queries the number of GPUs on the local machine to discover the number of local
-slots available.
-
-
-The following command launches a PyTorch training job across all available nodes and GPUs
-specified in `myhostfile`:
-```bash
-deepspeed <client_entry.py> <client args> \
-  --deepspeed --deepspeed_config ds_config.json --hostfile=myhostfile
-```
-
-Alternatively, DeepSpeed allows you to restrict distributed training of your model to a
-subset of the available nodes and GPUs. This feature is enabled through two command line
-arguments: `--num_nodes` and `--num_gpus`. For example, distributed training can be
-restricted to use only two nodes with the following command:
-```bash
-deepspeed --num_nodes=2 \
-	<client_entry.py> <client args> \
-	--deepspeed --deepspeed_config ds_config.json
-```
-You can instead include or exclude specific resources using the `--include` and
-`--exclude` flags. For example, to use all available resources **except** GPU 0 on node
-*worker-2* and GPUs 0 and 1 on *worker-3*:
-```bash
-deepspeed --exclude="worker-2:0@worker-3:0,1" \
-	<client_entry.py> <client args> \
-	--deepspeed --deepspeed_config ds_config.json
-```
-Similarly, you can use **only** GPUs 0 and 1 on *worker-2*:
-```bash
-deepspeed --include="worker-2:0,1" \
-	<client_entry.py> <client args> \
-	--deepspeed --deepspeed_config ds_config.json
-```
-
-### MPI Compatibility
-As described above, DeepSpeed provides its own parallel launcher to help launch
-multi-node/multi-gpu training jobs. If you prefer to launch your training job
-using MPI (e.g., mpirun), we provide support for this. It should be noted that
-DeepSpeed will still use the torch distributed NCCL backend and *not* the MPI
-backend. To launch your training job with mpirun + DeepSpeed you simply pass us
-an additional flag `--deepspeed_mpi`. DeepSpeed will then use
-[mpi4py](https://pypi.org/project/mpi4py/) to discover the MPI environment (e.g.,
-rank, world size) and properly initialize torch distributed for training. In this
-case you will explicitly invoke `python` to launch your model script instead of using
-the `deepspeed` launcher, here is an example:
-```bash
-mpirun <mpi-args> python \
-	<client_entry.py> <client args> \
-	--deepspeed_mpi --deepspeed --deepspeed_config ds_config.json
-```
-
-If you want to use this feature of DeepSpeed, please ensure that mpi4py is
-installed via `pip install mpi4py`.
-
-## Resource Configuration (single-node)
-In the case that we are only running on a single node (with one or more GPUs)
-DeepSpeed *does not* require a hostfile as described above. If a hostfile is
-not detected or passed in then DeepSpeed will query the number of GPUs on the
-local machine to discover the number of slots available. The `--include` and
-`--exclude` arguments work as normal, but the user should specify 'localhost'
-as the hostname.
-
+Please checkout [DeepSpeed-Training](https://www.deepspeed.ai/docs/training), [DeepSpeed-Inference](https://www.deepspeed.ai/docs/inference) and [DeepSpeed-Compression](https://www.deepspeed.ai/docs/compression) pages for full set of features offered along each of these three pillars.
 
 # Further Reading
 
-| Article                                                                                        | Description                                  |
+All DeepSpeed documentation, tutorials, and blogs can be found on our website: [deepspeed.ai](https://www.deepspeed.ai/)
+
+
+|                                                                                                | Description                                  |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| [DeepSpeed Features](https://www.deepspeed.ai/features/)                                       |  DeepSpeed features                          |
 | [Getting Started](https://www.deepspeed.ai/getting-started/)                                   |  First steps with DeepSpeed                  |
 | [DeepSpeed JSON Configuration](https://www.deepspeed.ai/docs/config-json/)                     |  Configuring DeepSpeed                       |
 | [API Documentation](https://deepspeed.readthedocs.io/en/latest/)                               |  Generated DeepSpeed API documentation       |
-| [CIFAR-10 Tutorial](https://www.deepspeed.ai/tutorials/cifar-10)                               |  Getting started with CIFAR-10 and DeepSpeed |
-| [Megatron-LM Tutorial](https://www.deepspeed.ai/tutorials/megatron/)                           |  Train GPT2 with DeepSpeed and Megatron-LM   |
-| [BERT Pre-training Tutorial](https://www.deepspeed.ai/tutorials/bert-pretraining/)             |  Pre-train BERT with DeepSpeed               |
-| [Learning Rate Range Test Tutorial](https://www.deepspeed.ai/tutorials/lrrt/)                  |  Faster training with large learning rates   |
-| [1Cycle Tutorial](https://www.deepspeed.ai/tutorials/one-cycle/)                               |  SOTA learning schedule in DeepSpeed         |
-
+| [Tutorials](https://www.deepspeed.ai/tutorials/)                                               |  Tutorials                                   |
+| [Blogs](https://www.deepspeed.ai/posts/)                                                       |  Blogs                                   |
 
 
 # Contributing

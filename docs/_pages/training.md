@@ -44,7 +44,7 @@ optimizations on advanced hyperparameter tuning and optimizers. For example:
   | 64 V100 GPUs   | DeepSpeed |            **8.68** hr|
   | 16 V100 GPUs   | DeepSpeed |           **33.22** hr|
 
-  *BERT code and tutorials will be available soon.*
+  *BERT codes and tutorials will be available soon.*
 
 * DeepSpeed trains GPT2 (1.5 billion parameters) 3.75x faster than state-of-art, NVIDIA
   Megatron on Azure GPUs.
@@ -100,9 +100,6 @@ Pipeline parallelism of DeepSpeed reduce communication volume during distributed
 ![Low-bandwidth GPT-2 Performance](/assets/images/pp-lowbw-gpt2.png)
 
 1-bit Adam, 0/1 Adam and 1-bit LAMB reduce communication volume by up to 26x while achieving similar convergence efficiency to Adam, allowing for scaling to different types of GPU clusters and networks.  [1-bit Adam blog post](https://www.deepspeed.ai/2020/09/08/onebit-adam-blog-post.html), [1-bit Adam tutorial](https://www.deepspeed.ai/tutorials/onebit-adam/), [0/1 Adam tutorial](https://www.deepspeed.ai/tutorials/zero-one-adam/), [1-bit LAMB tutorial](https://www.deepspeed.ai/tutorials/onebit-lamb/).
-
-## Data efficiency
-DeepSpeed Data Efficiency Library provides efficient data sampling via curriculum learning and efficient data routing via random layerwise token dropping. The composed solution enables up to 2x data and 2x time saving during GPT-3/BERT pretraining and GPT/ViT finetuning, or further improve model quality under the same data/time. See more in [the tutorial](/tutorials/data-efficiency).
 
 ## Supporting long sequence length
 DeepSpeed offers sparse attention kernels—an instrumental technology to support long sequences of model inputs, whether for text, image, or sound. Compared with the classic dense Transformers, it powers **an order-of-magnitude longer input sequence** and obtains up to 6x faster execution with comparable accuracy. It also outperforms state-of-the-art sparse implementations with 1.5–3x faster execution. Furthermore, our sparse kernels support efficient execution of flexible sparse format and empower users to innovate on their custom sparse structures.  [Read more here](https://www.deepspeed.ai/2020/09/08/sparse-attention.html).
@@ -167,15 +164,10 @@ Below we provide a brief feature list, see our detailed [feature overview](https
   * Learning Rate Range Test
   * 1Cycle Learning Rate Schedule
 * [Simplified Data Loader](https://www.deepspeed.ai/features/#simplified-data-loader)
-* [Data Efficiency](https://www.deepspeed.ai/tutorials/data-efficiency/)
-  * Efficient data sampling via curriculum learning and efficient data routing via random layerwise token dropping
-  * Up to 2x data and 2x time saving during GPT-3/BERT pretraining and GPT/ViT finetuning
-  * Or further improve model quality under the same data/time
 * [Curriculum Learning](https://www.deepspeed.ai/tutorials/curriculum-learning/)
   * A curriculum learning-based data pipeline that presents easier or simpler examples earlier during training
   * Stable and 3.3x faster GPT-2 pre-training with 8x/4x larger batch size/learning rate while maintaining token-wise convergence speed
   * Complementary to many other DeepSpeed features
-  * Note that the Data Efficiency Library above provides more general curriculum learning support. This legacy curriculum learning feature is still supported but we recommend to use the Data Efficiency Library.
 * [Progressive Layer Dropping](https://www.deepspeed.ai/2020/10/28/progressive-layer-dropping-news.html)
   * Efficient and robust compressed training
   * Up to 2.5x convergence speedup for pre-training
@@ -201,7 +193,6 @@ Enable 16-bit (FP16) training by in the `deepspeed_config` JSON.
     "loss_scale": 0,
     "loss_scale_window": 1000,
     "hysteresis": 2,
-    "consecutive_hysteresis": false,
     "min_loss_scale": 1
 }
 ```
@@ -330,7 +321,7 @@ The DeepSpeed core API consists of just a handful of methods:
 * argument parsing: `add_config_arguments`
 * checkpointing : `load_checkpoint` and `store_checkpoint`
 
-DeepSpeed supports most of the features described in this document, via the use of these API,
+DeepSpeed supports all the features described in this document, via the use of these API,
 along with a `deepspeed_config` JSON file for enabling and disabling the features.
 Please see the [core API doc](https://deepspeed.readthedocs.io/) for more details.
 
@@ -342,11 +333,6 @@ profiling. Please see the [core API doc](https://deepspeed.readthedocs.io/) for 
 
 
 ### Gradient Clipping
-```json
-{
-  "gradient_clipping": 1.0
-}
-```
 DeepSpeed handles gradient clipping under the hood based on the max gradient norm
 specified by the user.
 Please see the [core API doc](https://deepspeed.readthedocs.io/) for more details.
@@ -365,7 +351,7 @@ They offer the same convergence as Adam/LAMB, incur up to 26x less communication
 up to 6.6x higher throughput for BERT-Large pretraining and up to 2.7x higher throughput
 for SQuAD fine-tuning on bandwidth-limited clusters. For more details on usage and performance,
 please refer to the [1-bit Adam tutorial](https://www.deepspeed.ai/tutorials/onebit-adam),
-[1-bit Adam blog post](https://www.deepspeed.ai/2020/09/08/onebit-adam-blog-post.html),
+[1-bit Adam blog post](https://www.deepspeed.ai/news/2020/09/09/onebit-adam-blog-post.md),
 [0/1 Adam tutorial](https://www.deepspeed.ai/tutorials/zero-one-adam)
 and [1-bit LAMB tutorial](https://www.deepspeed.ai/tutorials/onebit-lamb/). For technical details,
 please refer to the [1-bit Adam paper](https://arxiv.org/abs/2102.02888), [0/1 Adam paper](https://arxiv.org/abs/2202.06009) and
@@ -428,11 +414,8 @@ DeepSpeed abstracts away data parallelism and model parallelism from the user wh
 comes to data loading. Users simply provide a PyTorch dataset, and DeepSpeed data loader
 can automatically handle batch creation appropriately.
 
-## Data Efficiency
-Please refer to the [Data Efficiency](/tutorials/data-efficiency/) tutorial.
-
 ## Curriculum Learning
-Please refer to the [Curriculum Learning](/tutorials/curriculum-learning/) tutorial. Note that the Data Efficiency Library above provides more general curriculum learning support. This legacy curriculum learning feature is still supported but we recommend to use the Data Efficiency Library.
+Please refer to the [Curriculum Learning](/tutorials/curriculum-learning/) tutorial.
 
 ## Performance Analysis and Debugging
 
@@ -485,7 +468,7 @@ The flops profiler can also be used as a standalone package. Please refer to the
 
 ### Autotuning
 
-The DeepSpeed Autotuner  uses model information, system information, and heuristics to efficiently tune Zero stage, micro batch size, and other Zero configurations. Using the autotuning feature requires no code change from DeepSpeed users. While `"autotuning": {"enabled": true}` is the minimal required to enable autotuning, there are other parameters users can define to configure the autotuning process. Below shows major parameters and their default values in the autotuning configuration. Please refer to the [Autotuning](/tutorials/autotuning) tutorial for more details.
+The DeepSpeed Autotuner  uses model information, system information, and heuristics to efficiently tune Zero stage, micro batch size, and other Zero configurations. Using the autotuning feature requires no code change from DeepSpeed users. While `"autotuning": {"enabled": true}` is the minimal required to enable auotuning, there are other parameters users can define to configure the autotuning process. Below shows major parameters and their default values in the autotuning configuration. Please refer to the [Autotuning](/tutorials/autotuning) tutorial for more details.
 
 ```json
 {
@@ -539,24 +522,6 @@ The DeepSpeed Monitor logs live training metrics to one or more monitoring backe
 
 The Monitor can also be added to log custom metrics and client codes. Please refer to the [Monitor](/tutorials/monitor) tutorial for more details.
 
-### Communication Logging
-
-DeepSpeed provides logging of all communication operations launched within `deepspeed.comm`. The communication logger can be configured in the `deepspeed_config` file as follows:
-
-```json
-{
-  "comms_logger": {
-    "enabled": true,
-    "verbose": false,
-    "prof_all": true,
-    "debug": false
-  }
-}
-
-```
-
-Client codes can then print a summary with a call to `deepspeed.comm.log_summary()`. For more details and example usage, see the [Communication Logging](/tutorials/comms-logging) tutorial.
-
 ## Sparse Attention
 DeepSpeed offers sparse attention to support long sequences. Please refer to the [Sparse Attention](/tutorials/sparse-attention/) tutorial.
 
@@ -576,6 +541,3 @@ DeepSpeed offers sparse attention to support long sequences. Please refer to the
     "num_different_global_patterns": 4
 }
 ```
-
-## Mixture of Experts (MoE)
-To learn more about training Mixture of Experts (MoE) models with DeepSpeed, see our [tutorial](https://www.deepspeed.ai/tutorials/mixture-of-experts/) for more details.
