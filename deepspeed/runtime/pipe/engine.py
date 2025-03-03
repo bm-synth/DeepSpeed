@@ -378,11 +378,9 @@ class PipelineEngine(DeepSpeedEngine):
 
         self.module.train()
         self.total_loss = None
-        self.total_additional_losses = None
-        self._compute_loss = True
 
         # Do the work
-        self.timers(TRAIN_BATCH_TIMER).start()
+        self.timers('train_batch').start()
         sched = schedule.TrainSchedule(micro_batches=self.micro_batches,
                                        stages=self.num_stages,
                                        stage_id=self.stage_id)
@@ -398,14 +396,10 @@ class PipelineEngine(DeepSpeedEngine):
                 elapsed = self.timers(TRAIN_BATCH_TIMER).elapsed(reset=True) / 1000.0
                 iter_time = elapsed / self.steps_per_print()
                 tput = self.train_batch_size() / iter_time
-                log_str = f'steps: {self.global_steps} loss: {self.agg_train_loss:0.4f} '
-                if self.agg_additional_losses is not None:
-                    for loss_name, loss_value in self.agg_additional_losses.items():
-                        log_str += f'{loss_name}: {loss_value.item():0.4f} '
-                log_str += f'iter time (s): {iter_time:0.3f} samples/sec: {tput:0.3f}'
-                print(log_str)
-            else:
-                self.timers(TRAIN_BATCH_TIMER).elapsed(reset=True)
+                print(f'steps: {self.global_steps} '
+                      f'loss: {self.agg_train_loss:0.4f} '
+                      f'iter time (s): {iter_time:0.3f} '
+                      f'samples/sec: {tput:0.3f}')
 
         # Monitoring
         if self.global_rank == 0 and self.monitor.enabled:
