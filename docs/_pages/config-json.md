@@ -359,7 +359,7 @@ Enabling and configuring ZeRO memory optimizations
   "zero_optimization": {
     "stage": [0|1|2|3],
     "allgather_partitions": [true|false],
-    "allgather_bucket_size": 5e8,
+    "allgather_bucket_size": 500000000,
     "overlap_comm": false,
     "reduce_scatter": [true|false],
     "reduce_bucket_size": 5e8,
@@ -410,7 +410,13 @@ Enabling and configuring ZeRO memory optimizations
 | ------------------------------------------------------------------------------------------------------------ | ------- |
 | Number of elements allgathered at a time. Limits the memory required for the allgather for large model sizes | `5e8`   |
 
-<i>**overlap_comm**</i>: [boolean]
+***overlap_comm***: [boolean]
+
+| Description                                                  | Default |
+| ------------------------------------------------------------ | ------- |
+| Attempts to overlap the reduction of the gradients with backward computation   | `false`   |
+
+***reduce_scatter***: [boolean]
 
 | Description                                                                  | Default |
 | ---------------------------------------------------------------------------- | ------- |
