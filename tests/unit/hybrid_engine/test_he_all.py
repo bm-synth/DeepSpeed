@@ -14,9 +14,6 @@ from deepspeed.accelerator import get_accelerator
 from transformers import (AutoConfig, AutoTokenizer, AutoModelForCausalLM)
 from deepspeed.ops.op_builder import InferenceBuilder
 
-if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
-    pytest.skip("This op had not been implemented on this system.", allow_module_level=True)
-
 rocm_version = OpBuilder.installed_rocm_version()
 if rocm_version != (0, 0):
     pytest.skip("skip inference tests on rocm for now", allow_module_level=True)
@@ -44,7 +41,7 @@ class TestHybridEngineTextGen(DistributedTest):
         model_config.dropout = 0.0
         model = AutoModelForCausalLM.from_pretrained(model_name, config=model_config)
         model = model.half()
-        model = model.to(f'{get_accelerator().device_name()}:{local_rank}')
+        model = model.to(f'cuda:{local_rank}')
         return model
 
     def get_tokenizer(self, model_name):
