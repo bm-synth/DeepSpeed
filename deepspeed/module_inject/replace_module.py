@@ -15,7 +15,7 @@ from deepspeed.accelerator import get_accelerator
 from .replace_policy import replace_policies, generic_policies
 from .auto_tp import AutoTP, ReplaceWithTensorSlicing, Loading
 from .layers import TensorParallelOcShardConv2d, TensorParallelIcShardConv2d
-from deepspeed.module_inject.layers import is_autotp_training_mode
+
 from deepspeed import comm as dist
 from deepspeed.module_inject.tp_shard import set_num_kv_heads, set_n_embd, set_num_attention_heads
 
@@ -385,6 +385,7 @@ def replace_transformer_layer(orig_layer_impl, model, checkpoint_dict, config, m
                                              checkpoint=checkpoint_file)
             pbar.update(1)
             gc.collect()
+        replaced_module = set_lm_head(replaced_module)
         # conv2d tp module replace
         # Now is for yuan model. Add model list and conv policy to decide whether to replace conv.
         if 'Yuan' in str(replaced_module):
