@@ -1022,10 +1022,6 @@ class DeepSpeedEngine(Module):
         elif self.bfloat16_enabled():
             if is_zero_init_model:
                 self.__check_params(self.module, torch.bfloat16)
-            if self.zero_optimization_stage() == 0 and not self.pipeline_parallelism:
-                raise NotImplementedError(
-                    "When not running ZeRO, BF16 training support is only supported for Pipeline parallelism"
-                )
             self.module.bfloat16()
         else:
             self.__check_params(self.module, torch.float)
