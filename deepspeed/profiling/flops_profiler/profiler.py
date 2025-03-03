@@ -16,7 +16,6 @@ from deepspeed.utils import logger
 from deepspeed.moe.layer import MoE
 from deepspeed.utils.timer import FORWARD_GLOBAL_TIMER, BACKWARD_GLOBAL_TIMER, STEP_GLOBAL_TIMER
 from deepspeed.utils.torch import required_torch_version
-import einops
 
 Tensor = torch.Tensor
 
