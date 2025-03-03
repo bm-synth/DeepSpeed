@@ -27,10 +27,8 @@ from deepspeed.runtime.utils import see_memory_usage, DummyOptim
 from .zero.offload_config import OffloadDeviceEnum, OffloadStateTypeEnum
 from deepspeed.runtime.zero.stage_1_and_2 import DeepSpeedZeroOptimizer
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
-from deepspeed.runtime.zero.utils import is_zero_supported_optimizer, ZeRORuntimeException
-from deepspeed.runtime.zero.parameter_offload import DeepSpeedZeRoOffload
-from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION
-
+from deepspeed.runtime.zero.utils import is_zero_supported_optimizer, _initialize_parameter_parallel_groups
+from deepspeed.runtime.activation_checkpointing import checkpointing as activation_checkpointing
 from deepspeed.runtime.fp16.fused_optimizer import FP16_Optimizer
 from deepspeed.runtime.fp16.unfused_optimizer import FP16_UnfusedOptimizer
 from deepspeed.runtime.config import DeepSpeedConfig, DEEPSPEED_OPTIMIZERS, \
@@ -100,39 +98,11 @@ def split_half_float_double_sparse(tensors):
     return sparse_tensor_buckets, dense_tensor_buckets
 
 
-class EngineTimers(object):
-    r"""Wallclock timers for DeepSpeedEngine"""
-
-    def __init__(self, enable_micro_timers, enable_global_timers):
-        self.forward_timers = []
-        self.backward_timers = []
-        self.backward_inner_timers = []
-        self.backward_reduce_timers = []
-        self.step_timers = []
-        self.global_timers = []
-        self.micro_timers = []
-
-        if enable_micro_timers:
-            self.forward_timers += [FORWARD_MICRO_TIMER]
-            self.backward_timers += [BACKWARD_MICRO_TIMER]
-            self.backward_inner_timers += [BACKWARD_INNER_MICRO_TIMER]
-            self.backward_reduce_timers += [BACKWARD_REDUCE_MICRO_TIMER]
-            self.step_timers += [STEP_MICRO_TIMER]
-            self.micro_timers += [
-                FORWARD_MICRO_TIMER, BACKWARD_MICRO_TIMER, BACKWARD_INNER_MICRO_TIMER, BACKWARD_REDUCE_MICRO_TIMER,
-                STEP_MICRO_TIMER
-            ]
-
-        if enable_global_timers:
-            self.forward_timers += [FORWARD_GLOBAL_TIMER]
-            self.backward_timers += [BACKWARD_GLOBAL_TIMER]
-            self.backward_inner_timers += [BACKWARD_INNER_GLOBAL_TIMER]
-            self.backward_reduce_timers += [BACKWARD_REDUCE_GLOBAL_TIMER]
-            self.step_timers += [STEP_GLOBAL_TIMER]
-            self.global_timers += [
-                FORWARD_GLOBAL_TIMER, BACKWARD_GLOBAL_TIMER, BACKWARD_INNER_GLOBAL_TIMER, BACKWARD_REDUCE_GLOBAL_TIMER,
-                STEP_GLOBAL_TIMER
-            ]
+def print_configuration(args, name):
+    logger.info('{}:'.format(name))
+    for arg in sorted(vars(args)):
+        dots = '.' * (29 - len(arg))
+        logger.info('  {} {} {}'.format(arg, dots, getattr(args, arg)))
 
 
 class DeepSpeedEngine(Module):
