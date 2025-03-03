@@ -40,13 +40,13 @@ Getting Started
 
 If you are new to DeepSpeed, check out our `Getting Started <https://www.deepspeed.ai/getting-started/>`_ page.
 
-Once you are training with DeepSpeed, enabling ZeRO-3 offload is as simple as enabling it
+Once you are training with DeepSpeed, enabling ZeRO-3 Offload is as simple as enabling it
 in your DeepSpeed configuration! Below are a few examples of ZeRO-3 configurations. Please see
 our `config guide <https://www.deepspeed.ai/docs/config-json/#zero-optimizations-for-fp16-training>`_
 for a complete list of options for configuration and performance tuning.
 
 .. note::
-        ZeRO-Infinity and ZeRO-Offload work best with our heavily optimized
+        ZeRO-3 Offload works best with our heavily optimized
         :class:`deepspeed.ops.adam.DeepSpeedCPUAdam` optimizer. We recommend using
         our `optimizer config <https://www.deepspeed.ai/docs/config-json/#optimizer-parameters>`_
         to instruct :meth:`deepspeed.initialize` to build the optimizer for you.
