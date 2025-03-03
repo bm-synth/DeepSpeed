@@ -5,7 +5,7 @@ tags: training pre-training
 ---
 
 **Note:**
-This tutorial is being updated to include new details for reproducing the
+This tutorial will be updated to include new details for reproducing the
 recent 44-minute [BERT pre-training record](https://www.microsoft.com/en-us/research/blog/zero-2-deepspeed-shattering-barriers-of-deep-learning-speed-scale/).
 Please check again soon!
 {: .notice--warning}
