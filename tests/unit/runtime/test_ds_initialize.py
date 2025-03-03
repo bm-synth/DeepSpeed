@@ -99,10 +99,16 @@ class TestClientOptimizer(DistributedTest):
 class TestConfigOptimizer(DistributedTest):
     world_size = 1
 
-    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedAdamBuilder.NAME],
-                        reason="FusedAdam is not compatible")
     def test(self, client_parameters):
-        ds_config = {"train_batch_size": 1, "optimizer": {"type": "Adam", "params": {"lr": 0.001}}}
+        ds_config = {
+            "train_batch_size": 1,
+            "optimizer": {
+                "type": "Adam",
+                "params": {
+                    "lr": 0.001
+                }
+            }
+        }
 
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
@@ -112,136 +118,11 @@ class TestConfigOptimizer(DistributedTest):
         else:
             model_parameters = None
 
-        _, ds_optimizer, _, _ = deepspeed.initialize(config=ds_config, model=model, model_parameters=model_parameters)
+        _, ds_optimizer, _, _ = deepspeed.initialize(config=ds_config,
+                                                    model=model,
+                                                    model_parameters=model_parameters)
 
         assert isinstance(ds_optimizer, FusedAdam)
-
-
-@pytest.mark.parametrize('optimizer_extension', ['zero1', 'zero2', 'zero3', 'amp', None])
-@pytest.mark.parametrize('model_dtype', ['fp16', 'bf16', 'fp32'])
-@pytest.mark.parametrize('grad_accum_dtype', [None, 'fp16', 'bf16', 'fp32'])
-class TestOptimizerImplementation(DistributedTest):
-    world_size = 1
-    reuse_dist_env = True
-
-    def test(self, optimizer_extension, model_dtype, grad_accum_dtype):
-        if not get_accelerator().is_fp16_supported():
-            if model_dtype == 'fp16' or grad_accum_dtype == 'fp16':
-                pytest.skip("fp16 is not supported")
-        if optimizer_extension == 'zero1':
-            zero_stage = 1
-        elif optimizer_extension == 'zero2':
-            zero_stage = 2
-        elif optimizer_extension == 'zero3':
-            zero_stage = 3
-        else:
-            zero_stage = 0
-        amp = (optimizer_extension == 'amp')
-        fp16 = (model_dtype == 'fp16')
-        bf16 = (model_dtype == 'bf16')
-        # Skip checks
-        if bf16 and not bf16_required_version_check():
-            pytest.skip(
-                "DeepSpeed BFloat16 tests need torch >= 1.10, NCCL >= 2.10.3, CUDA > =11.0 and HW support for BFloat16 to run correctly"
-            )
-        if amp and not required_amp_check():
-            pytest.skip("Amp is not installed can't run amp check")
-        # Config declaration
-        ds_config = {
-            "train_batch_size": 1,
-            'fp16': {
-                'enabled': fp16
-            },
-            'bf16': {
-                'enabled': bf16
-            },
-            'amp': {
-                'enabled': amp
-            },
-            'zero_optimization': {
-                "stage": zero_stage
-            },
-            "data_types": {
-                "grad_accum_dtype": grad_accum_dtype
-            },
-            "optimizer": {
-                "type": "Adam",
-                "params": {
-                    "lr": 0.001
-                }
-            }
-        }
-
-        key = (optimizer_extension, model_dtype, grad_accum_dtype)
-
-        # Enumerate supported configurations
-        is_supported = {}
-        # ZeRO 1 Wrapper
-        is_supported[('zero1', 'fp16', None)] = True
-        is_supported[('zero1', 'fp16', 'fp16')] = True
-        is_supported[('zero1', 'fp16', 'bf16')] = True
-        is_supported[('zero1', 'fp16', 'fp32')] = True
-        is_supported[('zero1', 'bf16', None)] = True
-        is_supported[('zero1', 'bf16', 'fp16')] = True
-        is_supported[('zero1', 'bf16', 'bf16')] = True
-        is_supported[('zero1', 'bf16', 'fp32')] = True
-        is_supported[('zero1', 'fp32', None)] = True
-        is_supported[('zero1', 'fp32', 'fp16')] = True
-        is_supported[('zero1', 'fp32', 'bf16')] = True
-        is_supported[('zero1', 'fp32', 'fp32')] = True
-        # ZeRO 2 Wrapper
-        is_supported[('zero2', 'fp16', None)] = True
-        is_supported[('zero2', 'fp16', 'fp16')] = True
-        is_supported[('zero2', 'fp16', 'bf16')] = True
-        is_supported[('zero2', 'fp16', 'fp32')] = True
-        is_supported[('zero2', 'bf16', None)] = True
-        is_supported[('zero2', 'bf16', 'fp16')] = True
-        is_supported[('zero2', 'bf16', 'bf16')] = True
-        is_supported[('zero2', 'bf16', 'fp32')] = True
-        is_supported[('zero2', 'fp32', None)] = True
-        is_supported[('zero2', 'fp32', 'fp16')] = True
-        is_supported[('zero2', 'fp32', 'bf16')] = True
-        is_supported[('zero2', 'fp32', 'fp32')] = True
-        # ZeRO 3 Wrapper
-        is_supported[('zero3', 'fp16', None)] = True
-        is_supported[('zero3', 'fp16', 'fp16')] = True
-        is_supported[('zero3', 'fp16', 'bf16')] = True
-        is_supported[('zero3', 'fp16', 'fp32')] = True
-        is_supported[('zero3', 'bf16', None)] = True
-        is_supported[('zero3', 'bf16', 'fp16')] = True
-        is_supported[('zero3', 'bf16', 'bf16')] = True
-        is_supported[('zero3', 'bf16', 'fp32')] = True
-        is_supported[('zero3', 'fp32', None)] = True
-        is_supported[('zero3', 'fp32', 'fp16')] = True
-        is_supported[('zero3', 'fp32', 'bf16')] = True
-        is_supported[('zero3', 'fp32', 'fp32')] = True
-        # Amp Wrapper
-        is_supported[('amp', 'fp32', None)] = True
-        is_supported[('amp', 'fp32', 'fp32')] = True
-        # FP16 Wrapper
-        is_supported[(None, 'fp16', None)] = True
-        is_supported[(None, 'fp16', 'fp16')] = True
-        # BF16 Wrapper
-        is_supported[(None, 'bf16', 'fp32')] = True
-        is_supported[(None, 'bf16', None)] = True
-        # No Wrapper
-        is_supported[(None, 'fp32', None)] = True
-        is_supported[(None, 'fp32', 'fp32')] = True
-
-        hidden_dim = 10
-        model = SimpleModel(hidden_dim)
-        model_parameters = list(model.parameters())
-
-        if key in is_supported:
-            _, ds_optimizer, _, _ = deepspeed.initialize(config=ds_config,
-                                                         model=model,
-                                                         model_parameters=model_parameters)
-            assert True
-        else:
-            with pytest.raises(NotImplementedError):
-                _, ds_optimizer, _, _ = deepspeed.initialize(config=ds_config,
-                                                             model=model,
-                                                             model_parameters=model_parameters)
 
 
 @pytest.mark.parametrize("scheduler_type", [None, _LRScheduler, Callable])

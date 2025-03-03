@@ -258,7 +258,15 @@ class DeepSpeedEngine(Module):
         self.optimizer = None
         self.basic_optimizer = None
         self.lr_scheduler = None
-        if model_parameters or optimizer:
+        has_optimizer = False
+
+        if optimizer or self.optimizer_name():
+            has_optimizer = True
+        # If no parameters given by init default to module parameters
+        if model_parameters is None:
+            model_parameters = self.module.parameters()
+
+        if has_optimizer:
             self._configure_optimizer(optimizer, model_parameters)
             self._configure_lr_scheduler(lr_scheduler)
             self._report_progress(0)
@@ -267,32 +275,6 @@ class DeepSpeedEngine(Module):
             self.optimizer = self._configure_zero_optimizer(optimizer=None)
         elif self.bfloat16_enabled():
             self.optimizer = self._configure_bf16_optimizer(optimizer=None)
-
-        if optimizer or self.optimizer_name():
-            has_optimizer = True
-        # If no parameters given by init default to module parameters
-        if model_parameters is None:
-            model_parameters = self.module.parameters()
-
-        # Convert model parameters from generator to list
-        if not isinstance(model_parameters, list):
-            model_parameters = list(model_parameters)
-
-        if has_optimizer:
-            self._configure_optimizer(optimizer, model_parameters)
-            self._configure_lr_scheduler()
-            self._report_progress(0)
-        elif self.zero_optimization():
-            # no optim selected but zero is enabled
-            self.optimizer = self._configure_zero_optimizer(optimizer=None)
-        elif self.bfloat16_enabled():
-            self.optimizer = self._configure_bf16_optimizer(optimizer=None)
-
-        # Hook optimizer for snip_momentum pruning
-        if hasattr(model, 'pruners'):
-            from ..compression.helper import rewrite_optimizer_step
-            self.optimizer.pruners = model.pruners
-            rewrite_optimizer_step(self.optimizer)
 
         # Bookkeeping for sparse support
         self.sparse_tensor_module_names = set()
@@ -1183,7 +1165,8 @@ class DeepSpeedEngine(Module):
             assert occurrence <= 1, f"Parameter with name: {name} occurs multiple times in optimizer.param_groups. Make sure it only appears once to prevent undefined behavior."
 
         self.basic_optimizer = basic_optimizer
-        log_dist("DeepSpeed Basic Optimizer = {basic_optimizer.__class__.__name__}",
+        log_dist("DeepSpeed Basic Optimizer = {}".format(
+            basic_optimizer.__class__.__name__),
                  ranks=[0])
 
         if self.zero_optimization():
@@ -1446,7 +1429,7 @@ class DeepSpeedEngine(Module):
             overlap_comm = self.zero_overlap_comm()
             contiguous_gradients = self.zero_contiguous_gradients()
             round_robin_gradients = self.zero_round_robin_gradients()
-            assert not isinstance(optimizer, DummyOptim), "zero stage 2 requires an optimizer"
+            assert not isinstance(optimizer, DummyOptim), "zero stage {} requires an optimizer".format(zero_stage)
 
             log_dist('Creating fp16 ZeRO stage {} optimizer'.format(zero_stage),
                      ranks=[0])
