@@ -3,14 +3,9 @@ name: nv-inference
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - '.github/workflows/nv-inference.yml'
-      - 'requirements/**'
-      - 'deepspeed/__init__.py'
-      - 'deepspeed/inference/**'
-      - '!deepspeed/inference/v2/**' # exclude v2 dir
-      - 'tests/unit/inference/**'
-      - '!tests/unit/inference/v2/**' # exclude v2 tests dir
+    paths-ignore:
+      - 'docs/**'
+      - 'blogs/**'
   merge_group:
     branches: [ master ]
   schedule:

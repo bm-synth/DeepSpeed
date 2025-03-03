@@ -9,6 +9,11 @@ on:
   pull_request:
     paths-ignore:
       - 'docs/**'
+      - 'blogs/**'
+  merge_group:
+    branches: [ master ]
+  schedule:
+    - cron: "0 0 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

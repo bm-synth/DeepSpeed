@@ -14,6 +14,8 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'blogs/**'
+  merge_group:
+    branches: [ master ]
   schedule:
     - cron: "0 0 * * *"
 
