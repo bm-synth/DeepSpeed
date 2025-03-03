@@ -34,11 +34,12 @@ def pytest_hack(runner_result):
 
 def test_megatron():
     runner = unittest.TextTestRunner(failfast=True)
+    pytest_hack(runner.run(Megatron_GPT2.suite()))
 
-    # Add test suites here.
-    #pytest_hack(runner.run(Megatron_GPT2.suite()))
-    #pytest_hack(runner.run(Megatron_GPT2.checkpoint_suite()))
-    pytest_hack(runner.run(BingBertSquad.suite()))
+
+def test_megatron_checkpoint():
+    runner = unittest.TextTestRunner(failfast=True)
+    pytest_hack(runner.run(Megatron_GPT2.checkpoint_suite()))
 
 
 def test_squad():

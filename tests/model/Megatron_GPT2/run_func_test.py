@@ -15,7 +15,6 @@ LAYERS = 2
 HIDDEN_SIZE = 128
 ATTN_HEADS = 8
 SEQ_LEN = 64
-MASTER_PORT = 29700
 
 
 def grep_loss_from_file(file_name):
