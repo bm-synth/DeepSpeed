@@ -837,9 +837,13 @@ class CUDAOpBuilder(OpBuilder):
             else:
                 std_lib = '-std=c++14'
             args += [
-                '-allow-unsupported-compiler' if sys.platform == "win32" else '', '--use_fast_math', std_lib,
-                '-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', '-U__CUDA_NO_HALF2_OPERATORS__',
-                f'--threads={nvcc_threads}'
+                '-allow-unsupported-compiler' if sys.platform == "win32" else '',
+                '--use_fast_math',
+                '-std=c++17'
+                if sys.platform == "win32" and cuda_major > 10 else '-std=c++14',
+                '-U__CUDA_NO_HALF_OPERATORS__',
+                '-U__CUDA_NO_HALF_CONVERSIONS__',
+                '-U__CUDA_NO_HALF2_OPERATORS__'
             ]
             if os.environ.get('DS_DEBUG_CUDA_BUILD', '0') == '1':
                 args.append('--ptxas-options=-v')
