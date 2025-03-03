@@ -38,14 +38,10 @@ collections:
       - automatic-tensor-parallelism.md
       - bert-finetuning.md
       - bert-pretraining.md
-      - cifar-10.md
-      - curriculum-learning.md
-      - data-efficiency.md
-      - ds4sci_evoformerattention.md
-      - flops-profiler.md
-      - pytorch-profiler.md
-      - autotuning.md
-      - gan.md
+      - bert-finetuning.md
+      - transformer_kernel.md
+      - megatron.md
+      - 1Cycle.md
       - lrrt.md
       - megatron.md
       - mixture-of-experts.md

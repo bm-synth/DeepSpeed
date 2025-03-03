@@ -28,10 +28,10 @@ The script `<client_entry.py>` will execute on the resources specified in `<host
 ## Model Parallelism
 
 ### Support for Custom Model Parallelism
-DeepSpeed is supports all forms of model parallelism including tensor slicing based
-approaches such as the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), or a
-pipelined parallelism approach such as
-[PipeDream](https://github.com/msr-fiddle/pipedream) or
+DeepSpeed supports all forms of model parallelism including tensor slicing based
+approaches such as the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), or
+pipelined parallelism approaches such as
+[PipeDream](https://github.com/msr-fiddle/pipedream) and
 [GPipe](https://github.com/kakaobrain/torchgpipe). It does so by only requiring the model
 parallelism framework to provide a *model parallelism unit* (`mpu`) that implements a few
 bookkeeping functionalities:
@@ -95,6 +95,11 @@ averaged gradients for the effective batch across all GPUs. This strategy signif
 reduces the communication involved over the approach of averaging globally for each
 micro-batch, specially when the number of micro-batches per effective batch is large.
 
+### Communication Overlapping
+During back propagation, DeepSpeed can overlap the communication required for averaging
+parameter gradients that have already been computed with the ongoing gradient computation.
+This computation-communication overlap allows DeepSpeed to achieve higher throughput even
+at modest batch sizes.  
 
 ## Training Features
 
@@ -141,9 +146,9 @@ DeepSpeed makes it easy to train with large batch sizes by enabling the LAMB Opt
 For more details on LAMB, see the [LAMB paper](https://arxiv.org/pdf/1904.00962.pdf).
 
 ### Memory-Efficient Training with ZeRO Optimizer
-DeepSpeed can train models up with up to 6 billion parameters without parallelism, and
-models with up to 100 billion parameters with 16-way model parallelism. This leap in
-model size is possible though the memory efficiency achieved via the ZeRO Optimizer. For
+DeepSpeed can train models with up to 13 billion parameters without model parallelism, and
+models with up to 200 billion parameters with 16-way model parallelism. This leap in
+model size is possible through the memory efficiency achieved via the ZeRO Optimizer. For
 more details see [ZeRO paper](https://arxiv.org/abs/1910.02054) .
 
 
@@ -153,8 +158,7 @@ DeepSpeed can simplify checkpointing for you regardless of whether you are using
 parallel training, model parallel training, mixed-precision training, a mix of these
 three, or using the zero optimizer to enable larger model sizes.
 Please see the [Getting Started](/getting-started/) guide
-and the
-Please see the [core API doc](https://deepspeed.readthedocs.io/) for more details.
+and the [core API doc](https://deepspeed.readthedocs.io/) for more details.
 
 ## Advanced parameter search
 DeepSpeed supports multiple Learning Rate Schedules to enable faster convergence for
@@ -174,7 +178,7 @@ can automatically handle batch creation appropriately.
 
 ## Performance Analysis and Debugging
 For performance debugging, DeepSpeed can give you a detailed breakdown of the time spent
-in different parts of the training with by simply enabling it in the `deepspeed_config`
+in different parts of the training by simply enabling it in the `deepspeed_config`
 file.
 Please see the [core API doc](https://deepspeed.readthedocs.io/) for more details.
 ```json
