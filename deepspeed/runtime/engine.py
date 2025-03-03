@@ -3210,14 +3210,31 @@ class DeepSpeedEngine(Module):
         state_dict = OrderedDict() if dist.get_rank() == 0 else None
 
         def get_layer_state_dict(module, prefix=""):
-            with GatherReplacedLayerParams(list(module.parameters(recurse=False)), module, enabled=True):
-                for name, param in module.named_parameters(recurse=False):
-                    if param is None:
-                        continue
-                    key = prefix + name
-                    if (dist.get_rank() == 0):
-                        state_dict[key] = param.detach().cpu()
-                        # print(key,module, param.detach().cpu().shape)
+            # gather one layer at a time to be memory-efficient
+            with deepspeed.zero.GatheredParameters(list(
+                    module.parameters(recurse=False)),
+                                                   modifier_rank=0):
+                if torch.distributed.get_rank() == 0:
+                    for name, param in module.named_parameters(recurse=False):
+                        if param is None:
+                            continue
+                        key = prefix + name
+                        # for shared weights we want to make sure not to unshare them when copying to cpu
+                        data_ptr_id = param.storage().data_ptr()
+                        if data_ptr_id in shared_weights:
+                            # shared weights
+                            # print(f"`{key}` is shared with `{shared_weights[data_ptr_id]}`")
+                            state_dict[key] = state_dict[shared_weights[data_ptr_id]]
+                        else:
+                            state_dict[key] = param.detach().cpu()
+                            shared_weights[data_ptr_id] = key
+                        #print(f"param {name} {param.shape}")
+                        #print(f"param {key} {param.shape} {state_dict[key].storage().data_ptr()}")
+
+                    # now buffers - not sure if need to take care of potentially shared weights here
+                    for name, buf in module.named_buffers(recurse=False):
+                        if buf is not None and name not in module._non_persistent_buffers_set:
+                            state_dict[prefix + name] = buf.detach().cpu()
 
             for name, child in module.named_children():
                 if child is not None:
