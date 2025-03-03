@@ -707,6 +707,22 @@ class FP16_DeepSpeedZeroOptimizer(object):
             f"{tag}: elems in_bucket {self.elements_in_ipg_bucket} param {param_elems} max_percent {percent_of_bucket_size}"
         )
 
+    # create a flat tensor aligned at the alignment boundary
+    def flatten_dense_tensors_aligned(self, tensor_list, alignment):
+        num_elements = sum(t.numel() for t in tensor_list)
+        remaining = num_elements % alignment
+
+        if remaining:
+            elements_to_add = alignment - remaining
+            pad_tensor = torch.zeros(elements_to_add,
+                                     device=tensor_list[0].device,
+                                     dtype=tensor_list[0].dtype)
+            padded_tensor_list = tensor_list + [pad_tensor]
+        else:
+            padded_tensor_list = tensor_list
+
+        return self.flatten(padded_tensor_list)
+
     ############### Independent Partition Gradient ########################
     def reduce_independent_p_g_buckets_and_remove_grads(self, param, i):
         if self.elements_in_ipg_bucket + param.numel() > self.reduce_bucket_size:
