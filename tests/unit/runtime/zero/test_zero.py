@@ -229,14 +229,15 @@ class TestZeroToFP32(DistributedTest):
                 orig_state_dict[name] = param.detach().cpu()
 
         if zero_stage == 3:
-            with deepspeed.zero.GatheredParameters(model.parameters(), modifier_rank=None):
+            with deepspeed.zero.GatheredParameters(model.parameters(),
+                                                   modifier_rank=None):
                 fp32_model = load_state_dict_from_zero_checkpoint(model.module, tmpdir)
                 fp32_state_dict = fp32_model.state_dict()
         else:
             fp32_model = load_state_dict_from_zero_checkpoint(model.module, tmpdir)
             fp32_state_dict = fp32_model.state_dict()
 
-        # dump_state_dict(fp32_model)
+        #dump_state_dict(fp32_model)
 
         if dist.get_rank() == 0:
             for name in orig_state_dict.keys():
@@ -323,7 +324,7 @@ class TestZeroToFP32(DistributedTest):
         # make sure all sides saved it
         dist.barrier()
 
-        # dump_state_dict(model)
+        #dump_state_dict(model)
 
         orig_state_dict = {}
         for name, param in model.module.named_parameters():
@@ -334,14 +335,15 @@ class TestZeroToFP32(DistributedTest):
                 orig_state_dict[name] = param.detach().cpu()
 
         if zero_stage == 3:
-            with deepspeed.zero.GatheredParameters(model.parameters(), modifier_rank=None):
+            with deepspeed.zero.GatheredParameters(model.parameters(),
+                                                   modifier_rank=None):
                 fp32_model = load_state_dict_from_zero_checkpoint(model.module, tmpdir)
                 fp32_state_dict = fp32_model.state_dict()
         else:
             fp32_model = load_state_dict_from_zero_checkpoint(model.module, tmpdir)
             fp32_state_dict = fp32_model.state_dict()
 
-        # dump_state_dict(fp32_model)
+        #dump_state_dict(fp32_model)
 
         if dist.get_rank() == 0:
             for name in orig_state_dict.keys():
