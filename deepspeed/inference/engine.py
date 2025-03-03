@@ -120,6 +120,15 @@ class InferenceEngine(Module):
                 self._apply_injection_policy(config, client_module)
         elif config.replace_method == 'auto':
             self._apply_injection_policy(config)
+        elif not config.replace_with_kernel_inject:
+            # Automatic Tensor Parallelism
+            parser_dict = AutoTP.tp_parser(model)
+            for client_module, injection_policy in parser_dict:
+                if isinstance(injection_policy, str):
+                    config.injection_policy_tuple = (injection_policy, )
+                else:
+                    config.injection_policy_tuple = injection_policy
+                self._apply_injection_policy(config, client_module)
 
         device = get_accelerator().current_device_name()
         self.module.to(device)
