@@ -326,9 +326,35 @@ __global__ void attn_softmax_v2(float* vals,
                 data[i].z = z_check ? vals[data_id + reduceWidth * 2] +
                                           attn_mask[data_id + mask_offset + reduceWidth * 2]
                                     : minus_infinity;
-                data[i].w = w_check ? vals[data_id + reduceWidth * 3] +
-                                          attn_mask[data_id + mask_offset + reduceWidth * 3]
+                    if (attn_mask) {
+                        data[i].x += attn_mask[data_id + mask_offset];
+                        data[i].y += attn_mask[data_id + mask_offset + 1];
+                        data[i].z += attn_mask[data_id + mask_offset + 2];
+                        data[i].w += attn_mask[data_id + mask_offset + 3];
+                    }
+                } else {
+                    data[i].x = data_id > window_stride ? vals[data_id] : minus_infinity;
+                    data[i].y = (((!triangular || (data_id + 1) <= seq_id)) &&
+                                 (data_id + 1) > window_stride && (data_id + 1) < sequence_length)
+                                    ? (vals[data_id + 1])
                                     : minus_infinity;
+                    data[i].z = (((!triangular || (data_id + 2) <= seq_id)) &&
+                                 (data_id + 2) > window_stride && (data_id + 2) < sequence_length)
+                                    ? (vals[data_id + 2])
+                                    : minus_infinity;
+                    data[i].w = minus_infinity;
+                    if (attn_mask) {
+                        data[i].x += attn_mask[data_id + mask_offset];
+                        if ((data_id + 1) < sequence_length)
+                            data[i].y += attn_mask[data_id + mask_offset + 1];
+                        if ((data_id + 2) < sequence_length)
+                            data[i].z += attn_mask[data_id + mask_offset + 2];
+                    }
+                }
+                max_val = (data[i].x > max_val ? data[i].x : max_val);
+                max_val = (data[i].y > max_val ? data[i].y : max_val);
+                max_val = (data[i].z > max_val ? data[i].z : max_val);
+                max_val = (data[i].w > max_val ? data[i].w : max_val);
             } else {
                 data[i].x = x_check ? vals[data_id] : minus_infinity;
                 data[i].y = y_check ? vals[data_id + reduceWidth] : minus_infinity;

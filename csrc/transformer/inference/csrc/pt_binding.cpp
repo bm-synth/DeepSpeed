@@ -55,6 +55,41 @@ inline auto get_attn_mask_stride(at::Tensor& attn_mask) -> int
     return 0;
 }
 
+enum class TransformerType : uint8_t { UNKNOWN = 0, GPTType = 1, BERTType = 2 };
+
+// NOTE: this is a temporary and dodgy solution to distinguish GPT and BERT style models
+// based on the dimensions of the corresponding attention mask.
+inline auto infer_transformer_type(at::Tensor& attn_mask) -> TransformerType
+{
+    auto attn_mask_num_dims = attn_mask.sizes().size();
+
+    if (attn_mask_num_dims > 2) {
+        return TransformerType::GPTType;
+    } else if (attn_mask_num_dims == 2) {
+        return TransformerType::BERTType;
+    } else {
+        return TransformerType::UNKNOWN;
+    }
+}
+
+// infer stride of attention mask memory layout based on the model type.
+inline auto get_attn_mask_stride(at::Tensor& attn_mask) -> int
+{
+    auto trnsfrmr_type = infer_transformer_type(attn_mask);
+
+    if (trnsfrmr_type == TransformerType::GPTType) {
+        return attn_mask.size(2);
+    } else if (trnsfrmr_type == TransformerType::BERTType) {
+        // Bert style models have always a mask stride of 1.
+        return 1;
+    } else if (trnsfrmr_type == TransformerType::UNKNOWN) {
+        throw std::runtime_error("Unknown transformer type.");
+    }
+
+    // this is just to make the compiler happy.
+    return 0;
+}
+
 template <typename T>
 at::Tensor ds_softmax(at::Tensor& attn_scores,
                       at::Tensor& attn_mask,
@@ -201,9 +236,8 @@ void attention_unfused(at::Tensor& prev_key_cont,
 
     auto mask_stride = get_attn_mask_stride(attn_mask);
 
-    cublasSetStream(InferenceContext::Instance().GetCublasHandle(),
-                    InferenceContext::Instance().GetCurrentStream());
-    cublas_strided_batched_gemm(InferenceContext::Instance().GetCublasHandle(),
+    cublasSetStream(Context::Instance().GetCublasHandle(), Context::Instance().GetCurrentStream());
+    cublas_strided_batched_gemm(Context::Instance().GetCublasHandle(),
                                 soft_len,
                                 seq_len,
                                 k,
