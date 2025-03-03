@@ -83,12 +83,23 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
 
     def new_inference_container(self, orig_layer, policy_cls, layer_id):
         policy = policy_cls(orig_layer, inference=True)
+
+        if self._config.fp16_enabled:
+            inference_dtype = torch.float16
+        elif self._config.bfloat16_enabled:
+            inference_dtype = torch.bfloat16
+        else:
+            inference_dtype = torch.float32
+
         _container = policy_to_ds_container(
             policy=policy,
-            config=DeepSpeedInferenceConfig(set_empty_params=True,
-                                            max_out_tokens=self._config.hybrid_engine.max_out_tokens,
-                                            min_out_tokens=self._config.hybrid_engine.max_out_tokens,
-                                            transposed_mode=True),
+            config=DeepSpeedInferenceConfig(
+                set_empty_params=True,
+                dtype=inference_dtype,
+                max_out_tokens=self._config.hybrid_engine.max_out_tokens,
+                min_out_tokens=self._config.hybrid_engine.max_out_tokens,
+                transposed_mode=True,
+            ),
             model_config=self.module.config if hasattr(self.module, 'config') else None,
             layer_id=layer_id,
             child=orig_layer)
@@ -125,31 +136,19 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
             OPTLearnedPositionalEmbedding: (OPTEmbedding, )
         })
 
-    def _fuse_lora(self, params, lora_params):
-        maybe_has_lora_params = [p for p in params if len(p.shape) > 1]
-        for lora_param, weight in zip(lora_params, maybe_has_lora_params):
-            if len(lora_param) == 3:
-                lora_right_weight, \
-                lora_left_weight, \
-                lora_scaling = lora_param
-                weight.data += lora_scaling * torch.matmul(lora_left_weight.t(), lora_right_weight.t())
+    def _fuse_lora_layer(self, layer_id):
+        self._inference_containers[layer_id].fuse_lora()
 
     def fuse_lora_weight(self):
         for layer_id in range(len(self.layer_params)):
-            self._fuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
+            self._fuse_lora_layer(layer_id)
 
-    def _unfuse_lora(self, params, lora_params):
-        maybe_has_lora_params = [p for p in params if len(p.shape) > 1]
-        for lora_param, weight in zip(lora_params, maybe_has_lora_params):
-            if len(lora_param) == 3:
-                lora_right_weight, \
-                lora_left_weight, \
-                lora_scaling = lora_param
-                weight.data -= lora_scaling * torch.matmul(lora_left_weight.t(), lora_right_weight.t())
+    def _unfuse_lora_layer(self, layer_id):
+        self._inference_containers[layer_id].unfuse_lora()
 
     def unfuse_lora_weight(self):
         for layer_id in range(len(self.layer_params)):
-            self._unfuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
+            self._unfuse_lora_layer(layer_id)
 
     def unfuse_lora_weight_non_pinned(self):
         for layer_id in range(len(self.layer_params)):
@@ -158,7 +157,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
             non_active_params.extend(non_active_lora_params)
 
             with GatheredParameters(non_active_params):
-                self._unfuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
+                self._unfuse_lora_layer(layer_id)
 
     def retake_inference_cache(self):
         if self._config.hybrid_engine.release_inference_cache:
@@ -202,7 +201,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                         for layer_id in range(lg * partition_size,
                                               min(len(self.layer_params), (lg + 1) * partition_size), 1):
                             if len(self.all_lora_params) > 0:
-                                self._fuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
+                                self._fuse_lora_layer(layer_id)
 
                             if self.mpu is not None:
                                 self._inference_containers[layer_id].apply_tensor_parallelism(
@@ -371,7 +370,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                 if len(self.all_lora_params) > 0:
                     # Use the is_lora_fused flag to prevent multiple fusion in Z3 with non-pinned memory
                     if not self.is_lora_fused:
-                        self._fuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
+                        self._fuse_lora_layer(layer_id)
                     # Set the is_lora_fused to true when reaching the last layer
                     if layer_id == len(self.layer_params) - 1:
                         self.is_lora_fused = True

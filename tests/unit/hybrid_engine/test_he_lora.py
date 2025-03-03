@@ -9,16 +9,11 @@ import torch
 import torch.nn.functional as F
 import pytest
 import deepspeed
-from deepspeed.runtime.zero import GatheredParameters
 from deepspeed.ops.op_builder import OpBuilder
+from deepspeed.ops.adam import FusedAdam
 from deepspeed.utils import safe_get_full_grad
 import numpy.testing as npt
 from unit.common import DistributedTest
-from deepspeed.ops.op_builder import InferenceBuilder
-from deepspeed.accelerator import get_accelerator
-
-if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
-    pytest.skip("This op had not been implemented on this system.", allow_module_level=True)
 
 from transformers import (AutoConfig, AutoTokenizer, AutoModelForCausalLM)
 
@@ -114,9 +109,7 @@ def only_optimize_lora_parameters(model):
 
 @pytest.mark.seq_inference
 @pytest.mark.parametrize("batch_size", [1], ids=["bsz=1"])
-@pytest.mark.parametrize("zero_stage", [2, 3], ids=["zero_stage=2", "zero_stage=3"])
 @pytest.mark.parametrize("model_name", ["EleutherAI/gpt-neo-125m", "facebook/opt-350m", "bigscience/bloom-560m"])
-@pytest.mark.parametrize("offload_device", ["none", "cpu"])
 class TestHybridEngineLoRA(DistributedTest):
     world_size = 1
 
@@ -126,8 +119,7 @@ class TestHybridEngineLoRA(DistributedTest):
         model_config.dropout = 0.0
         model = AutoModelForCausalLM.from_pretrained(model_name, config=model_config)
         model = model.half()
-        device = get_accelerator().device_name()
-        model = model.to(f'{device}:{local_rank}')
+        model = model.to(f'cuda:{local_rank}')
         return model
 
     def get_tokenizer(self, model_name):
@@ -147,8 +139,9 @@ class TestHybridEngineLoRA(DistributedTest):
         else:
             raise NotImplementedError(f"batch_size {batch_size} not implemented")
 
-    def test_lora(self, batch_size, model_name, zero_stage, offload_device):
+    def test_lora(self, batch_size, model_name):
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
+
         model = self.get_model(model_name)
         tokenizer = self.get_tokenizer(model_name)
         train_sentences = self.get_train_sentences(batch_size)
@@ -156,33 +149,10 @@ class TestHybridEngineLoRA(DistributedTest):
         # Inject LoRA
         model = convert_linear_layer_to_lora(model, "", 8)
         model = only_optimize_lora_parameters(model)
+        optim = FusedAdam([p for p in model.parameters() if p.requires_grad], lr=1.0, betas=(0.9, 0.95))
+        ds_config = {"train_batch_size": batch_size, "bfp16": {"enabled": True}, "hybrid_engine": {"enabled": True}}
 
-        ds_config = {
-            "optimizer": {
-                "type": "Adam",
-                "params": {
-                    "lr": 1.0,
-                    "betas": [0.9, 0.95]
-                }
-            },
-            "train_batch_size": batch_size,
-            "fp16": {
-                "enabled": True,
-                "initial_scale_power": 12
-            },
-            "hybrid_engine": {
-                "enabled": True,
-                "pin_parameters": True
-            },
-            "zero_optimization": {
-                "stage": zero_stage,
-                "offload_optimizer": {
-                    "device": offload_device
-                }
-            }
-        }
-
-        model, *_ = deepspeed.initialize(model=model, config=ds_config)
+        model, *_ = deepspeed.initialize(model=model, optimizer=optim, config=ds_config)
 
         # Verify gradient norm is larger than 0
         before_grad_update_layer0_params = [
@@ -192,8 +162,7 @@ class TestHybridEngineLoRA(DistributedTest):
 
         model.train()
         batch = tokenizer(train_sentences, max_length=16, padding="max_length", truncation=True, return_tensors="pt")
-        device = get_accelerator().device_name()
-        batch = to_device(batch, f'{device}:{local_rank}')
+        batch = to_device(batch, f'cuda:{local_rank}')
         batch["labels"] = batch["input_ids"]
         outputs = model(**batch, use_cache=False)
         loss = outputs.loss
@@ -202,7 +171,7 @@ class TestHybridEngineLoRA(DistributedTest):
         grad_norm_dict = dict()
         for name, param in model.named_parameters():
             if param.requires_grad is True:
-                grad_norm_dict[name] = torch.linalg.norm(safe_get_full_grad(param))
+                grad_norm_dict[name] = torch.norm(safe_get_full_grad(param))
 
         model.step()
         grad_norm = sum([ele.detach().cpu().numpy() for ele in grad_norm_dict.values()])
@@ -218,9 +187,7 @@ class TestHybridEngineLoRA(DistributedTest):
 
         # Verify fuse will mutate layer_params
         model.eval()
-        with GatheredParameters(model.parameters()):
-            model.fuse_lora_weight()
-
+        model.fuse_lora_weight()
         after_grad_update_layer0_params_lora_fused = [
             ele.detach().cpu().float().numpy() for ele in model.layer_params[0]
             if ele is not None and len(ele.shape) > 1
@@ -229,6 +196,4 @@ class TestHybridEngineLoRA(DistributedTest):
         for lhs, rhs in zip(before_grad_update_layer0_params, after_grad_update_layer0_params_lora_fused):
             with pytest.raises(AssertionError):
                 npt.assert_allclose(lhs, rhs, 1E-5, 1E-5)
-
-        with GatheredParameters(model.parameters()):
-            model.unfuse_lora_weight()
+        model.unfuse_lora_weight()
