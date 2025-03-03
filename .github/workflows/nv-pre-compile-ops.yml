@@ -14,6 +14,7 @@ on:
       - 'docs/**'
       - 'blogs/**'
       - 'deepspeed/inference/v2/**'
+      - "tests/unit/inference/v2/**"
   merge_group:
     branches: [ master ]
   schedule:
