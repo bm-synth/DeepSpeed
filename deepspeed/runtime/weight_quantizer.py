@@ -24,7 +24,8 @@ class WeightQuantization(object):
         data_scale = [float(1 << quantize_bits) / (2 * mx + 1e-5) for mx in max_d]
         data_int = [(g * s) for g, s in zip(data_groups, data_scale)]
         data_int = [
-            di.round().clamp(-(1 << (quantize_bits - 1)), (((1 << (quantize_bits - 1)) - 1))) for di in data_int
+            di.round().clamp(-(1 << (quantize_bits - 1)),
+                             (((1 << (quantize_bits - 1)) - 1))) for di in data_int
         ]
         data_int = torch.cat(data_int).reshape(data.shape)
         data_int = data_int.to(torch.int8)

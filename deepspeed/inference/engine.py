@@ -221,11 +221,98 @@ class InferenceEngine(Module):
                 self.module.model.get_alibi_mask_orig = self.module.model.get_alibi_mask
                 self.module.model.__class__.get_alibi_mask = get_alibi_mask
 
-    def build_attn_bias(self):
-        if hasattr(self.module, 'transformer'):
-            if hasattr(self.module.transformer, '_attn_bias'):
-                self.module.transformer._attn_bias_orig = self.module.transformer._attn_bias
-                self.module.transformer.__class__._attn_bias = build_mpt_atten_bias_tensor
+        local_rank = int(os.getenv('LOCAL_RANK', '0'))
+        torch.cuda.set_device(local_rank)
+
+        ranks = [i for i in range(self.mp_world_size)]
+        self.mp_group = dist.new_group(ranks)
+
+        self.module.to(torch.cuda.current_device())
+        for p in self.module.parameters():
+            if torch.is_tensor(p):
+                dist.broadcast(p, 0)
+
+    def _check_quantize_setting(self, quantization_setting):
+        self.quatize_bits = 8
+        self.mlp_extra_grouping = False
+        self.quantize_groups = 1
+        if quantization_setting is None:
+            return
+        elif type(quantization_setting) is tuple:
+            self.mlp_extra_grouping, \
+            self.quantize_groups = quantization_setting
+        else:
+            self.quantize_groups = quantization_setting
+
+    def _validate_args(self, mpu):
+        assert isinstance(self.module, Module)
+        assert isinstance(self.mp_world_size, int)
+        assert self.mp_world_size >= 1
+
+        if mpu:
+            methods = [f"get_model_parallel_group"]
+            methods.extend([f"get_data_parallel_group"])
+            for method in methods:
+                assert hasattr(mpu, method), f"mpu is missing {method}"
+
+        assert self.checkpoint is None or isinstance(self.checkpoint, str)
+
+        supported_dtypes = [torch.half, torch.int8, torch.float]
+        assert self.dtype is None or self.dtype in supported_dtypes, f"dtype={self.dtype} is not in the \
+            list of supported dtypes {supported_dtypes}"
+
+        assert self.injection_dict is None or isinstance(self.injection_dict, dict)
+
+    def _apply_injection_policy(self, client_module=None, injection_policy=None):
+        replace_transformer_layer(client_module,
+                                  self.module,
+                                  policy=injection_policy,
+                                  mp_size=self.mp_world_size,
+                                  mp_group=self.mp_group,
+                                  fp16=(self.dtype == torch.half),
+                                  training=False,
+                                  quantize=(self.dtype == torch.int8),
+                                  quantize_settings=(self.quantization_scales,
+                                                     self.quantize_merge_count,
+                                                     self.mlp_extra_grouping,
+                                                     self.quantize_groups))
+
+    def _load_checkpoint(self, load_dir, load_module_strict=True):
+        sd_loader = SDLoaderFactory.get_sd_loader_json(load_dir)
+        is_pipe_parallel = isinstance(self.module, PipelineModule)
+
+        assert (not is_pipe_parallel),\
+        'pipeline parallelism is currently not supported in inference.'
+
+        mp_rank = 0 if self.mp_group is None else dist.get_rank(group=self.mp_group)
+
+        load_path, checkpoint, quantize_config = sd_loader.load(self.mp_world_size,
+                                                  mp_rank,
+                                                  is_pipe_parallel=is_pipe_parallel,
+                                                  quantize=(self.dtype is torch.int8),
+                                                  quantize_groups=self.quantize_groups,
+                                                  mlp_extra_grouping=self.mlp_extra_grouping)
+
+        self.quantization_scales, self.quantize_merge_count = quantize_config
+
+        if is_pipe_parallel:
+            # Pipeline parallelism uses this to load its own checkpoint files.
+            self._curr_ckpt_path = load_dir
+
+        self.module.load_state_dict(state_dict=checkpoint['model'],
+                                    strict=load_module_strict)
+
+    def _convert_to_dtype(self):
+        if self.dtype is torch.int8 and self.quantization_scales is None:
+            quantizer = WeightQuantization(mlp_extra_grouping=self.mlp_extra_grouping)
+            model, self.quantization_scales = quantizer.model_quantize(self.module,
+                                                                        self.injection_dict,
+                                                                        self.quatize_bits,
+                                                                        self.quantize_groups)
+        elif self.dtype == torch.half:
+            self.module.half()
+        elif self.dtype == torch.float:
+            self.module.float()
 
     def _pre_forward_hook(self, module, *inputs, **kwargs):
         if self.use_cuda_events:
