@@ -297,13 +297,34 @@ class DeepSpeedEngine(Module):
         else:
             return False
 
-    def _set_environment_variables_for_nccl_backend(self,
-                                                    args,
-                                                    master_port=6105,
-                                                    verbose=True):
-        """Helper routine to get and set environment variables.
-        This is adapted from Azure ML's documentation available from:
-        https://azure.github.io/azureml-web/docs/cheatsheet/distributed-training/#environment-variables-from-openmpi
+            for p in self.module.parameters():
+                # since user code might call deepspeed.zero.Init() before deepspeed.initialize(), need to check the attrbuite to check if the parameter is partitioned in zero 3 already or not
+                n = 0
+                if hasattr(p, "ds_tensor"):  # if the parameter is partitioned in zero 3
+                    n += p.ds_numel
+                else:  # if the parameter is not partitioned in zero 3 yet
+                    n += p.numel()
+                num_params += n
+                if p.requires_grad:
+                    trainable_num_params += n
+            if self.global_rank == 0:
+                self.autotuning_model_info[
+                    "num_params"] = num_params * self.mp_world_size
+                self.autotuning_model_info[
+                    "trainable_num_params"] = trainable_num_params * self.mp_world_size
+
+            logger.info(f"model parameter = {num_params}")
+
+    def get_batch_info(self):
+        """Get all training batch related settings.
+
+        Returns:
+            train_batch_size (int): The effective training batch size. This is the amount of data
+                samples that leads to one step of model update.
+            train_micro_batch_size_per_gpu (int): Batch size to be processed by one GPU in one
+                step (without gradient accumulation).
+            gradient_accumulation_steps (int): Number of training steps to accumulate gradients
+                before averaging and applying them.
         """
         os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
         os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
@@ -1535,9 +1556,11 @@ class DeepSpeedEngine(Module):
                 communication_data_type=self.communication_data_type)
 
         elif zero_stage == ZERO_OPTIMIZATION_WEIGHTS:
+            assert not self.has_moe_layers, "MoE not supported with Stage 3"
             logger.info("Initializing ZeRO Stage 3") if dist.get_rank() == 0 else None
-            from deepspeed.runtime.zero.stage3 import FP16_DeepSpeedZeroOptimizer_Stage3
-            optimizer = FP16_DeepSpeedZeroOptimizer_Stage3(
+            from deepspeed.runtime.zero.stage3 import DeepSpeedZeroOptimizer_Stage3
+
+            optimizer = DeepSpeedZeroOptimizer_Stage3(
                 self.module,
                 optimizer,
                 timers=timers,
@@ -2815,9 +2838,10 @@ class DeepSpeedEngine(Module):
         self.optimizer.load_state_dict(
             state_dict_list=zero_sd_list,
             load_optimizer_states=load_optimizer_states,
-            load_from_fp32_weights=self.zero_load_from_fp32_weights())
-        print(
-            f'loading {len(zero_sd_list)} zero partition checkpoints for rank {self.global_rank}'
+            load_from_fp32_weights=self.zero_load_from_fp32_weights(),
+        )
+        logger.info(
+            f"loading {len(zero_sd_list)} zero partition checkpoints for rank {self.global_rank}"
         )
         return True
 
@@ -2905,8 +2929,10 @@ class DeepSpeedEngine(Module):
                 _state = {OPTIMIZER_STATE_DICT: None}
             zero_sd_list.append(_state)
 
-        zero_optimizer_sd = [sd[OPTIMIZER_STATE_DICT] for sd in zero_sd_list]
-        logger.info(f"successfully read {len(zero_optimizer_sd)} ZeRO state_dicts for rank {self.global_rank}")
+        zero_optimizer_sd = [sd["optimizer_state_dict"] for sd in zero_sd_list]
+        logger.info(
+            f"successfully loaded {len(zero_optimizer_sd)} ZeRO state_dicts for rank {self.global_rank}"
+        )
         return zero_optimizer_sd
 
     def _checkpoint_tag_validation(self, tag):
