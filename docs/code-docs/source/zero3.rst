@@ -10,7 +10,7 @@ communication efficiency.
 
 #. **ZeRO Stage 1**: The optimizer states (e.g., for `Adam optimizer <https://arxiv.org/abs/1412.6980>`_, 32-bit weights, and the first, and second moment estimates) are partitioned across the processes, so that each process updates only its partition.
 
-#. **ZeRO Stage 2**: The reduced 16-bit gradients for updating the model weights are also partitioned such that each process retains only the gradients corresponding to its portion of the optimizer states.
+#. **ZeRO Stage 2**: The reduced 32-bit gradients for updating the model weights are also partitioned such that each process retains only the gradients corresponding to its portion of the optimizer states.
 
 #. **ZeRO Stage 3**: The 16-bit model parameters are partitioned across the processes. ZeRO-3 will automatically collect and partition them during the forward and backward passes.
 
@@ -46,29 +46,13 @@ our `config guide <https://www.deepspeed.ai/docs/config-json/#zero-optimizations
 for a complete list of options for configuration and performance tuning.
 
 .. note::
-        ZeRO-3 Offload works best with our heavily optimized
+        ZeRO-Infinity and ZeRO-Offload work best with our heavily optimized
         :class:`deepspeed.ops.adam.DeepSpeedCPUAdam` optimizer. We recommend using
         our `optimizer config <https://www.deepspeed.ai/docs/config-json/#optimizer-parameters>`_
         to instruct :meth:`deepspeed.initialize` to build the optimizer for you.
 
 ZeRO Configurations
 ===================
-
-All the settings for DeepSpeed ZeRO are set with the `DeepSpeedZeroConfig`_.
-The dictionary provided under the ``zero_optimization`` entry of the main
-DeepSpeed configuration dict will be parsed and validated with this class.
-Sub-configurations for parameter offload and optimizer offload settings are
-parsed by `DeepSpeedZeroOffloadParamConfig`_ and
-`DeepSpeedZeroOffloadOptimizerConfig`_.
-
-.. _DeepSpeedZeroConfig:
-.. autopydantic_model:: deepspeed.runtime.zero.config.DeepSpeedZeroConfig
-
-.. _DeepSpeedZeroOffloadParamConfig:
-.. autopydantic_model:: deepspeed.runtime.zero.config.DeepSpeedZeroOffloadParamConfig
-
-.. _DeepSpeedZeroOffloadOptimizerConfig:
-.. autopydantic_model:: deepspeed.runtime.zero.config.DeepSpeedZeroOffloadOptimizerConfig
 
 
 Example ZeRO-3 Configurations
