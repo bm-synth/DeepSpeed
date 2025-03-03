@@ -15,6 +15,7 @@ import collections
 from deepspeed.runtime.fp16.loss_scaler import LossScaler, DynamicLossScaler
 from deepspeed.runtime.utils import see_memory_usage, is_model_parallel_parameter
 from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION_GRADIENTS
+from deepspeed.runtime.zero.offload_constants import OFFLOAD_CPU_DEVICE, OFFLOAD_OPTIMIZER, OFFLOAD_OPTIMIZER_DEVICE
 from deepspeed.ops.adam import DeepSpeedCPUAdam
 
 # Toggle this to true to enable correctness test
@@ -2140,7 +2141,8 @@ def estimate_zero2_model_states_mem_needs_all_cold(total_params,
     """
     def format_options(cpu_offload):
         enabled = []
-        enabled.append(f"cpu_offload={1 if cpu_offload else 0}")
+        device = f'{OFFLOAD_CPU_DEVICE:4}' if cpu_offload else "none"
+        enabled.append(f"{OFFLOAD_OPTIMIZER}={device}")
         return ", ".join(enabled)
 
     nodes_str = "nodes" if num_nodes > 1 else "node"
