@@ -34,6 +34,9 @@ except ImportError:
     print(
         f"{WARNING} unable to import torch, please install it if you want to pre-compile any deepspeed ops."
     )
+else:
+    TORCH_MAJOR = int(torch.__version__.split('.')[0])
+    TORCH_MINOR = int(torch.__version__.split('.')[1])
 
 
 def installed_cuda_version():
@@ -185,7 +188,8 @@ class OpBuilder(ABC):
             pass
         else:
             if TORCH_MAJOR > 1 or (TORCH_MAJOR == 1 and TORCH_MINOR >= 5):
-                _is_rocm_pytorch = hasattr(torch.version, 'hip') and torch.version.hip is not None
+                _is_rocm_pytorch = hasattr(torch.version,
+                                           'hip') and torch.version.hip is not None
                 if _is_rocm_pytorch:
                     from torch.utils.cpp_extension import ROCM_HOME
                     _is_rocm_pytorch = ROCM_HOME is not None
