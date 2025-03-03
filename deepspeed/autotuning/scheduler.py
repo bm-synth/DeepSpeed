@@ -17,7 +17,7 @@ import hjson
 from tqdm import tqdm
 
 from ..utils import logger
-from .constants import AUTOTUNING, AUTOTUNING_METRIC_PATH, BUFSIZE
+from .constants import AUTOTUNING, AUTOTUNING_METRIC_PATH
 from .utils import get_val_by_key, search_error, was_interruptted
 """
 thread-0: loop over experiment queue dispatching experiments if they become available
@@ -376,7 +376,7 @@ def run_experiment(exp: dict, reservations, user_script, user_args):
         os.fsync(fd)
 
     logger.info(
-        f"Launching exp_id = {exp['exp_id']}, exp_name = {exp['name']}, with resource = {include_str}"
+        f"Launching exp_id = {exp['exp_id']}, exp_name = {exp['name']}, with resource = {include_str}, and ds_config = {os.path.abspath(ds_config_path)}"
     )
 
     with open(os.path.join(exp_dir, "stdout.log"), "wb") as out, open(os.path.join(exp_dir, "stderr.log"),
