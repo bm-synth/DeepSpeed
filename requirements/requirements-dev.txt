@@ -9,9 +9,8 @@ pre-commit>=2.20.0
 pytest<=8.0.0
 pytest-forked
 pytest-randomly
-pre-commit
-clang-format
-sphinx
+pytest-xdist
+qtorch==0.3.0
 recommonmark
 sphinx
 sphinx-rtd-theme
