@@ -1,7 +1,6 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
+'''
+Copyright 2022 The Microsoft DeepSpeed Team
+'''
 
 from .basic_layer import RandomLayerTokenDrop
 from collections import OrderedDict

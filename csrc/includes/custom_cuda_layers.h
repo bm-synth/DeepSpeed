@@ -5,7 +5,6 @@ Copyright 2022 The Microsoft DeepSpeed Team
 #pragma once
 
 #include "ds_kernel_utils.h"
-#include "quantization.h"
 
 #include <cuda.h>
 #include <cuda_fp16.h>
@@ -271,6 +270,9 @@ void launch_fuse_transpose_bias_kernel(const T* inp,
                                        int rows,
                                        int cols,
                                        cudaStream_t stream);
+
+void launch_param_update(const float* input, __half* output, int size, cudaStream_t stream);
+void launch_param_update_half(const float* input, __half* output, int size, cudaStream_t stream);
 
 void launch_token_sort(int32_t* indices,
                        int layers,

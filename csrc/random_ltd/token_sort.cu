@@ -1,7 +1,6 @@
-// Copyright (c) Microsoft Corporation.
-// SPDX-License-Identifier: Apache-2.0
-
-// DeepSpeed Team
+/*
+Copyright 2022 The Microsoft DeepSpeed Team
+*/
 
 #include <cassert>
 #include "custom_cuda_layers.h"
@@ -15,8 +14,8 @@ constexpr int granularity = 16;
 constexpr int mem_vals = granularity / sizeof(int32_t);
 constexpr int max_buffer_size = (threads + 1) * mem_vals;
 
-#ifdef __HIP_PLATFORM_AMD__
-constexpr int warp_size = ROCM_WAVEFRONT_SIZE;
+#ifdef __HIP_PLATFORM_HCC__
+constexpr int warp_size = 64;
 #else
 constexpr int warp_size = 32;
 #endif
