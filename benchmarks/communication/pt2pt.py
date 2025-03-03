@@ -1,12 +1,14 @@
-import torch
-from benchmarks.communication.utils import *
-from benchmarks.communication.constants import *
-from deepspeed.accelerator import get_accelerator
+'''Copyright The Microsoft DeepSpeed Team'''
 
-import time
-import argparse
-import os
-import math
+import torch
+import sys, os, time
+
+COMMS_BENCH_DIR = os.path.join(os.path.dirname(__file__), "../")
+sys.path.append(COMMS_BENCH_DIR)
+
+from communication.utils import *
+from communication.constants import *
+from deepspeed.accelerator import get_accelerator
 
 
 def timed_pt2pt(input, args):
@@ -93,6 +95,8 @@ def run_pt2pt(local_rank, args):
                         print('WARNING: Ran out of GPU memory. Exiting comm op.')
                     sync_all()
                     break
+                else:
+                    raise e
             sync_all()
             timed_pt2pt(input, args)
     else:
