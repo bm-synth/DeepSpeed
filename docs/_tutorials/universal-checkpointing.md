@@ -1,7 +1,8 @@
 ---
-title: "Universal Checkpointing with DeepSpeed: A Practical Guide"
+#title: "Universal Checkpointing with DeepSpeed: A Practical Guide"
 tags: checkpointing, training, deepspeed
 ---
+# Universal Checkpointing with DeepSpeed: A Practical Guide
 
 DeepSpeed Universal Checkpointing feature is a powerful tool for saving and loading model checkpoints in a way that is both efficient and flexible, enabling seamless model training continuation and finetuning across different model architectures, different parallelism techniques and training configurations. This tutorial, tailored for both begininers and experienced users, provides a step-by-step guide on how to leverage Universal Checkpointing in your DeepSpeed-powered applications. This tutorial will guide you through the process of creating ZeRO checkpoints, converting them into a Universal format, and resuming training with these universal checkpoints. This approach is crucial for leveraging pre-trained models and facilitating seamless model training across different setups.
 
@@ -22,7 +23,7 @@ Follow the three simple steps below:
 
 ### Step 1: Create ZeRO Checkpoint
 
-The first step in leveraging DeepSpeed Universal Checkpointing is to create a ZeRO checkpoint. [ZeRO](/tutorials/zero/) (Zero Redundancy Optimizer) is a memory optimization technology in DeepSpeed that allows for efficient training of large models. To create a ZeRO checkpoint, you'll need to:
+The first step in leveraging DeepSpeed Universal Checkpointing is to create a ZeRO checkpoint. [ZeRO]((/tutorials/zero/)) (Zero Redundancy Optimizer) is a memory optimization technology in DeepSpeed that allows for efficient training of large models. To create a ZeRO checkpoint, you'll need to:
 
  - Initialize your model with DeepSpeed using the ZeRO optimizer.
  - Train your model to the desired state (iterations).
@@ -33,7 +34,7 @@ The first step in leveraging DeepSpeed Universal Checkpointing is to create a Ze
 
 Once you have a ZeRO checkpoint, the next step is to convert it into the Universal format. This format is designed to be flexible and compatible across different model architectures and DeepSpeed configurations. To convert a checkpoint:
 
- - Use the [ds_to_universal.py](https://github.com/deepspeedai/DeepSpeed/blob/master/deepspeed/checkpoint/ds_to_universal.py) script provided by DeepSpeed.
+ - Use the [ds_to_universal.py](https://github.com/microsoft/DeepSpeed/blob/master/deepspeed/checkpoint/ds_to_universal.py) script provided by DeepSpeed.
  - Specify the path to your ZeRO checkpoint and the desired output path for the Universal checkpoint.
 
 ```bash
@@ -49,8 +50,9 @@ With the Universal checkpoint ready, you can now resume training on potentially 
 ## Conclusion
 DeepSpeed Universal Checkpointing simplifies the management of model states, making it easier to save, load, and transfer model states across different training sessions and parallelism techniques. By following the steps outlined in this tutorial, you can integrate Universal Checkpointing into your DeepSpeed applications, enhancing your model training and development workflow.
 
-For more detailed examples and advanced configurations, please refer to the [Megatron-DeepSpeed examples](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed/universal_checkpointing).
+For more detailed examples and advanced configurations, please refer to the [Megatron-DeepSpeed examples]((https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples_deepspeed/universal_checkpointing)).
 
-For technical in-depth of DeepSpeed Universal Checkpointing, please see [arxiv manuscript](https://arxiv.org/abs/2406.18820) and [blog](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/deepspeed-ucp/).
+For technical in-depth of DeepSpeed Universal Checkpointing, please see [arxiv manuscript](https://arxiv.org/abs/2406.18820) and [blog](/blogs/deepspeed-ucp/).
 
 Happy training!
+```
