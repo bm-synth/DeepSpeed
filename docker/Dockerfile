@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.7.1-devel-ubuntu18.04
+FROM nvidia/cuda:12.2.2-devel-ubuntu20.04
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -150,9 +150,7 @@ RUN cat /etc/ssh/sshd_config > ${STAGE_DIR}/sshd_config && \
 ##############################################################################
 # PyTorch
 ##############################################################################
-ENV PYTORCH_VERSION=1.9.0
-ENV TORCHVISION_VERSION=0.10.0
-ENV TENSORBOARDX_VERSION=1.8
+ENV PYTORCH_VERSION=1.13.0
 RUN pip install torch==${PYTORCH_VERSION}
 
 ##############################################################################
