@@ -29,7 +29,7 @@ from deepspeed.accelerator import get_accelerator
 from deepspeed.checkpoint.constants import (DS_VERSION, GROUP_PADDINGS, PARTITION_COUNT, LOSS_SCALER,
                                             SINGLE_PARTITION_OF_FP32_GROUPS, BASE_OPTIMIZER_STATE,
                                             BASE_OPTIMIZER_STATE_STEP, CLIP_GRAD, ZERO_STAGE, PARAM_SLICE_MAPPINGS)
-from deepspeed.utils import link_hp_params
+from deepspeed.utils import link_hp_params, lazy_init_hp_params_optimizer_state
 from deepspeed.checkpoint import enable_universal_checkpoint
 
 from deepspeed.utils import groups
@@ -86,6 +86,12 @@ def _get_padded_tensor(src_tensor, size):
     padded_tensor = torch.zeros(size, dtype=src_tensor.dtype, device=src_tensor.device)
     slice_tensor = torch.narrow(padded_tensor, 0, 0, src_tensor.numel())
     slice_tensor.data.copy_(src_tensor.data)
+    return padded_tensor
+
+
+def _pad_tensor_by_size(src_tensor, pad_size, dtype, device):
+    padded_tensor = torch.zeros(src_tensor.numel() + pad_size, dtype=dtype, device=device)
+    padded_tensor.data[:src_tensor.numel()].copy_(src_tensor.data)
     return padded_tensor
 
 
@@ -537,6 +543,8 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             see_memory_usage(f"After initializing ZeRO optimizer", force=True)
 
         self._link_all_hp_params()
+        self._hp_optimizer_states_linked = False
+
         self._enable_universal_checkpoint()
         self._param_slice_mappings = self._create_param_mapping()
 
@@ -579,8 +587,14 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                            param_group_index=i,
                            partition_start=partition_id * partition_size,
                            partition_size=partition_size,
-                           partition_optimizer_state=self.optimizer.state[flat_hp_partition],
                            dp_group=self.real_dp_process_group[i])
+
+    def _lazy_init_hp_params_optimizer_state(self):
+        if not self._hp_optimizer_states_linked:
+            for i, _ in enumerate(self.optimizer.param_groups):
+                lazy_init_hp_params_optimizer_state(self.bit16_groups[i], self.single_partition_of_fp32_groups[i],
+                                                    self.optimizer.state)
+            self._hp_optimizer_states_linked = True
 
     def is_moe_group(self, group):
         return 'moe' in group and group['moe']
@@ -665,8 +679,6 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         # which do lazy initialization of the state at the first call to step.
         if isinstance(self.optimizer, torch.optim.Adagrad):
             self.optimizer = torch.optim.Adagrad(self.single_partition_of_fp32_groups, **self.optimizer.defaults)
-        else:
-            self.optimizer.step()
 
         if not self.cpu_offload:
             for group in self.single_partition_of_fp32_groups:
@@ -1796,6 +1808,9 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         self.optimizer.step()
         self.optimizer.param_groups = original_param_groups
 
+        # We need to link optimizer state after the first step() call
+        self._lazy_init_hp_params_optimizer_state()
+
     def step(self, closure=None):
         """
         Not supporting closure.
@@ -2262,14 +2277,6 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         self._restore_base_optimizer_state(base_optimizer_group_states,
                                            self._restore_step_from_elastic_checkpoint(all_state_dict), None)
 
-        # Restore step
-        if BASE_OPTIMIZER_STATE_STEP in all_state_dict[0]:
-            assert all(sd[BASE_OPTIMIZER_STATE_STEP] == all_state_dict[0][BASE_OPTIMIZER_STATE_STEP]
-                       for sd in all_state_dict), "State dicts of all partitions must have the same step value"
-            loaded_param_groups_step = all_state_dict[0][BASE_OPTIMIZER_STATE_STEP]
-            for param_group in self.optimizer.param_groups:
-                param_group['step'] = loaded_param_groups_step
-
     def load_state_dict(self,
                         state_dict_list,
                         load_optimizer_states=True,
@@ -2380,7 +2387,9 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                     self._restore_elastic_base_optimizer_state(state_dict_list)
                 else:
                     # loading an elastic checkpoint into rigid exec
-                    self._restore_base_optimizer_state(current_rank_sd[BASE_OPTIMIZER_STATE])
+                    self._restore_base_optimizer_state(current_rank_sd[BASE_OPTIMIZER_STATE],
+                                                       current_rank_sd[BASE_OPTIMIZER_STATE_STEP],
+                                                       current_rank_sd[GROUP_PADDINGS])
 
         # At this point, the optimizer's references to the model's fp32 parameters are up to date.
         # The optimizer's hyperparameters and internal buffers are also up to date.
