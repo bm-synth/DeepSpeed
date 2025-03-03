@@ -161,6 +161,7 @@ def get_accelerator():
             except ImportError as e:
                 pass
         if accelerator_name is None:
+            # borrow this log from PR#5084
             try:
                 import torch
 
