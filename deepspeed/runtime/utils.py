@@ -119,13 +119,15 @@ def move_to_device(item, device):
 
 class CheckOverflow(object):
     '''Checks for overflow in gradient across parallel process'''
-
-    def __init__(self, param_groups=None, mpu=None, zero_reduce_scatter=False, deepspeed=None):
+    def __init__(self,
+                 param_groups=None,
+                 mpu=None,
+                 zero_reduce_scatter=False,
+                 deepspeed=None):
         self.mpu = mpu
         self.params = [] if param_groups else None
         self.zero_reduce_scatter = zero_reduce_scatter
         self.deepspeed = deepspeed
-        self.has_moe_params = False
         if param_groups:
             for group in param_groups:
                 for param in group:
@@ -201,13 +203,23 @@ class CheckOverflow(object):
             dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=dist.get_world_group())
         elif self.mpu is not None:
             if self.deepspeed is not None:
-                using_pipeline = hasattr(self.deepspeed, 'pipeline_enable_backward_allreduce')
-                if (using_pipeline and self.deepspeed.pipeline_enable_backward_allreduce
-                        is False) or (not using_pipeline and self.deepspeed.enable_backward_allreduce is False):
-                    dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=self.mpu.get_data_parallel_group())
-            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=self.mpu.get_model_parallel_group())
+                using_pipeline = hasattr(self.deepspeed,
+                                         'pipeline_enable_backward_allreduce')
+                if (using_pipeline
+                        and self.deepspeed.pipeline_enable_backward_allreduce is False
+                    ) or (not using_pipeline
+                          and self.deepspeed.enable_backward_allreduce is False):
+                    torch.distributed.all_reduce(
+                        overflow_gpu,
+                        op=torch.distributed.ReduceOp.MAX,
+                        group=self.mpu.get_data_parallel_group())
+            torch.distributed.all_reduce(overflow_gpu,
+                                         op=torch.distributed.ReduceOp.MAX,
+                                         group=self.mpu.get_model_parallel_group())
         elif self.deepspeed is not None and self.deepspeed.enable_backward_allreduce is False:
-            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=dist.get_world_group())
+            torch.distributed.all_reduce(overflow_gpu,
+                                         op=torch.distributed.ReduceOp.MAX,
+                                         group=torch.distributed.group.WORLD)
 
         overflow = overflow_gpu[0].item()
         return bool(overflow)

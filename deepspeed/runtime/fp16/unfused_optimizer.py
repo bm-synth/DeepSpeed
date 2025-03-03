@@ -107,7 +107,9 @@ class FP16_UnfusedOptimizer(DeepSpeedOptimizer):
         self.mpu = mpu
 
         self.overflow = False
-        self.overflow_checker = CheckOverflow(self.fp16_groups, mpu=self.mpu, deepspeed=deepspeed)
+        self.overflow_checker = CheckOverflow(self.fp16_groups,
+                                              mpu=self.mpu,
+                                              deepspeed=deepspeed)
 
         self.initialize_optimizer_states()
 

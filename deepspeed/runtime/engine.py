@@ -34,7 +34,7 @@ from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION
 from deepspeed.runtime.fp16.fused_optimizer import FP16_Optimizer
 from deepspeed.runtime.fp16.unfused_optimizer import FP16_UnfusedOptimizer
 from deepspeed.runtime.config import DeepSpeedConfig, DEEPSPEED_OPTIMIZERS, \
-    ADAM_OPTIMIZER, ADAMW_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, \
+    ADAM_OPTIMIZER, ADAMW_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, ONEBIT_LAMB_OPTIMIZER, \
     TORCH_ADAM_PARAM, ADAM_W_MODE, ADAM_W_MODE_DEFAULT
 
 from deepspeed.runtime.dataloader import DeepSpeedDataLoader
@@ -926,27 +926,10 @@ class DeepSpeedEngine(Module):
                 assert self._is_supported_optimizer(self.optimizer_name()), \
                     '{} is not a supported DeepSpeed Optimizer'.format(self.optimizer_name())
 
-        if self.bfloat16_enabled() and not get_accelerator().is_bf16_supported():
-            raise ValueError("Type bf16 is not supported on your device.")
-
-        expected_optim_types = self._supported_optims()
-        expected_optim_types += [type(None), Callable]
-        assert isinstance(self.client_optimizer, tuple(expected_optim_types)), \
-            f'Client Optimizer is of unexpected type {type(self.client_optimizer)}'
-
-        if not self.client_optimizer:
-            if self.optimizer_name() is not None:
-                assert self._is_supported_optimizer(
-                    self.optimizer_name()), "{} is not a supported DeepSpeed Optimizer".format(self.optimizer_name())
-
-        if (self.optimizer_name() == LAMB_OPTIMIZER or self.optimizer_name() == ONEBIT_LAMB_OPTIMIZER):
-            assert (self.dynamic_loss_scale()), "DeepSpeed {} optimizer requires dynamic loss scaling".format(
-                self.optimizer_name())
-
-        # Detect invalid combinations of client optimizer and client scheduler
-        if isinstance(self.client_lr_scheduler, _LRScheduler):
-            assert isinstance(self.client_optimizer, Optimizer), \
-                f'Client Optimizer (type = {type(self.client_optimizer)} is not instantiated but Client LR Scheduler is instantiated'
+        if self.optimizer_name() == LAMB_OPTIMIZER or self.optimizer_name(
+        ) == ONEBIT_LAMB_OPTIMIZER:
+            assert self.dynamic_loss_scale(), \
+                'DeepSpeed {} optimizer requires dynamic loss scaling'.format(self.optimizer_name())
 
     def _broadcast_model(self):
 
@@ -1237,6 +1220,13 @@ class DeepSpeedEngine(Module):
                 logger.warning(
                     f'Currently the convergence of 1-bit Adam is only verified under FP16'
                 )
+        elif self.optimizer_name() == ONEBIT_LAMB_OPTIMIZER:
+            from deepspeed.runtime.fp16.onebit.lamb import OnebitLamb
+            optimizer = OnebitLamb(model_parameters, self, **optimizer_parameters)
+            if not self.fp16_enabled():
+                logger.warning(
+                    f'Currently the convergence of 1-bit Lamb is only verified under FP16'
+                )
         else:
             torch_optimizer = getattr(torch.optim, self.optimizer_name())
             optimizer = torch_optimizer(model_parameters, **optimizer_parameters)
@@ -1316,6 +1306,7 @@ class DeepSpeedEngine(Module):
             log_dist(f'Creating fp16 unfused optimizer with dynamic loss scale', ranks=[0])
             optimizer = FP16_UnfusedOptimizer(
                 optimizer,
+                deepspeed=self,
                 static_loss_scale=self.loss_scale(),
                 dynamic_loss_scale=self.dynamic_loss_scale(),
                 dynamic_loss_args=dynamic_loss_args,
