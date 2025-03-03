@@ -5,6 +5,7 @@
 
 # A test on its own
 import os
+import torch
 import pytest
 import json
 import hjson
@@ -158,47 +159,37 @@ class TestConfigLoad(DistributedTest):
     world_size = 1
 
     def test_dict(self, base_config):
-        if get_accelerator().is_fp16_supported():
-            base_config["fp16"] = {"enabled": True}
-        elif get_accelerator().is_bf16_supported():
-            base_config["bf16"] = {"enabled": True}
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=base_config, model=model, model_parameters=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=base_config,
+                                              model=model,
+                                              model_parameters=model.parameters())
 
     def test_json(self, base_config, tmpdir):
-        if get_accelerator().is_fp16_supported():
-            base_config["fp16"] = {"enabled": True}
-        elif get_accelerator().is_bf16_supported():
-            base_config["bf16"] = {"enabled": True}
         config_path = os.path.join(tmpdir, "config.json")
         with open(config_path, 'w') as fp:
             json.dump(base_config, fp)
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=config_path, model=model, model_parameters=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=config_path,
+                                              model=model,
+                                              model_parameters=model.parameters())
 
     def test_hjson(self, base_config, tmpdir):
-        if get_accelerator().is_fp16_supported():
-            base_config["fp16"] = {"enabled": True}
-        elif get_accelerator().is_bf16_supported():
-            base_config["bf16"] = {"enabled": True}
         config_path = os.path.join(tmpdir, "config.json")
         with open(config_path, 'w') as fp:
             hjson.dump(base_config, fp)
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=config_path, model=model, model_parameters=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=config_path,
+                                              model=model,
+                                              model_parameters=model.parameters())
 
 
 class TestDeprecatedDeepScaleConfig(DistributedTest):
     world_size = 1
 
     def test(self, base_config, tmpdir):
-        if get_accelerator().is_fp16_supported():
-            base_config["fp16"] = {"enabled": True}
-        elif get_accelerator().is_bf16_supported():
-            base_config["bf16"] = {"enabled": True}
         config_path = create_config_from_dict(tmpdir, base_config)
         parser = argparse.ArgumentParser()
         args = parser.parse_args(args='')
