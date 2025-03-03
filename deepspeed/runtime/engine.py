@@ -3024,7 +3024,16 @@ class DeepSpeedEngine(Module):
         # Ensure checkpoint tag is consistent across ranks
         self._checkpoint_tag_validation(tag)
 
-        if self.save_non_zero_checkpoint:
+        if self.has_moe_layers:
+            self.save_non_zero_checkpoint = False
+            self._create_checkpoint_file(save_dir, tag, False)
+            self._save_moe_checkpoint(save_dir, tag, client_state=client_state)
+
+        # We distribute the task of saving layer checkpoint files among
+        # data parallel instances, so all procs should call _save_checkpoint.
+        # All procs then call module_state_dict(), but only procs of data
+        # parallel rank 0 save the general model params.
+        if not self.has_moe_layers:
             self._create_checkpoint_file(save_dir, tag, False)
             self._save_moe_checkpoint(save_dir,
                                       tag,
@@ -3214,14 +3223,15 @@ class DeepSpeedEngine(Module):
 
         zero_optimizer_state = self.zero_optimization() or self.bfloat16_enabled()
 
-        save_frozen_param = self.zero_optimization_partition_gradients() and not exclude_frozen_parameters
-
         # A hack to save the checkpointing directory. Pipeline parallelism overrides
         # module_state_dict() and uses this path to save the model. module_state_dict()
-        # then instead just returns None.
+        # then instead just returns None.  The module_state_dict() implementation in
+        # PipelineEngine expects the save path to be set in self._curr_ckpt_path.
         self._curr_ckpt_path = os.path.join(save_dir, tag)
-        zero_optimizer_state = self.zero_optimization() or self.bfloat16_enabled()
-        state = dict(module=self.module_state_dict(),
+        module = self.module_state_dict()
+        self._curr_ckpt_path = None
+
+        state = dict(module=module,
                      buffer_names=self._get_buffer_names(),
                      optimizer=self.optimizer.state_dict()
                      if self.optimizer and not zero_optimizer_state else None,
@@ -3239,9 +3249,9 @@ class DeepSpeedEngine(Module):
                      ds_version=version)
         state.update(client_state)
 
-        log_dist(message=f'Saving model checkpoint: {save_path}', ranks=[0, 1])
-        self.checkpoint_engine.save(state, save_path)
-        self._curr_save_path = None
+        if self.save_non_zero_checkpoint:
+            log_dist(message=f'Saving model checkpoint: {save_path}', ranks=[0, 1])
+            self.checkpoint_engine.save(state, save_path)
 
     def _get_buffer_names(self):
         buffer_names = []
