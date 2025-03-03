@@ -564,11 +564,11 @@ def main(args=None):
                 # key exists in launcher env -> var list should be used
                 excluded_vars += var_list
 
-        # load envs from accelerator
-        exports = EXPORT_ENVS + get_accelerator().export_envs()
+        exports = ""
         for var in env.keys():
             if any([var.startswith(name) for name in EXPORT_ENVS]):
-                runner.add_export(var, env[var])
+                if not any([var == name for name in excluded_vars]):
+                    runner.add_export(var, env[var])
 
         for environ_path in DEEPSPEED_ENVIRONMENT_PATHS:
             environ_file = os.path.join(environ_path, DEEPSPEED_ENVIRONMENT_NAME)
