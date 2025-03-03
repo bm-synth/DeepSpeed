@@ -478,9 +478,6 @@ class TopKGate(Module):
                  top2_2nd_expert_sampling: bool = True) -> None:
         super().__init__()
 
-        # Only top-1 and top-2 are supported at the moment.
-        if k != 1 and k != 2:
-            raise ValueError('Only top-1 and top-2 gatings are supported.')
         self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
         self.ep_group = ep_group
         self.k = k
@@ -521,6 +518,10 @@ class TopKGate(Module):
         elif self.k == 2:
             gate_output = top2gating(logits, self.capacity_factor if self.training else self.eval_capacity_factor,
                                      self.min_capacity, self.drop_tokens, self.ep_group, self.top2_2nd_expert_sampling)
+        else:
+            gate_output = topkgating(logits, self.k,
+                                     self.capacity_factor if self.training else self.eval_capacity_factor,
+                                     self.min_capacity, self.drop_tokens, self.ep_group)
 
         if self.wall_clock_breakdown:
             self.timers(TOPK_GATE_TIMER).stop()
