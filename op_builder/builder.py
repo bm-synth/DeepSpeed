@@ -10,13 +10,7 @@ import time
 import importlib
 from pathlib import Path
 import subprocess
-import shlex
-import shutil
-import tempfile
 import distutils.ccompiler
-import distutils.log
-import distutils.sysconfig
-from distutils.errors import CompileError, LinkError
 from abc import ABC, abstractmethod
 from typing import List
 
@@ -442,6 +436,10 @@ class OpBuilder(ABC):
             cpu_info['arch'] = "PPC_"
 
         return cpu_info
+
+    def has_function(self, funcname, libraries):
+        compiler = distutils.ccompiler.new_compiler()
+        return compiler.has_function(funcname, libraries=libraries)
 
     def strip_empty_entries(self, args):
         '''
