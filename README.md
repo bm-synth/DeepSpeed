@@ -79,10 +79,15 @@ DeepSpeed achieves high performance and fast convergence through a combination o
 efficiency optimizations on compute/communication/memory/IO and effectiveness
 optimizations on advanced hyperparameter tuning and optimizers. For example:
 
-* DeepSpeed trains BERT-large to parity in 14 hours using 64 GPUs (4 DGX-2 boxes) and in
-  3.7 hours using 256 GPUs (16 DGX-2 boxes).
+**Note:** [PyTorch](https://pytorch.org/) must be installed _before_ installing
+DeepSpeed.
 
-  **BERT-large Training Times**
+```bash
+pip install deepspeed
+```
+
+After installation, you can validate your install and see which extensions/ops
+your machine is compatible with via the DeepSpeed environment report.
 
   | Devices       | Source    | Training Time (hours) |
   | ------------- | --------- | ---------------------:|
