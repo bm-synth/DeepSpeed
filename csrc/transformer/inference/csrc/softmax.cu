@@ -493,23 +493,25 @@ void launch_attn_softmax_v2(T* vals,
     dim3 grid((total_count + partitions - 1) / partitions);
     dim3 block(attn_threads);
 
-    if (sequence_length <= 32768) {
-        if (iterations == 1) {
-            LAUNCH_ATTN_SOFTMAX_V2(1);
-        } else if (iterations == 2) {
-            LAUNCH_ATTN_SOFTMAX_V2(2);
-        } else if (iterations == 4) {
-            LAUNCH_ATTN_SOFTMAX_V2(4);
-        } else if (iterations == 8) {
-            LAUNCH_ATTN_SOFTMAX_V2(8);
-        } else if (iterations == 16) {
-            LAUNCH_ATTN_SOFTMAX_V2(16);
-        } else if (iterations == 32) {
-            LAUNCH_ATTN_SOFTMAX_V2(32);
-        } else if (iterations == 64) {
-            LAUNCH_ATTN_SOFTMAX_V2(64);
-        }
-    } else
+    if (sequence_length <= 32768)
+        attn_softmax_v2<<<grid, block, 0, stream>>>(vals,
+                                                    mask,
+                                                    alibi,
+                                                    layer_scale,
+                                                    triangular,
+                                                    recompute,
+                                                    local_attention,
+                                                    window_size,
+                                                    total_count,
+                                                    heads,
+                                                    sequence_length,
+                                                    num_seq,
+                                                    head_offset,
+                                                    mask_stride,
+                                                    mp_size,
+                                                    iterations,
+                                                    reduce_width);
+    else
         throw std::runtime_error("Unsupport Seq_Length!");
 }
 
