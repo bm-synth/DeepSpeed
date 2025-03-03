@@ -242,6 +242,17 @@ def merge_tp_slices(ds_checkpoint, dir, slice_dir, tp_degree, name_and_shape):
             return pattern_
         return None
 
+    def get_matched_sub_params_pattern(name_):
+        for subparam_shape_dict in parameter_with_sub_params:
+            subparam_shape = SubparamShape(**subparam_shape_dict)
+            for pattern_ in subparam_shape.patterns:
+                if re.match(pattern_, name_):
+                    unmatched_patterns.discard(pattern_)
+                    return subparam_shape
+        return None
+
+    matched_sub_params_shape = get_matched_sub_params_pattern(name)
+
     step_merged = _merge_zero_shards(slice_base_path, "step", tp_degree, shape)
     if step_merged:
         _save_checkpoint(os.path.join(param_base_path, f"step.pt"), step_merged[0])
