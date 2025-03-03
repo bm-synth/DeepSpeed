@@ -81,10 +81,10 @@ DeepSpeed calls the `step()` method of the scheduler at every training step when
 
 ***scheduler***: [dictionary]
 
-| Fields | Value                                                                                                                      | Example                                        |
-| ------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| type   | The scheduler name. See [here](https://deepspeed.readthedocs.io/en/latest/schedulers.html) for list of support schedulers. | `"WarmupLR"`                                   |
-| params | Dictionary of parameters to instantiate scheduler. The parameter names should match scheduler constructor signature.       | `{"warmup_min_lr": 0, "warmup_max_lr": 0.001}` |
+| Fields | Value                                                        | Example                        |
+| ------ | ------------------------------------------------------------ | ------------------------------ |
+| type   | The scheduler name. See [here](https://deepspeed.readthedocs.io/en/latest/deepspeed.pt.html) for list of support schedulers. | `"WarmupLR"`                      |
+| params | Dictionary of parameters to instantiate scheduler. The parameter names should match scheduler constructor signature. | `{"warmup_min_lr": 0, "warmup_max_lr": 0.001}` |
 
 Example of <i>**scheduler**</i>
 
