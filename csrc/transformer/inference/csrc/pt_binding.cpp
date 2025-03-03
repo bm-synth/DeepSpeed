@@ -1585,11 +1585,10 @@ std::vector<at::Tensor> ds_mlp_gemm(at::Tensor& input,
                        .device(at::kCUDA)
                        .requires_grad(false);
 
-    int out_size = (q_int8 || transposed_mode) ? weight_out.size(0) : weight_out.size(1);
-    auto output =
-        at::from_blob((T*)InferenceContext::Instance().GetWorkSpace() + torch::numel(input),
-                      {input.size(0), input.size(1), out_size},
-                      options);
+    int out_size = q_int8 ? weight_out.size(0) : weight_out.size(1);
+    auto output = at::from_blob((T*)Context::Instance().GetWorkSpace() + torch::numel(input),
+                                {input.size(0), input.size(1), out_size},
+                                options);
     int bsz = input.size(0) * input.size(1);
 
     auto act_func_type = static_cast<ActivationFuncType>(activation_type);
