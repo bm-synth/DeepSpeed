@@ -16,6 +16,17 @@ a language model (LM) with over 17B parameters called
 [Turing-NLG](https://www.microsoft.com/en-us/research/blog/turing-nlg-a-17-billion-parameter-language-model-by-microsoft),
 establishing a new SOTA in the LM category.
 
+**_For further documentation, tutorials, and technical deep-dives please see [deepspeed.ai](https://www.deepspeed.ai/)!_**
+
+
+# News
+* [2020/05/19] [An Order-of-Magnitude Larger and Faster Training with ZeRO-2](https://www.deepspeed.ai/news/2020/05/19/zero-stage2.html)
+<span style="color:dodgerblue">**[_NEW_]**</span>
+* [2020/05/19] [DeepSpeed optimizes transformer kernels to achieve the world’s and most efficient fastest BERT training record: 44 minutes on 1024 NVIDIA V100 GPUs](https://www.deepspeed.ai/news/2020/05/19/bert-record.html)
+<span style="color:dodgerblue">**[_NEW_]**</span>
+* [2020/02/13] [Turing-NLG: A 17-billion-parameter language model by Microsoft](https://www.microsoft.com/en-us/research/blog/turing-nlg-a-17-billion-parameter-language-model-by-microsoft/)
+* [2020/02/13] [ZeRO & DeepSpeed: New system optimizations enable training models with over 100 billion parameters](https://www.microsoft.com/en-us/research/blog/zero-deepspeed-new-system-optimizations-enable-training-models-with-over-100-billion-parameters/)
+
 
 # Table of Contents
 
