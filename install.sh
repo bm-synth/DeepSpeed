@@ -154,36 +154,8 @@ if [ ! -f $hostfile ]; then
     local_only=1
 fi
 
-if [ "$skip_requirements" == "0" ]; then
-    # Ensure dependencies are installed locally
-    $PIP_SUDO $PIP_INSTALL -r requirements.txt
-fi
-
-# Build wheels
-if [ "$third_party_install" == "1" ]; then
-    echo "Checking out sub-module(s)"
-    git submodule update --init --recursive
-
-    echo "Building apex wheel"
-    cd third_party/apex
-
-    if [ "$apex_commit" != "" ]; then
-        echo "Installing a non-standard version of apex at commit: $apex_commit"
-        git fetch
-        git checkout $apex_commit
-    fi
-
-    python setup.py -v --cpp_ext --cuda_ext bdist_wheel
-    cd -
-
-    echo "Installing apex locally so that deepspeed will build"
-    $PIP_SUDO pip uninstall -y apex
-    $PIP_SUDO $PIP_INSTALL third_party/apex/dist/apex*.whl
-fi
-if [ "$deepspeed_install" == "1" ]; then
-    echo "Building deepspeed wheel"
-    python setup.py -v bdist_wheel
-fi
+echo "Building deepspeed wheel"
+python -m build $VERBOSE --wheel --no-isolation
 
 if [ "$local_only" == "1" ]; then
     if [ "$deepspeed_install" == "1" ]; then
