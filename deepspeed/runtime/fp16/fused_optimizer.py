@@ -120,8 +120,21 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         self.mpu = mpu
 
         self.overflow = False
-        self.overflow_checker = CheckOverflow(self.fp16_groups, mpu=self.mpu, deepspeed=deepspeed)
+        self.overflow_checker = CheckOverflow(self.fp16_groups, mpu=self.mpu)
         self.initialize_optimizer_states()
+
+    def initialize_optimizer_states(self):
+        for i, group in enumerate(self.fp16_groups):
+            self.fp32_groups_flat[i].grad = torch.zeros(
+                self.fp32_groups_flat[i].size(),
+                device=self.fp32_groups_flat[i].device)
+
+        self.optimizer.step()
+
+        for i, group in enumerate(self.fp16_groups):
+            self.fp32_groups_flat[i].grad = None
+
+        return
 
     def initialize_optimizer_states(self):
         for i, group in enumerate(self.fp16_groups):
@@ -287,6 +300,9 @@ class FP16_Optimizer(DeepSpeedOptimizer):
                     for p in group
                 ]))
 
+            for p in group:
+                p.grad = None
+
             self.fp32_groups_flat[i].grad = grads_groups_flat[i]
             param_group = self.optimizer.param_groups[i]
 
@@ -305,8 +321,14 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
                 non_experts_grads_for_norm.append(self.fp32_groups_flat[i])
 
-            for p in group:
-                p.grad = None
+        if self.overflow:
+            if self.verbose:
+                print("[deepspeed] OVERFLOW! Skipping step. Attempted loss "
+                      "scale: {}, reducing to {}".format(prev_scale,
+                                                         self.cur_scale))
+            self.log_timers(OVERFLOW_TIMERS)
+            grads_groups_flat = None
+            return self.overflow
 
         self.timers(COMPUTE_NORM_TIMER).start()
 

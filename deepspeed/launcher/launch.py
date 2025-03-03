@@ -1,10 +1,7 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
+# Copyright 2020 The Microsoft DeepSpeed Team
 """
-DeepSpeed launcher, this is similar to torch's distributed.launch but supports
-additional features such as arbitrary gpu exclusion.
+DeepSpeed launcher, this is similar to torch.distributed.launch but supports
+additional features such as abitrary gpu exclusion.
 
 deepspeed.launcher.launch is intended to be run on a single worker node and
 will spawn several worker sub-processes depending on how many devices/ranks
@@ -29,7 +26,8 @@ from ..utils import logger, get_numactl_cmd
 from ..elasticity import is_torch_elastic_compatible
 from .constants import ELASTIC_TRAINING_ID_DEFAULT
 
-PID_FILE_BASEPATH = "/tmp"
+from .constants import TORCH_DISTRIBUTED_DEFAULT_PORT
+from ..utils import logger
 
 
 def parse_args():

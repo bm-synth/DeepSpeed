@@ -34,15 +34,8 @@ from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION
 
 from deepspeed.runtime.fp16.fused_optimizer import FP16_Optimizer
 from deepspeed.runtime.fp16.unfused_optimizer import FP16_UnfusedOptimizer
-from deepspeed.runtime.bf16_optimizer import BF16_Optimizer
-
-from deepspeed.linear.optimized_linear import LoRAOptimizedLinear
-from deepspeed.module_inject.layers import GatherReplacedLayerParams
-
-from deepspeed.runtime.config import DEEPSPEED_OPTIMIZERS, \
-    ADAGRAD_OPTIMIZER, ADAM_OPTIMIZER, ADAMW_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, ONEBIT_LAMB_OPTIMIZER, \
-    TORCH_ADAM_PARAM, ADAM_W_MODE, ADAM_W_MODE_DEFAULT, ZERO_ONE_ADAM_OPTIMIZER, MUADAM_OPTIMIZER, MUADAMW_OPTIMIZER, \
-    MUSGD_OPTIMIZER, LION_OPTIMIZER
+from deepspeed.runtime.config import DeepSpeedConfig, \
+    ADAM_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, DEEPSPEED_OPTIMIZERS
 
 from deepspeed.runtime.dataloader import DeepSpeedDataLoader
 from deepspeed.runtime.constants import \
@@ -65,48 +58,8 @@ from deepspeed.compression.constants import \
 from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, FROZEN_PARAM_FRAGMENTS
 from deepspeed.runtime.sparse_tensor import SparseTensor
 
-from deepspeed.runtime import lr_schedules
-from deepspeed.utils import groups
-from deepspeed.utils import logger, log_dist, instrument_w_nvtx
-from deepspeed.utils.timer import NoopTimer, ThroughputTimer, SynchronizedWallClockTimer, \
-    FORWARD_MICRO_TIMER, BACKWARD_MICRO_TIMER, BACKWARD_INNER_MICRO_TIMER, BACKWARD_REDUCE_MICRO_TIMER, \
-    STEP_MICRO_TIMER, \
-    FORWARD_GLOBAL_TIMER, BACKWARD_GLOBAL_TIMER, BACKWARD_INNER_GLOBAL_TIMER, BACKWARD_REDUCE_GLOBAL_TIMER, \
-    STEP_GLOBAL_TIMER
-from deepspeed.utils.debug import debug_extract_module_and_param_names, debug_clear_module_and_param_names
-from deepspeed.monitor.monitor import MonitorMaster
-from deepspeed.runtime.progressive_layer_drop import ProgressiveLayerDrop
-from deepspeed.runtime.utils import clip_grad_norm_, compare_tensors_in_structures
-from deepspeed.runtime.eigenvalue import Eigenvalue
-from deepspeed.runtime.data_pipeline.constants import DATA_SAMPLING, \
-    DATA_ROUTING, DATA_SAMPLING_ENABLED, CURRICULUM_LEARNING, \
-    CURRICULUM_LEARNING_ENABLED, DATA_SAMPLING_NUM_WORKERS, RANDOM_LTD, \
-    RANDOM_LTD_ENABLED, RANDOM_LTD_LAYER_ID, RANDOM_LTD_LAYER_NUM, \
-    RANDOM_LTD_LAYER_TOKEN_LR_SCHEDULE, RANDOM_LTD_LAYER_TOKEN_LR_ENABLED, \
-    RANDOM_LTD_GLOBAL_BATCH_SIZE, RANDOM_LTD_MICRO_BATCH_SIZE, DATA_EFFICIENCY
-from deepspeed.runtime.data_pipeline.curriculum_scheduler import CurriculumScheduler
-from deepspeed.runtime.data_pipeline.data_routing.scheduler import RandomLTDScheduler
-from deepspeed.runtime.data_pipeline.data_routing.helper import remove_random_ltd_state_dict
-from deepspeed.runtime.data_pipeline.data_routing.basic_layer import RandomLayerTokenDrop
-
-from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
-from deepspeed.utils.zero_to_fp32 import get_fp32_state_dict_from_zero_checkpoint
-
-from .pipe.module import PipelineModule
-from .utils import get_ma_status
-from .compiler import is_compile_supported
-from ..ops.adam import FusedAdam
-from ..moe.sharded_moe import TopKGate, MOELayer
-from ..moe.layer import MoE
-from ..moe.utils import is_moe_param, configure_moe_param_groups
-from ..git_version_info import version
-
-from deepspeed.profiling.flops_profiler.profiler import FlopsProfiler
-from deepspeed.utils.logging import print_json_dist, print_configuration
-
-from deepspeed.accelerator import get_accelerator
-
-from deepspeed.runtime.config import DtypeEnum
+from deepspeed.utils import logger
+from deepspeed.utils.timer import ThroughputTimer, SynchronizedWallClockTimer
 
 MEMORY_OPT_ALLREDUCE_SIZE = 500000000
 
@@ -218,20 +171,6 @@ class DeepSpeedEngine(Module):
         self.loaded_checkpoint_mp_world_size = None
         self.loaded_checkpoint_dp_world_size = None
         self.enable_backward_allreduce = True
-        self.inside_no_sync_ctxt = False
-        self.progressive_layer_drop = None
-        self.eigenvalue = None
-        self.block_eigenvalue = None
-        self.gas_boundary_ctr = 0
-        self.dist_backend = get_accelerator().communication_backend_name()
-        self.has_moe_layers = False
-        self.num_experts = []
-        self.gate_modules = []
-        self.moe_layers = []
-        self._step_applied = False
-        self._global_grad_norm = None
-        self.use_ds_comm = False  # False --> Use torch.dist, True --> Use ds.comm backend.
-        self.checkpoint_engine = None
 
         self._is_gradient_accumulation_boundary = None
         self.scale_wrt_gas = None
@@ -1404,10 +1343,8 @@ class DeepSpeedEngine(Module):
 
     def _configure_basic_optimizer(self, model_parameters):
         optimizer_parameters = self.optimizer_params()
-        if optimizer_parameters is None:
-            optimizer_parameters = {}
         # print(optimizer_parameters.keys())
-        if "max_grad_norm" in optimizer_parameters.keys():
+        if 'max_grad_norm' in optimizer_parameters.keys():
             raise ValueError(
                 "'max_grad_norm' is not supported as an optimizer parameter, please switch to using the deepspeed parameter 'gradient_clipping' see: https://www.deepspeed.ai/docs/config-json/#gradient-clipping for more details"
             )
@@ -1447,54 +1384,10 @@ class DeepSpeedEngine(Module):
                 optimizer = torch.optim.Adagrad(model_parameters, **optimizer_parameters)
         elif self.optimizer_name() == LAMB_OPTIMIZER:
             from deepspeed.ops.lamb import FusedLamb
-
             optimizer = FusedLamb(model_parameters, **optimizer_parameters)
         elif self.optimizer_name() == ONEBIT_ADAM_OPTIMIZER:
-            assert not self.zero_optimization(), "1bit-Adam is not compatible with ZeRO"
-            from deepspeed.runtime.fp16.onebit.adam import OnebitAdam
-
+            from deepspeed.runtime.fp16.onebit_adam import OnebitAdam
             optimizer = OnebitAdam(model_parameters, self, **optimizer_parameters)
-            if not self.fp16_enabled():
-                logger.warning(f"Currently the convergence of 1-bit Adam is only verified under FP16")
-        elif self.optimizer_name() == ZERO_ONE_ADAM_OPTIMIZER:
-            assert not self.zero_optimization(), "0/1 Adam is not compatible with ZeRO"
-            from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
-
-            optimizer = ZeroOneAdam(model_parameters, self, **optimizer_parameters)
-            if not self.fp16_enabled():
-                logger.warning(f'Currently the convergence of 0/1 Adam is only verified under FP16')
-        elif self.optimizer_name() == ONEBIT_LAMB_OPTIMIZER:
-            assert not self.zero_optimization(), "1bit-Lamb is not compatible with ZeRO"
-            from deepspeed.runtime.fp16.onebit.lamb import OnebitLamb
-
-            optimizer = OnebitLamb(model_parameters, self, **optimizer_parameters)
-            if not self.fp16_enabled():
-                logger.warning(f"Currently the convergence of 1-bit Lamb is only verified under FP16")
-        elif self.optimizer_name() == LION_OPTIMIZER:
-            if self.zero_use_cpu_optimizer():
-                from deepspeed.ops.lion import DeepSpeedCPULion
-                optimizer = DeepSpeedCPULion(model_parameters, **optimizer_parameters)
-            else:
-                from deepspeed.ops.lion import FusedLion
-                optimizer = FusedLion(model_parameters, **optimizer_parameters)
-        elif self.optimizer_name() == MUADAM_OPTIMIZER:
-            try:
-                from mup import MuAdam
-            except ImportError:
-                logger.error(f"Install mup to use MuAdam optimizer")
-            optimizer = MuAdam(model_parameters, **optimizer_parameters)
-        elif self.optimizer_name() == MUADAMW_OPTIMIZER:
-            try:
-                from mup import MuAdamW
-            except ImportError:
-                logger.error(f"Install mup to use MuAdamW optimizer")
-            optimizer = MuAdamW(model_parameters, **optimizer_parameters)
-        elif self.optimizer_name() == MUSGD_OPTIMIZER:
-            try:
-                from mup import MuSGD
-            except ImportError:
-                logger.error(f"Install mup to use MuSGD optimizer")
-            optimizer = MuSGD(model_parameters, **optimizer_parameters)
         else:
             torch_optimizer = getattr(torch.optim, self.optimizer_name())
             optimizer = torch_optimizer(model_parameters, **optimizer_parameters)
@@ -1542,12 +1435,8 @@ class DeepSpeedEngine(Module):
         initial_dynamic_scale = self.initial_dynamic_scale()
         dynamic_loss_args = self.dynamic_loss_scale_args()
         clip_grad = self.gradient_clipping()
-        if APEX_INSTALLED:
-            fused_opts = (apex.optimizers.FusedAdam, FusedAdam)
-        else:
-            fused_opts = FusedAdam
-        if isinstance(optimizer, fused_opts) \
-                or self.optimizer_name() in [ONEBIT_ADAM_OPTIMIZER, ZERO_ONE_ADAM_OPTIMIZER]:
+        if self.optimizer_name() == ADAM_OPTIMIZER or self.optimizer_name(
+        ) == ONEBIT_ADAM_OPTIMIZER:
             if self.dynamic_loss_scale():
                 log_dist(f'Creating fp16 optimizer with dynamic loss scale', ranks=[0])
                 timers = self.timers if self.wall_clock_breakdown() else NoopTimer()
@@ -2061,28 +1950,7 @@ class DeepSpeedEngine(Module):
                 grads = None
                 self.buffered_allreduce_fallback(grads=grads, elements_per_buffer=bucket_size)
 
-    @contextmanager
-    def no_sync(self):
-        r"""
-            Context manager to disable gradient reduction during backward pass.
-            This context manager has the following effects on other DeepSpeed features.
-            1. Incompatible with ZeRO stage 2/3 which rely on reduction for gradient partitioning.
-            2. It is illegal to  call engine.step() within the context manager.
-            3. Tracking of gradient accumulation steps is disabled.
-        """
-        assert not self.zero_optimization_partition_gradients(), \
-        f"no_sync context manager is incompatible with gradient partitioning logic of ZeRO stage {self.zero_optimization_stage()}"
-
-        assert not self.inside_no_sync_ctxt, f"no_sync context manager reentry is unsupported"
-
-        self.inside_no_sync_ctxt = True
-        try:
-            yield
-        finally:
-            self.inside_no_sync_ctxt = False
-
-    @instrument_w_nvtx
-    def backward(self, loss, release_loss=False, retain_graph=False, scale_wrt_gas=True):
+    def backward(self, loss, allreduce_gradients=True, release_loss=False):
         r"""Execute backward pass on the loss
         Arguments:
             loss: Torch tensor on which to execute backward propagation
@@ -2147,8 +2015,7 @@ class DeepSpeedEngine(Module):
 
         self._start_timers(self.engine_timers.backward_reduce_timers)
 
-        if do_gradient_reduction:
-            # Traditional code path that allreduces the module parameter grads
+        if allreduce_gradients and self.enable_backward_allreduce:
             self.allreduce_gradients()
 
         self._stop_timers(self.engine_timers.backward_reduce_timers)
@@ -2160,6 +2027,10 @@ class DeepSpeedEngine(Module):
             pass
 
         see_memory_usage("Engine after backward", force=self.memory_breakdown())
+
+        if release_loss:
+            # loss.data = None
+            pass
 
         return loss
 

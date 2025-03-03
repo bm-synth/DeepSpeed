@@ -91,9 +91,15 @@ extras_require = {
     'triton': fetch_requirements('requirements/requirements-triton.txt'),
 }
 
-# Only install pynvml on nvidia gpus.
-if torch_available and get_accelerator().device_name() == 'cuda' and not is_rocm_pytorch:
-    install_requires.append('nvidia-ml-py')
+onebit_adam_requires = fetch_requirements('requirements/requirements-1bit-adam.txt')
+if torch.cuda.is_available():
+    onebit_adam_requires.append(f"cupy-cuda{torch.version.cuda.replace('.','')[:3]}")
+install_requires += onebit_adam_requires
+
+# Build environment variables for custom builds
+DS_BUILD_LAMB_MASK = 1
+DS_BUILD_TRANSFORMER_MASK = 10
+DS_BUILD_SPARSE_ATTN_MASK = 100
 
 # Add specific cupy version to both onebit extension variants.
 if torch_available and get_accelerator().device_name() == 'cuda':
@@ -167,7 +173,8 @@ setup(name='deepspeed',
       long_description_content_type='text/markdown',
       author='DeepSpeed Team',
       author_email='deepspeed@microsoft.com',
-      url='http://aka.ms/deepspeed',
+      url='http://deepspeed.ai',
+      install_requires=install_requires,
       packages=find_packages(exclude=["docker",
                                       "third_party",
                                       "csrc"]),

@@ -1,11 +1,8 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
+# Copyright 2020 The Microsoft DeepSpeed Team
 """
 DeepSpeed runner is the main front-end to launching multi-worker
 training jobs with DeepSpeed. By default this uses pdsh to parallel
-ssh into multiple worker nodes and launch all the necessary processes
+ssh into multiple worker nodes and launch all the neccisary processes
 per rank for training.
 """
 
@@ -30,13 +27,14 @@ from ..constants import TORCH_DISTRIBUTED_DEFAULT_PORT
 from ..nebula.constants import NEBULA_EXPORT_ENVS
 from ..utils import logger
 
-from ..autotuning import Autotuner
-from deepspeed.accelerator import get_accelerator
+from .multinode_runner import PDSHRunner, OpenMPIRunner, MVAPICHRunner
+from .constants import TORCH_DISTRIBUTED_DEFAULT_PORT, \
+    PDSH_LAUNCHER, OPENMPI_LAUNCHER, MVAPICH_LAUNCHER
+from ..utils import logger
 
 DLTS_HOSTFILE = "/job/hostfile"
-EXPORT_ENVS = ['MLFLOW', 'PYTHON', 'MV2', 'UCX']
-EXPORT_ENVS += NEBULA_EXPORT_ENVS
-DEEPSPEED_ENVIRONMENT_NAME = os.getenv("DS_ENV_FILE", ".deepspeed_env")
+EXPORT_ENVS = ["NCCL", "PYTHON", "MV2", 'UCX']
+DEEPSPEED_ENVIRONMENT_NAME = ".deepspeed_env"
 DEEPSPEED_ENVIRONMENT_PATHS = [os.path.expanduser("~"), '.']
 PDSH_MAX_FAN_OUT = 1024
 
@@ -89,20 +87,7 @@ def parse_args(args=None):
                         help="Total number of worker nodes to run on, this will use "
                         "the top N hosts from the given hostfile.")
 
-    parser.add_argument("--min_elastic_nodes",
-                        type=int,
-                        default=-1,
-                        help="Minimum number of nodes to run elastic training on. "
-                        "Default is 1 when elastic training is enabled")
-
-    parser.add_argument("--max_elastic_nodes",
-                        type=int,
-                        default=-1,
-                        help="Maximum number of nodes to run elastic training on. "
-                        "Default is num_nodes when elastic training is enabled")
-
     parser.add_argument("--num_gpus",
-                        "--num_accelerators",
                         type=int,
                         default=-1,
                         help="Max number of GPUs to use on each node, will use "
@@ -120,14 +105,19 @@ def parse_args(args=None):
                         help="(optional) IP address of node 0, will be "
                         "inferred via 'hostname -I' if not specified.")
 
-    parser.add_argument("--node_rank",
-                        default=-1,
-                        type=int,
-                        help="ID of each node in the range [0:N). "
-                        "Only required when --no_ssh is set.")
-
     parser.add_argument("--launcher",
                         default=PDSH_LAUNCHER,
+                        type=str,
+                        help="(optional) choose launcher backend for multi-node"
+                        "training. Options currently include PDSH, OpenMPI, MVAPICH.")
+
+    parser.add_argument("--launcher_args",
+                        default="",
+                        type=str,
+                        help="(optional) pass launcher specific arguments as a "
+                        "single quoted argument.")
+
+    parser.add_argument("user_script",
                         type=str,
                         help="(optional) choose launcher backend for multi-node "
                         "training. Options currently include PDSH, OpenMPI, MVAPICH, SLURM, MPICH, IMPI.")
@@ -557,14 +547,8 @@ def main(args=None):
             runner = PDSHRunner(args, world_info_base64)
         elif args.launcher == OPENMPI_LAUNCHER:
             runner = OpenMPIRunner(args, world_info_base64, resource_pool)
-        elif args.launcher == MPICH_LAUNCHER:
-            runner = MPICHRunner(args, world_info_base64, resource_pool)
-        elif args.launcher == IMPI_LAUNCHER:
-            runner = IMPIRunner(args, world_info_base64, resource_pool)
         elif args.launcher == MVAPICH_LAUNCHER:
             runner = MVAPICHRunner(args, world_info_base64, resource_pool)
-        elif args.launcher == SLURM_LAUNCHER:
-            runner = SlurmRunner(args, world_info_base64, resource_pool)
         else:
             raise NotImplementedError(f"Unknown launcher {args.launcher}")
 
@@ -586,9 +570,8 @@ def main(args=None):
         # load envs from accelerator
         exports = EXPORT_ENVS + get_accelerator().export_envs()
         for var in env.keys():
-            if any([var.startswith(name) for name in exports]):
-                if not any([var == name for name in excluded_vars]):
-                    runner.add_export(var, env[var])
+            if any([var.startswith(name) for name in EXPORT_ENVS]):
+                runner.add_export(var, env[var])
 
         for environ_path in DEEPSPEED_ENVIRONMENT_PATHS:
             environ_file = os.path.join(environ_path, DEEPSPEED_ENVIRONMENT_NAME)
@@ -596,15 +579,12 @@ def main(args=None):
                 logger.info(f"deepspeed_env file = {environ_file}")
                 with open(environ_file, 'r') as fd:
                     for var in fd.readlines():
-                        key, val = var.split('=', maxsplit=1)
+                        key, val = var.split('=')
                         runner.add_export(key, val)
 
-        if args.launcher == PDSH_LAUNCHER:
-            cmd, kill_cmd, env = runner.get_cmd(env, active_resources)
-        else:
-            cmd = runner.get_cmd(env, active_resources)
+        cmd = runner.get_cmd(env, active_resources)
 
-    logger.info(f"cmd = {' '.join(cmd)}")
+    logger.info("cmd = {}".format(' '.join(cmd)))
     result = subprocess.Popen(cmd, env=env)
 
     def sigkill_handler(signum, frame):

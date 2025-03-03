@@ -17,20 +17,8 @@ from math import sqrt
 from numpy import prod
 
 import torch
-from torch.nn import functional as F
-try:
-    from torch._six import inf
-except ModuleNotFoundError:
-    from torch import inf
-from typing import Union, List, Dict
-from deepspeed import comm as dist
-from deepspeed.moe.utils import is_moe_param
-from deepspeed.utils import groups, logger
-from deepspeed.utils.bwc import (bwc_tensor_model_parallel_rank, bwc_pipeline_parallel_world_size,
-                                 bwc_pipeline_parallel_group)
-from deepspeed.runtime.constants import PIPE_REPLICATED
-from deepspeed.accelerator import get_accelerator
-from deepspeed.module_inject.policy import transpose
+from torch._six import inf
+import torch.distributed as dist
 
 torch_memory_reserved = get_accelerator().memory_reserved
 torch_max_memory_reserved = get_accelerator().max_memory_reserved
@@ -195,7 +183,7 @@ class CheckOverflow(object):
                         self.has_moe_params = True
 
     def check_using_norm(self, norm_group, reduce_overflow=True):
-        # TODO: I don't think reduce_overflow is needed if mpu is None
+        #TODO: I don't think reduce_overflow is needed if mpu is None
         overflow = -1 in norm_group
         overflow_gpu = get_accelerator().FloatTensor([overflow])
         if self.has_moe_params:
@@ -206,11 +194,17 @@ class CheckOverflow(object):
             # Only need to check groups.get_largest_expert_parallel_group()
             dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=groups._get_max_expert_parallel_group())
         if self.mpu is not None:
-            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=self.mpu.get_model_parallel_group())
+            overflow_gpu = torch.cuda.ByteTensor([overflow])
+            torch.distributed.all_reduce(overflow_gpu,
+                                         op=torch.distributed.ReduceOp.MAX,
+                                         group=self.mpu.get_model_parallel_group())
+            overflow = overflow_gpu[0].item()
         elif reduce_overflow:
-            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX)
+            cuda_overflow = torch.cuda.FloatTensor([overflow])
+            dist.all_reduce(cuda_overflow, op=torch.distributed.ReduceOp.MAX)
             dist.barrier()
-        overflow = overflow_gpu[0].item()
+            overflow = cuda_overflow[0].item()
+
         return bool(overflow)
 
     def check(self, param_groups=None):
