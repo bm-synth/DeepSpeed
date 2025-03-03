@@ -44,6 +44,10 @@ class InferenceEngine(Module):
 
         self._get_model_config_generate(config)  # keep for weird backward compatibility
 
+        # patch model generate with ours if model uses it
+        if hasattr(self.module, "generate"):
+            self.generate = self._generate
+
         if hasattr(self.module, "config"):
             TransformerPolicy.hf_model_config = self.module.config
 
@@ -157,8 +161,6 @@ class InferenceEngine(Module):
         self.config = getattr(self.module,
                               'config',
                               None) if config.config is None else config.config
-        # todo: clarify with Reza if this gets used anywhere
-        self.generate = getattr(self.module, 'generate', None)
 
     def remove_mask_prepare_for_bloom(self):
         if hasattr(self.module, 'transformer'):
@@ -739,9 +741,6 @@ class InferenceEngine(Module):
         return outputs
 
     def _generate(self, *inputs, **kwargs):
-        # Reset KV-cache at the beginning of generate
-        if hasattr(self.module, 'reset_cache'):
-            self.module.reset_cache()
         num_beams = 1
         if "generation_config" in kwargs:
             gen_config = kwargs["generation_config"]
@@ -750,34 +749,9 @@ class InferenceEngine(Module):
             num_beams = kwargs["num_beams"]
 
         if num_beams > 1:
-            raise NotImplementedError("DeepSpeed does not support `num_beams` > 1, if this is important to you please "
-                                      "add your request to: https://github.com/deepspeedai/DeepSpeed/issues/2506")
-
-        if ("input_ids" in kwargs) and (kwargs["input_ids"].dim() == 2):
-            for input_tensor in kwargs["input_ids"]:
-                tensor_length = input_tensor.shape[-1]
-                if tensor_length > self._config.max_out_tokens:
-                    raise RuntimeError(
-                        f"Input with size {tensor_length} exceeds maximum length of {self._config.max_out_tokens}. Please increase 'max_tokens' in the DeepSpeed Inference Config."
-                    )
+            raise NotImplementedError(
+                "DeepSpeed does not support `num_beams` > 1, if this is important to you please "
+                "add your request to: https://github.com/microsoft/DeepSpeed/issues/2506"
+            )
 
         return self.module.generate(*inputs, **kwargs)
-
-    def compile(self, backend=get_accelerator().get_compile_backend(), compile_kwargs={}) -> None:
-        """
-        Compile the module using the specified backend and kwargs.
-        """
-        if not is_compile_supported():
-            raise RuntimeError("compile is not supported in your version of PyTorch.")
-
-        if self._is_compiled:
-            return
-
-        # Avoid graph breaks
-        deepspeed.utils.nvtx.enable_nvtx = False
-        self.module.compile(backend=backend, **compile_kwargs)
-        self._is_compiled = True
-
-    @property
-    def is_compiled(self) -> bool:
-        return self._is_compiled
