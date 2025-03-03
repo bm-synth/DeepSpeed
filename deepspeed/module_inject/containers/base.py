@@ -358,23 +358,21 @@ class BaseTransformerContainer(ABC):
         self.module.mlp.output_b = self._4hh_b
 
     def copy_data_to_new_module(self):
-        if self.attn_nw is None:
-            self.module.mlp.attn_nw = self.attn_nw
-            self.module.mlp.attn_nb = self.attn_nb
-        else:
-            self.module.mlp.attn_nw.data.copy_(self.attn_nw.to(get_accelerator().current_device_name()))
-            self.module.mlp.attn_nb.data.copy_(self.attn_nb.to(get_accelerator().current_device_name()))
+        params = {'attn_nw': self.attn_nw, 'attn_nb': self.attn_nb}
+        for key in params:
+            if params[key] is None:
+                setattr(self.module.mlp, key, None)
+            else:
+                setattr(self.module.mlp, key,
+                        torch.nn.parameter.Parameter(params[key].to(get_accelerator().current_device_name())))
 
-        self.module.norm_w.data.copy_(self.input_nw.to(get_accelerator().current_device_name()))
-        self.module.norm_b.data.copy_(self.input_nb.to(get_accelerator().current_device_name()))
-
-    def align_merged_qkv(self):
-        if hasattr(self, '_align_merged_qkv'):
-            self._align_merged_qkv()
-
-    def partition_merged_qkv(self):
-        if hasattr(self, '_partition_merged_qkv'):
-            self._partition_merged_qkv()
+        params = {'norm_w': self.input_nw, 'norm_b': self.input_nb}
+        for key in params:
+            if params[key] is None:
+                setattr(self.module, key, None)
+            else:
+                setattr(self.module, key,
+                        torch.nn.parameter.Parameter(params[key].to(get_accelerator().current_device_name())))
 
     def transpose(self):
         self.transpose_attention()
