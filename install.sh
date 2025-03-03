@@ -77,7 +77,7 @@ case $key in
     -H|--hostfile)
     hostfile=$2
     if [ ! -f $2 ]; then
-        echo "User provided hostfile does not exist at $hostfile, exiting"
+        echo "User-provided hostfile does not exist at $hostfile, exiting"
         exit 1
     fi
     shift
@@ -106,7 +106,7 @@ if [ "$allow_sudo" == "0" ]; then
 fi
 
 if [ "$ds_only" == "1" ] && [ "$tp_only" == "1" ]; then
-    echo "-d and -t are mutually exclusive, only choose one or none"
+    echo "-d and -t are mutually exclusive, only choose one of the two"
     usage
     exit 1
 fi
