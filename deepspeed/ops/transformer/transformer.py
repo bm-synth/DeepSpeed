@@ -446,7 +446,21 @@ class DeepSpeedTransformerLayer(nn.Module):
                 grads=None):
         self.config.is_grad_enabled = torch.is_grad_enabled()
         self.config.training = self.training
-        return DeepSpeedTransformerFunction.apply(hidden_states, attention_mask, self, grads, self.config.layer_id,
-                                                  self.attn_qkvw, self.attn_qkvb, self.attn_ow, self.attn_ob,
-                                                  self.attn_nw, self.attn_nb, self.inter_w, self.inter_b,
-                                                  self.output_w, self.output_b, self.norm_w, self.norm_b, self.config)
+        return DeepSpeedTransformerFunction.apply(hidden_states,
+                                                  attention_mask,
+                                                  self,
+                                                  grads,
+                                                  self.config.layer_id,
+                                                  self.attn_qkvw,
+                                                  self.attn_qkvb,
+                                                  self.attn_ow,
+                                                  self.attn_ob,
+                                                  self.attn_nw,
+                                                  self.attn_nb,
+                                                  self.inter_w,
+                                                  self.inter_b,
+                                                  self.output_w,
+                                                  self.output_b,
+                                                  self.norm_w,
+                                                  self.norm_b,
+                                                  self.config)
