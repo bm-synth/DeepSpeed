@@ -10,7 +10,6 @@ from deepspeed.monitor.config import DeepSpeedMonitorConfig
 from deepspeed.monitor.comet import CometMonitor
 
 from unit.common import DistributedTest
-from unittest.mock import Mock, patch
 from deepspeed.runtime.config import DeepSpeedConfig
 
 import deepspeed.comm as dist

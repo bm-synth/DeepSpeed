@@ -17,8 +17,6 @@ from deepspeed.runtime.pipe.module import PipelineModule
 from unit.common import DistributedTest
 from unit.simple_model import SimpleModel, random_dataloader
 from unit.alexnet_model import AlexNetPipe, train_cifar
-from deepspeed.utils.torch import required_torch_version
-from deepspeed.accelerator import get_accelerator
 
 PipeTopo = PipeDataParallelTopology
 

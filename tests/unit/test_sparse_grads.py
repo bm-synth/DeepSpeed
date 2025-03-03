@@ -1,8 +1,9 @@
 import torch
 import torch.distributed as dist
 import deepspeed
-import pytest
-from common import distributed_test
+from unit.common import DistributedTest
+
+import deepspeed.utils.groups as groups
 
 
 def test_sparse_adam(tmpdir):

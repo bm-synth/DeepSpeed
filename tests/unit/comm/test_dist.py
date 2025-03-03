@@ -8,8 +8,8 @@ import torch
 import deepspeed.comm as dist
 import deepspeed
 
-from tests.unit.common import DistributedTest, get_master_port
-from tests.unit.simple_model import SimpleModel
+from unit.common import DistributedTest, get_master_port
+from unit.simple_model import SimpleModel
 
 import pytest
 from deepspeed.ops.op_builder import FusedAdamBuilder
