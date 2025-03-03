@@ -21,6 +21,11 @@ class CPUAdamBuilder(TorchCPUOpBuilder):
         args = super().libraries_args()
         return args
 
+    def libraries_args(self):
+        args = super().libraries_args()
+        args += ['curand']
+        return args
+
     def include_paths(self):
         import torch
         CUDA_INCLUDE = os.path.join(torch.utils.cpp_extension.CUDA_HOME, "include")
