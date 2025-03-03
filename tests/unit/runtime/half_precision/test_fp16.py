@@ -12,7 +12,7 @@ from unit.common import DistributedTest
 from unit.simple_model import SimpleModel, SimpleOptimizer, random_dataloader, SimpleMoEModel, sequence_dataloader
 from deepspeed.utils.torch import required_torch_version
 from deepspeed.accelerator import get_accelerator
-from deepspeed.ops.op_builder import CPUAdamBuilder
+from deepspeed.ops.op_builder import CPUAdamBuilder, FusedLambBuilder
 from deepspeed.moe.utils import split_params_into_different_moe_groups_for_optimizer
 
 try:
@@ -26,6 +26,7 @@ if torch.half not in get_accelerator().supported_dtypes():
     pytest.skip(f"fp16 not supported, valid dtype: {get_accelerator().supported_dtypes()}", allow_module_level=True)
 
 
+@pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
 class TestLambFP32GradClip(DistributedTest):
     world_size = 2
 
@@ -60,6 +61,7 @@ class TestLambFP32GradClip(DistributedTest):
             model.step()
 
 
+@pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
 class TestLambFP16(DistributedTest):
     world_size = 2
 
@@ -240,6 +242,7 @@ class TestFP16OptimizerForMoE(DistributedTest):
             engine.backward(loss)
             engine.step()
 
+    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
     @pytest.mark.parametrize("fused_lamb_legacy", [(False), (True)])
     @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
                         reason="FusedLambBuilder has not been implemented on this system.")
@@ -506,8 +509,7 @@ class TestAmp(DistributedTest):
             model.backward(loss)
             model.step()
 
-    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
-                        reason="FusedLambBuilder has not been implemented on this system")
+    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
     def test_lamb_basic(self):
         if not get_accelerator().is_fp16_supported():
             pytest.skip("fp16 is not supported")

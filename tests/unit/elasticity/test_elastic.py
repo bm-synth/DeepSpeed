@@ -150,8 +150,7 @@ def test_proper_mbsz(ds_config):
 class TestNonElasticBatchParams(DistributedTest):
     world_size = 2
 
-    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
-                        reason="FusedLambBuilder has not been implemented on this system.")
+    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
     def test(self):
         config_dict = {
             "train_batch_size": 2,
@@ -184,8 +183,7 @@ class TestNonElasticBatchParams(DistributedTest):
 class TestNonElasticBatchParamsWithOverride(DistributedTest):
     world_size = 2
 
-    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
-                        reason="FusedLambBuilder has not been implemented on this system.")
+    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
     def test(self):
         config_dict = {
             "train_batch_size": 2,
@@ -217,8 +215,7 @@ class TestNonElasticBatchParamsWithOverride(DistributedTest):
 class TestElasticConfigChanged(DistributedTest):
     world_size = 2
 
-    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
-                        reason="FusedLambBuilder has not been implemented on this system.")
+    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME], reason="lamb is not compatible")
     def test(self):
         config_dict = {
             "train_batch_size": 2,
