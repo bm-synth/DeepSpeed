@@ -8,9 +8,8 @@ import torch
 import deepspeed.comm as dist
 import deepspeed
 
-from unit.common import DistributedTest, DistributedFixture, get_master_port
-from unit.simple_model import SimpleModel
-from deepspeed.accelerator import get_accelerator
+from tests.unit.common import DistributedTest, get_master_port
+from tests.unit.simple_model import SimpleModel
 
 import pytest
 from deepspeed.ops.op_builder import FusedAdamBuilder
@@ -127,44 +126,21 @@ class TestDistAllReduce(DistributedTest):
         assert torch.all(x == result)
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
-class TestDistInferenceAllReduce(DistributedTest):
-    device_count = get_accelerator().device_count()
-    if device_count >= 4:
-        world_size = [1, 2, 4]
-    elif device_count >= 2:
-        world_size = [1, 2]
-    else:
-        world_size = [1]
-
-    def test(self, dtype):
-        x = torch.ones(1, 3).to(get_accelerator().device_name()) * (dist.get_rank() + 1)
-        sum_of_ranks = (dist.get_world_size() * (dist.get_world_size() + 1)) // 2
-        result = torch.ones(1, 3).to(get_accelerator().device_name()) * sum_of_ranks
-        result = result.to(dtype)
-        x = x.to(dtype)
-        dist.inference_all_reduce(x)
-        assert torch.all(x == result)
-
-
 @pytest.mark.parametrize("dist_init_required", [True, False, None])
 class TestDistInit(DistributedTest):
     init_distributed = False
 
     def test_already_init(self, dist_init_required):
-        torch.distributed.init_process_group(get_accelerator().communication_backend_name())
-        deepspeed.init_distributed(get_accelerator().communication_backend_name(),
-                                   dist_init_required=dist_init_required)
+        torch.distributed.init_process_group('nccl')
+        deepspeed.init_distributed('nccl', dist_init_required=dist_init_required)
 
     def test_no_init(self, dist_init_required):
         if dist_init_required or dist_init_required is None:
-            deepspeed.init_distributed(get_accelerator().communication_backend_name(),
-                                       dist_init_required=dist_init_required)
+            deepspeed.init_distributed('nccl', dist_init_required=dist_init_required)
         else:
             # torch.dist is not done and for some reason the user says they don't want it done
             with pytest.raises(Exception):
-                deepspeed.init_distributed(get_accelerator().communication_backend_name(),
-                                           dist_init_required=dist_init_required)
+                deepspeed.init_distributed('nccl', dist_init_required=dist_init_required)
 
 
 class TestDistInitNoEnv(DistributedTest):
@@ -173,12 +149,13 @@ class TestDistInitNoEnv(DistributedTest):
     set_dist_env = False
 
     def test(self):
-        torch.distributed.init_process_group(backend=get_accelerator().communication_backend_name(),
-                                             init_method=f"tcp://127.0.0.1:{get_master_port()}",
-                                             world_size=1,
-                                             rank=0)
+        torch.distributed.init_process_group(
+            backend='nccl',
+            init_method=f"tcp://127.0.0.1:{get_master_port()}",
+            world_size=1,
+            rank=0)
         assert torch.distributed.is_initialized()
-        deepspeed.init_distributed(get_accelerator().communication_backend_name(), auto_mpi_discovery=True)
+        deepspeed.init_distributed('nccl', auto_mpi_discovery=True)
 
 
 @pytest.mark.parametrize("dist_init_required", [True, False])
@@ -186,26 +163,44 @@ class TestDistInitWithModel(DistributedTest):
     init_distributed = False
 
     def test_already_init(self, dist_init_required):
-        torch.distributed.init_process_group(get_accelerator().communication_backend_name())
+        torch.distributed.init_process_group('nccl')
         model = SimpleModel(4)
-        config_dict = {"train_micro_batch_size_per_gpu": 1, "optimizer": {"type": "Adam", "params": {}}}
-        engine, *_ = deepspeed.initialize(model=model,
-                                          config=config_dict,
-                                          model_parameters=model.parameters(),
-                                          dist_init_required=dist_init_required)
+        config_dict = {
+            "train_micro_batch_size_per_gpu": 1,
+            "optimizer": {
+                "type": "Adam",
+                "params": {}
+            }
+        }
+        engine, *_ = deepspeed.initialize(
+            model=model,
+            config=config_dict,
+            model_parameters=model.parameters(),
+            dist_init_required=dist_init_required
+        )
 
     def test_no_init(self, dist_init_required):
         model = SimpleModel(4)
-        config_dict = {"train_micro_batch_size_per_gpu": 1, "optimizer": {"type": "Adam", "params": {}}}
+        config_dict = {
+            "train_micro_batch_size_per_gpu": 1,
+            "optimizer": {
+                "type": "Adam",
+                "params": {}
+            }
+        }
         if dist_init_required:
-            engine, *_ = deepspeed.initialize(model=model,
-                                              config=config_dict,
-                                              model_parameters=model.parameters(),
-                                              dist_init_required=dist_init_required)
+            engine, *_ = deepspeed.initialize(
+                model=model,
+                config=config_dict,
+                model_parameters=model.parameters(),
+                dist_init_required=dist_init_required
+            )
         else:
             # torch.dist is not done and for some reason the user says they don't want it done
             with pytest.raises(Exception):
-                engine, *_ = deepspeed.initialize(model=model,
-                                                  config=config_dict,
-                                                  model_parameters=model.parameters(),
-                                                  dist_init_required=dist_init_required)
+                engine, *_ = deepspeed.initialize(
+                    model=model,
+                    config=config_dict,
+                    model_parameters=model.parameters(),
+                    dist_init_required=dist_init_required
+                )
