@@ -4,15 +4,27 @@ if [[ $# -lt 2 ]]; then
     exit 1
 fi
 
-function prep_folder()
+
+function validate_enviroment()
 {
-    folder=$1
-    if [[ -d ${folder} ]]; then
-        rm -f ${folder}/*
-    else
-        mkdir -p ${folder}
+    validate_cmd="python ./validate_async_io.py"
+    eval ${validate_cmd}
+    res=$?
+    if [[ $res != 0 ]]; then
+        echo "Failing because environment is not properly configured"
+        echo "Possible fix: sudo apt-get install libaio-dev"
+        exit 1
     fi
 }
+
+
+validate_enviroment
+
+INPUT_FILE=$1
+if [[ ! -f ${INPUT_FILE} ]]; then
+    echo "Input file not found: ${INPUT_FILE}"
+    exit 1
+fi
 
 LOG_DIR=$2/aio_perf_sweep
 RUN_SCRIPT=./test_ds_aio.py
