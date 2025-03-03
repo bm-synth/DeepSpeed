@@ -12,4 +12,28 @@ We do not recommend this way because this directory is organized to build the [d
 
 ## 3. Build [deepspeed.ai](https://www.deepspeed.ai/) website locally using Jekyll
 
-This is recommended for local website development or when you do not have internet access. You can follow the instruction at [here](https://help.github.com/en/github/working-with-github-pages/testing-your-github-pages-site-locally-with-jekyll) to install Ruby, Bundler, and Jekyll. Then run `bundle exec jekyll serve` at this directory so that you can view the website in your web browser at `http://localhost:4000`.
+
+Now we can install Jekyll and [Bundler](https://bundler.io/):
+```
+gem install jekyll bundler
+```
+
+### Start a local webserver
+We now need to install the required Ruby packages for the website.
+
+**NOTE**: you should change to this folder (i.e., docs) before running the installation command to avoid this [error](https://stackoverflow.com/questions/10012181/bundle-install-returns-could-not-locate-gemfile/35157872):
+
+> Could not locate Gemfile
+
+**NOTE**: this step frequently hangs when connected to a VPN (including MSVPN). Simply disconnect for the package installation.
+
+
+```
+bundle install
+```
+
+You can now start a local webserver via:
+```
+bundle exec jekyll serve
+```
+The website should now be accessible at [http://localhost:4000](http://localhost:4000)
