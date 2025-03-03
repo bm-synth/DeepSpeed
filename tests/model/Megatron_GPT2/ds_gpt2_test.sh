@@ -96,7 +96,8 @@ gpt_options=" \
 "
 
 work_dir="../../../DeepSpeedExamples/Megatron-LM/"
-run_cmd="(cd ${work_dir} && deepspeed --master_port ${master_port} --num_nodes $nodes --num_gpus $gpus pretrain_gpt2.py ${gpt_options})"
+include_str=`seq 0 $(( $gpus - 1 )) | paste -sd "," -`
+run_cmd="(cd ${work_dir} && deepspeed.pt -i localhost:${include_str} pretrain_gpt2.py ${gpt_options})"
 echo ${run_cmd}
 eval ${run_cmd}
 
