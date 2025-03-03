@@ -34,10 +34,6 @@ def ds_implementation(vals, gamma, beta, epsilon):
     return LayerNormOp()(vals, gamma, beta, epsilon)
 
 
-def ds_triton_implementation(vals, gamma, beta, epsilon):
-    return layer_norm(vals, gamma, beta, epsilon)
-
-
 @pytest.mark.inference_ops
 @pytest.mark.parametrize("batch", [1, 32])
 @pytest.mark.parametrize("seq_len", [1, 128])
@@ -80,10 +76,6 @@ def residual_ref_implementation(vals, bias, res, gamma, beta, epsilon, channels,
 
 def residual_ds_implementation(vals, bias, res, gamma, beta, epsilon):
     return LayerNormOp.layer_norm_residual(vals, bias, res, gamma, beta, epsilon)
-
-
-def residual_ds_triton_implementation(vals, bias, res, gamma, beta, epsilon):
-    return layer_norm_residual(vals, bias, res, gamma, beta, epsilon)
 
 
 @pytest.mark.inference_ops
