@@ -128,10 +128,12 @@ class LLAMALayerPolicy(TransformerPolicy):
 
     def get_hidden_heads(self):
         hidden_heads = (
-            self.client_module.self_attn.q_proj.in_features,
+            getattr(self.client_module.self_attn.q_proj.weight, "ds_shape",
+                    self.client_module.self_attn.q_proj.weight.shape)[1],
             self.client_module.self_attn.num_heads,
             self.client_module.input_layernorm.variance_epsilon,
-            self.client_module.mlp.gate_proj.out_features,
+            getattr(self.client_module.mlp.gate_proj.weight, "ds_shape",
+                    self.client_module.mlp.gate_proj.weight.shape)[0],
         )
         return hidden_heads
 
