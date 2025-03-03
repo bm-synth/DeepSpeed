@@ -45,7 +45,7 @@ _bert_models = [
     "deepset/minilm-uncased-squad2",
     "cross-encoder/ms-marco-MiniLM-L-12-v2",
     "dslim/bert-base-NER",
-    "google-bert/bert-large-uncased-whole-word-masking-finetuned-squad",
+    "bert-large-uncased-whole-word-masking-finetuned-squad",
     "distilbert/distilbert-base-cased-distilled-squad",
 ]
 _roberta_models = [
@@ -290,17 +290,19 @@ def validate_test(model_w_task, dtype, enable_cuda_graph, enable_triton):
         msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
     elif ("bloom" in model) and (dtype != torch.half):
         msg = f"Bloom models only support half precision, cannot use dtype {dtype}"
-    elif ("bert" not in model.lower()) and enable_cuda_graph:
+    elif (model not in _bert_models + _roberta_models) and enable_cuda_graph:
         msg = "Non bert/roberta models do no support CUDA Graph"
     elif enable_triton and not (dtype in [torch.half]):
         msg = "Triton is for fp16"
     elif enable_triton and not deepspeed.HAS_TRITON:
         msg = "triton needs to be installed for the test"
-    elif ("bert" not in model.lower()) and enable_triton:
+    elif (model not in _bert_models + _roberta_models) and enable_triton:
         msg = "Triton kernels do not support Non bert/roberta models yet"
 
     # These should be removed once we fix several inference tests failing
-    if model in ["EleutherAI/pythia-70m-deduped", "distilbert-base-cased-distilled-squad", "EleutherAI/gpt-j-6b"]:
+    if model in [
+            "EleutherAI/pythia-70m-deduped", "distilbert/distilbert-base-cased-distilled-squad", "EleutherAI/gpt-j-6b"
+    ]:
         msg = "Test is currently broken"
     return msg
 
@@ -438,7 +440,7 @@ class TestMPSize(DistributedTest):
 
 
 @pytest.mark.inference
-@pytest.mark.parametrize("model_w_task", [("gpt2", "text-generation")], ids=["gpt2"])
+@pytest.mark.parametrize("model_w_task", [("openai-community/gpt2", "text-generation")], ids=["gpt2"])
 class TestLowCpuMemUsage(DistributedTest):
     world_size = 1
 
@@ -476,7 +478,7 @@ class TestLowCpuMemUsage(DistributedTest):
         (("google/t5-v1_1-small", "text2text-generation"), {
             T5Block: ('SelfAttention.o', 'EncDecAttention.o', 'DenseReluDense.wo')
         }),
-        (("roberta-large", "fill-mask"), {
+        (("FacebookAI/roberta-large", "fill-mask"), {
             RobertaLayer: ('output.dense')
         }),
     ],
@@ -605,7 +607,7 @@ class TestAutoTensorParallelism(DistributedTest):
     (
         ["gpt2", "EleutherAI/gpt-neo-2.7B"],
         #["gpt2", "EleutherAI/gpt-j-6b"], # Causing OOM for this test
-        ["gpt2", "gpt2-xl"],
+        ["gpt2", "openai-community/gpt2-xl"],
     ),
 )
 @pytest.mark.parametrize("task", ["lambada_standard"])
