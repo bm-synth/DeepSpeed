@@ -176,7 +176,8 @@ void launch_fake_quantize_kernel(T* vals,
     dim3 grid_dim(group_num);
     dim3 block_dim(1024);
 
-    quantize_kernel<<<grid_dim, block_dim, 0, stream>>>(vals, total_count / group_num, num_bits);
+    fake_quantize_kernel<<<grid_dim, block_dim, 0, stream>>>(
+        vals, total_count / group_num, num_bits);
 }
 
 template void launch_fake_quantize_kernel(float* vals,

@@ -1,9 +1,4 @@
-// Copyright (c) Microsoft Corporation.
-// SPDX-License-Identifier: Apache-2.0
-
-// DeepSpeed Team
-
-#include <cassert>
+#include <cstdio>
 #include "conversion_utils.h"
 #include "ds_kernel_utils.h"
 #include "memory_access_utils.h"
@@ -24,7 +19,6 @@ constexpr int max_threads = 1024;
 Class to hold the quantization parameters for a given tensor.
 Holds the implementation of the quantization operation.
 */
-
 template <Type qType, int numBits>
 class Params {
 public:
@@ -39,13 +33,7 @@ public:
     */
     DS_D_INLINE int8_t quantize(__half val);
 
-    template <typename T>
-    DS_D_INLINE T dequantize(int8_t val);
-
     DS_D_INLINE void store(float* params, int group_index);
-
-    // Initialize from memory
-    DS_D_INLINE Params(const float* params, int group_index);
 };
 
 template <int numBits>
@@ -73,22 +61,32 @@ public:
         return (int8_t)data_i32;
     }
 
-    template <typename T>
-    DS_D_INLINE T dequantize(int8_t val)
-    {
-        const float val_deq_f = conversion::to<float>(val) * scale;
-        return conversion::to<T>(val_deq_f);
-    }
-
     DS_D_INLINE void store(float* params, int group_index)
     {
         const float store_scale = 1 / scale;
         mem_access::store_global<sizeof(float)>(params + group_index, &store_scale);
     }
+};
 
-    DS_D_INLINE Params(const float* params, int group_index)
+template <int numBits>
+class Params<Type::IntegerSymmetric, numBits> {
+public:
+    int32_t scale;
+
+    DS_D_INLINE Params(float max) { scale = conversion::to<int32_t>(max + 0.5f); }
+
+    DS_D_INLINE int8_t quantize(__half val)
     {
-        mem_access::load_global<sizeof(float)>(&scale, params + group_index);
+        constexpr int32_t q_max = (1 << (numBits - 1)) - 1;
+        float val_f = conversion::to<float>(val) * q_max;
+        float scaled_val = val_f / conversion::to<float>(scale);
+        int32_t data_i32 = conversion::to<int32_t>(scaled_val);
+        return (int8_t)data_i32;
+    }
+
+    DS_D_INLINE void store(float* params, int group_index)
+    {
+        mem_access::store_global<sizeof(float)>(params + group_index, &scale);
     }
 };
 
@@ -103,9 +101,9 @@ public:
         if (max == min) {
             scale = 1.0;
         } else {
-            scale = ((1 << numBits)) / (max - min);
+            scale = (1 << numBits) / (max - min);
         }
-        offset = (max + min) / 2;
+        offset = -(1 << (numBits - 1)) - (min * scale);
     }
 
     DS_D_INLINE int8_t quantize(__half val)
@@ -113,32 +111,17 @@ public:
         constexpr int32_t q_min = -(1 << (numBits - 1));
         constexpr int32_t q_max = (1 << (numBits - 1)) - 1;
 
-        float val_f = (conversion::to<float>(val) - offset) * scale;
+        float val_f = conversion::to<float>(val) * scale + offset;
         int32_t data_i32 = conversion::to<int32_t>(val_f);
         data_i32 = min(max(data_i32, q_min), q_max);
         return (int8_t)data_i32;
     }
 
-    template <typename T>
-    DS_D_INLINE T dequantize(int8_t val)
-    {
-        const float val_deq_f = ((conversion::to<float>(val)) * scale) + offset;
-        return conversion::to<__half>(val_deq_f);
-    }
-
     DS_D_INLINE void store(float* params, int group_index)
     {
-        // Codegen should turn this into stg.64
         const float store_scale = 1 / scale;
         mem_access::store_global<sizeof(float)>(params + 2 * group_index, &store_scale);
         mem_access::store_global<sizeof(float)>(params + 2 * group_index + 1, &offset);
-    }
-
-    DS_D_INLINE Params(const float* params, int group_index)
-    {
-        // Codegen should turn this into ldg.64
-        mem_access::load_global<sizeof(float)>(&scale, params + 2 * group_index);
-        mem_access::load_global<sizeof(float)>(&offset, params + 2 * group_index + 1);
     }
 };
 
@@ -197,6 +180,54 @@ public:
 
         reduce::partitioned_block<rop::Max, threads_per_group>(tb, warp, max);
         Params<Type::Symmetric, numBits> params(max);
+
+        return params;
+    }
+};
+
+template <>
+class GroupStats<Type::IntegerSymmetric> {
+public:
+    // Symmetric quantization only tracks the maximum absolute value
+    __half2 cur_max;
+
+    /*
+    Technically, this would give bad results if there
+    are 0 values to process since the reduction would
+    give -inf instead of 0. We do not consider this
+    to be a reasonable edge case.
+    */
+    DS_D_INLINE GroupStats() { cur_max = reduce::init<rop::Max, __half2>(); }
+
+    /*
+    Updated the running absmax used to calculate params.
+    Function Arguments :
+        val : The __half2 value to update the running min and max with.
+    */
+    DS_D_INLINE void update(__half2 val)
+    {
+        cur_max = reduce::element<rop::Max>(cur_max, __habs2(val));
+    }
+
+    /*
+    Function to return calculated quantization params.
+    Template Arguments :
+        numBits -   Number of bits in quantized element.    int : 8 or 4
+    Function Arguments :
+        tb      -   Threadblock object. cg::thread_block
+        warp    -   Warp object.        cg::thread_block_tile<hw_warp_size>
+    */
+    template <int numBits, int threads_per_group>
+    DS_D_INLINE Params<Type::IntegerSymmetric, numBits> get_params(
+        cg::thread_block& tb,
+        cg::thread_block_tile<hw_warp_size>& warp)
+    {
+        const float2 partial_max = conversion::to<float2>(cur_max);
+        float max = reduce::element<rop::Max>(partial_max.x, partial_max.y);
+
+        reduce::partitioned_block<rop::Max, threads_per_group>(tb, warp, max);
+
+        Params<Type::IntegerSymmetric, numBits> params(max);
 
         return params;
     }
@@ -262,7 +293,7 @@ Template Arguments :
     numBits -   Number of bits in quantized element.    int : 8 or 4
     qType   - Type of quantization to perform.          Type::Symmetric or Type::Asymmetric
 Function Arguments :
-    local_output -  Pointer to local memory to store quantized data.    int8_t*
+    local_output -  Pointer to shared memory to store quantized data.   int8_t*
     data         -  Pointer to input data.                              __half*
     Params       -  Parameters for quantization.                        Params<qType, numBits>
 */
@@ -275,7 +306,7 @@ Template Arguments :
     numBits -   Number of bits in quantized element.    int : 8 or 4
     qType   -   Type of quantization to perform.        Type::Symmetric or Type::Asymmetric
 Function Arguments :
-    local_output -  Pointer to local memory to store quantized data.    int8_t*
+    local_output -  Pointer to shared memory to store quantized data.   int8_t*
     data         -  Pointer to input data.                              __half2*
     Params       -  Parameters for quantization.                        Params<qType, numBits>
 */
@@ -417,22 +448,6 @@ DS_D_INLINE void local_array(cg::thread_block& tb,
     }
 }
 
-template <Type qType, int numBits, int numChunks, int threads_per_group, int max_threads>
-DS_D_INLINE void local_array(cg::thread_block& tb,
-                             cg::thread_block_tile<hw_warp_size>& warp,
-                             __half* local_buffer,
-                             float* __restrict__ global_params,
-                             int8_t* __restrict__ output_data,
-                             const int& elems_per_group,
-                             const int& groups,
-                             Params<qType, numBits> q_params)
-{
-    __half2* local_buffer_h2 = reinterpret_cast<__half2*>(local_buffer);
-
-    quantize::local_array<qType, numBits, numChunks, threads_per_group, max_threads>(
-        tb, warp, local_buffer, global_params, output_data, elems_per_group, groups, q_params);
-}
-
 template <Type qType,
           int numBits,
           int numChunks,
@@ -452,18 +467,6 @@ __device__ void local_array(__half2* local_buffer,
 
     quantize::local_array<qType, numBits, numChunks, threads_per_group, max_threads>(
         tb, warp, local_buffer, global_params, output_data, elems_per_group, groups, params);
-}
-
-template <Type qType, int numBits, int numChunks, int threads_per_group, int max_threads>
-__device__ void local_array(__half* local_buffer,
-                            float* __restrict__ global_params,
-                            int8_t* __restrict__ output_data,
-                            const int& elems_per_group,
-                            const int& groups)
-{
-    __half2* local_buffer_h2 = reinterpret_cast<__half2*>(local_buffer);
-    quantize::local_array<qType, numBits, numChunks, threads_per_group, max_threads>(
-        local_buffer_h2, global_params, output_data, elems_per_group, groups);
 }
 
 }  // namespace quantize
