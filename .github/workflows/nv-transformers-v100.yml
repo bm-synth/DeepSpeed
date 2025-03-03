@@ -32,6 +32,8 @@ jobs:
           pip install -U --cache-dir $TORCH_CACHE torch==2.0.1+cu124 --index-url https://download.pytorch.org/whl/cu124
           python -c "import torch; print('torch:', torch.__version__, torch)"
           python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+          sudo apt-get update
+          sudo apt-get install -y libaio-dev
 
       - name: Install transformers
         run: |
