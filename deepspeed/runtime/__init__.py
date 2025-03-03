@@ -1,6 +1,4 @@
-class DeepSpeedOptimizer(object):
-    pass
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
 
-
-class ZeROOptimizer(DeepSpeedOptimizer):
-    pass
+# DeepSpeed Team
