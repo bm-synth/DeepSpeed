@@ -40,7 +40,7 @@ class CPUAdamBuilder(TorchCPUOpBuilder):
                 return '-D__AVX512__'
             elif 'avx2' in result:
                 return '-D__AVX256__'
-        return ''
+        return '-D__SCALAR__'
 
     def cxx_args(self):
         CUDA_LIB64 = os.path.join(torch.utils.cpp_extension.CUDA_HOME, "lib64")
