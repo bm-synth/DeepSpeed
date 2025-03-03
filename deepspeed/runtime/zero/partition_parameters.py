@@ -2166,14 +2166,13 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
 
 class GatheredParameters:
-
     def __init__(self, params, modifier_rank=None, fwd_module=None, enabled=True):
         """A context that collects parameters that were partitioned via a
         :class:`deepspeed.zero.Init` context. The parameters are partitioned
         again upon exit.
 
         Args:
-            params (``torch.nn.Parameter``): A single parameter, or an iterable of parameters (list, tuple, generator) of parameters to collect.
+            params (``torch.nn.Parameter``): A single parameter or a list of parameters to collect.
                 It's assumed that all parameters are zero params.
             modifier_rank (int, optional): If specified, this rank's parameter will be
                 broadcasted on exit from the context. This argument is required if ``params`` are
@@ -2240,7 +2239,7 @@ class GatheredParameters:
                     # manager gathers (unpartitions) the params of the current layer, then loads from
                     # the state dict and then re-partitions them again
                     with deepspeed.zero.GatheredParameters(list(module.parameters(recurse=False)), modifier_rank=0):
-                        if deepspeed.comm.get_rank() == 0:
+                        if torch.distributed.get_rank() == 0:
                             module._load_from_state_dict(state_dict, prefix)
 
                     for name, child in module._modules.items():
@@ -2249,37 +2248,31 @@ class GatheredParameters:
 
                 load(model, prefix="")
 
-        If this approach is not used, then the full model will first be copied to each GPU. For models
-        bigger than the memory of a single GPU, this method is required.
+        If this approach is not used, then the full model will first get copied to each GPU. For models
+        bigger than the memory of a single gpu this method is required.
         """
 
         self.enabled = enabled
         if not enabled:
             return
 
-        if isinstance(params, Iterable) and not isinstance(params, torch.Tensor):
-            # deal with generators like model.parameters()
-            # must convert to list to be able to iterate more than once if we get a generator
-            params = list(params)
-        else:
-            # single param
+        if not isinstance(params, list):
             params = [params]
+
         # enable if at least one is zero-param, otherwise a noop
         if not any(is_zero_param(p) for p in params):
             self.enabled = False
             return
 
-        self.params = [p for p in params if hasattr(p, "ds_id")]
-        self.params = sorted(
-            set(self.params), key=lambda x: x.ds_id
-        )  # remove the duplicates to prevent racing condition, we must also make sure the order is the same on all ranks otherwise we'll get deadlocks
+        self.params = params
         self.src_rank = None
         if modifier_rank is not None:
-            if self.params[0].ds_process_group == dist.get_world_group():
+            if self.params[0].ds_process_group == torch.distributed.group.WORLD:
                 self.src_rank = modifier_rank
             else:
                 # A group was specified; convert DP rank to global rank
-                self.src_rank = dist.get_global_rank(self.params[0].ds_process_group, modifier_rank)
+                self.src_rank = _get_global_rank(self.params[0].ds_process_group,
+                                                 modifier_rank)
         self.fwd_module = fwd_module
         if self.fwd_module is not None:
             # is a no-op if already registered
@@ -2295,10 +2288,14 @@ class GatheredParameters:
         if not self.enabled:
             return
         if self.src_rank is None:
-            self.params[0].partition(param_list=self.params, has_been_updated=False)
             return
 
-        handles = [dist.broadcast(p.data, self.src_rank, group=p.ds_process_group, async_op=True) for p in self.params]
+        handles = [
+            torch.distributed.broadcast(p,
+                                        self.src_rank,
+                                        group=p.ds_process_group,
+                                        async_op=True) for p in self.params
+        ]
         for h in handles:
             h.wait()
         self.params[0].partition(param_list=self.params, has_been_updated=True)
