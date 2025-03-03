@@ -116,6 +116,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                  sub_group_size=1000000000000,
                  mpu=None,
                  clip_grad=0.0,
+                 gradient_accumulation_dtype=torch.float32,
                  communication_data_type=torch.float16,
                  postscale_gradients=True,
                  gradient_predivide_factor=1.0,
@@ -150,6 +151,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.flatten = _flatten_dense_tensors
         self.unflatten = _unflatten_dense_tensors
         self.dtype = self.optimizer.param_groups[0]['params'][0].dtype
+        self.gradient_accumulation_dtype = gradient_accumulation_dtype
         self._global_grad_norm = 0.
 
         self.custom_loss_scaler = False
@@ -453,7 +455,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         all_params = list(itertools.chain.from_iterable(self.fp16_groups))
 
         self.grad_partitions_flat_buffer: Tensor = torch.zeros(sum(p.partition_numel() for p in all_params),
-                                                               dtype=self.dtype,
+                                                               dtype=self.gradient_accumulation_dtype,
                                                                device=self.device)
         if self.offload_optimizer_pin_memory:
             self.grad_partitions_flat_buffer = get_accelerator().pin_memory(self.grad_partitions_flat_buffer)
@@ -1027,88 +1029,17 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         #TODO: use a similar code path for both cpu_offload and non-cpu offload
         if not self.offload_optimizer:
             for i, sub_group in enumerate(self.fp16_groups):
+                #TODO: This is redundant
                 self.averaged_gradients[i] = [
                     self.__param_id_to_grad_partition[param.ds_id]
                     if param.requires_grad else torch.zeros_like(param.ds_tensor) for param in sub_group
                 ]
-                # self.averaged_gradients[i] = self.get_flat_partition(
-                #     self.fp16_groups[i],
-                #     0,
-                #     self.fp32_partitioned_groups_flat[i].numel(),
-                #     return_tensor_list=True)
-
-        self._release_ipg_buffers()
-
-        see_memory_usage(f"End ipg_epilogue", force=False)
-
-    # resets all partition to no reduced
-    # sets remaining grads to the total number of grads in each partition
-    # set is grad computed to false for all grads in partition
-    def reset_partition_gradient_structures(self):
-        total_partitions = dist.get_world_size(group=self.dp_process_group)
-        for i, _ in enumerate(self.fp16_groups):
-            for partition_id in range(total_partitions):
-                self.is_partition_reduced[i][partition_id] = False
-                self.remaining_grads_in_partition[i][
-                    partition_id] = self.total_grads_in_partition[i][partition_id]
-
-                for param_id in self.is_grad_computed[i][partition_id]:
-                    self.is_grad_computed[i][partition_id][param_id] = False
-
-    def initialize_gradient_partition(self, i, param_group, partition_id):
-        def set_key_value_list(dictionary, key, value):
-            if key in dictionary:
-                dictionary[key].append(value)
-            else:
-                dictionary[key] = [value]
-
-        def increment_value(dictionary, key):
-            if key in dictionary:
-                dictionary[key] += 1
-            else:
-                dictionary[key] = 1
-
-        partition_size = self.partition_size[i]
-
-        start_index = partition_size * partition_id
-        end_index = partition_size * (partition_id + 1)
-
-        current_index = 0
-        first_offset = 0
-
-        for param in param_group:
-
-            param_size = param.numel()
-            param_id = self.get_param_id(param)
-
-            if (current_index >= start_index and current_index < end_index):
-                set_key_value_list(self.param_to_partition_ids[i],
-                                   param_id,
-                                   partition_id)
-                increment_value(self.total_grads_in_partition[i], partition_id)
-
-                self.is_grad_computed[i][partition_id][param_id] = False
-
-                self.grad_partition_insertion_offset[i][partition_id][
-                    param_id] = current_index - start_index
-                self.grad_start_offset[i][partition_id][param_id] = 0
-
-            elif start_index > current_index and start_index < (current_index +
-                                                                param_size):
-                assert (first_offset == 0), "This can happen either zero or only once as this must be the first tensor in the partition"
-                first_offset = start_index - current_index
-
-                set_key_value_list(self.param_to_partition_ids[i],
-                                   param_id,
-                                   partition_id)
-                increment_value(self.total_grads_in_partition[i], partition_id)
-
-                self.is_grad_computed[i][partition_id][param_id] = False
-
-                self.grad_partition_insertion_offset[i][partition_id][param_id] = 0
-                self.grad_start_offset[i][partition_id][param_id] = first_offset
-
-            current_index = current_index + param_size
+        # this method gets called after every backward. need to increment
+        # here because if it gets incremented in backward() the micro step
+        # id will be off by one when we do the reduce and partition at the.
+        # start of this method.
+        # TODO. make this less error prone
+        self.micro_step_id += 1
 
     def overlapping_partition_gradients_reduce_epilogue(self):
         self.independent_gradient_partition_epilogue()
@@ -1407,12 +1338,12 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 # operations and so it can be used asynchronously
                 grad_buffer = grad_buffer.to(grad_partition.device, non_blocking=True)
             elif get_accelerator().on_accelerator(grad_buffer):
-                grad_buffer.add_(grad_partition)
+                grad_buffer.add_(grad_partition.to(self.gradient_accumulation_dtype).view(grad_buffer.shape))
             else:
                 # if dst is CPU, copy first to src device, do the addition
                 # there, then move back to dst. adding directly to cpu is very slow
                 cuda_grad_buffer = grad_buffer.to(grad_partition.device, non_blocking=True)
-                cuda_grad_buffer.add_(grad_partition)
+                cuda_grad_buffer.add_(grad_partition.to(self.gradient_accumulation_dtype).view(cuda_grad_buffer.shape))
                 grad_buffer.copy_(cuda_grad_buffer, non_blocking=True)
                 # ensure grad buffer is a CUDA buffer to speed up the next few
                 # operations and so it can be used asynchronously
