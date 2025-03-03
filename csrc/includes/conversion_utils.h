@@ -6,7 +6,6 @@ Copyright 2022 The Microsoft DeepSpeed Team
 
 #include "ds_kernel_utils.h"
 
-#include <cuda_fp16.h>
 #include <stdint.h>
 
 #ifdef BF16_AVAILABLE
