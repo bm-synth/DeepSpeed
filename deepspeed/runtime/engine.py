@@ -1215,11 +1215,7 @@ class DeepSpeedEngine(Module):
             self.optimizer = self._configure_bf16_optimizer(basic_optimizer)
         else:
             self.optimizer = basic_optimizer
-
-        log_dist("DeepSpeed Final Optimizer = {}".format(self.optimizer.__class__.__name__), ranks=[0])
-
-        self.compression_scheduler = self._configure_compression_scheduler()
-        self.quantizer = self._configure_quantization()
+        logger.info('DeepSpeed Final Optimizer = {}'.format(self.optimizer))
 
     def _configure_basic_optimizer(self, model_parameters):
         optimizer_parameters = self.optimizer_params()
