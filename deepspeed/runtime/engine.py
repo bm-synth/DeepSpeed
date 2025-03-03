@@ -63,10 +63,6 @@ from deepspeed.utils.timer import ThroughputTimer, SynchronizedWallClockTimer
 
 MEMORY_OPT_ALLREDUCE_SIZE = 500000000
 
-DeepSpeedOptimizerCallable = \
-    Callable[[Union[Iterable[Parameter], Dict[str, Iterable]]], Optimizer]
-DeepSpeedSchedulerCallable = Callable[[Optimizer], _LRScheduler]
-
 try:
     import apex
     from apex import amp
@@ -562,8 +558,26 @@ class DeepSpeedEngine(Module):
     def eigenvalue_max_iter(self):
         return self._config.eigenvalue_max_iter
 
-    def eigenvalue_tol(self):
-        return self._config.eigenvalue_tol
+    def get_summary_writer(self,
+                           name="DeepSpeedJobName",
+                           base=os.path.join(os.environ["HOME"],
+                                             "tensorboard")):
+        if self.tensorboard_output_path():
+            log_dir = self.tensorboard_output_path()
+        else:
+            if self.tensorboard_job_name():
+                name = self.tensorboard_job_name()
+
+            # Infrastructure-specific job-id
+            if 'DLWS_JOB_ID' in os.environ:
+                infra_job_id = os.environ['DLWS_JOB_ID']
+            elif 'DLTS_JOB_ID' in os.environ:
+                infra_job_id = os.environ['DLTS_JOB_ID']
+            else:
+                infra_job_id = 'unknown-job-id'
+
+            summary_writer_dir_name = os.path.join(infra_job_id, "logs")
+            log_dir = os.path.join(base, summary_writer_dir_name, name)
 
     def eigenvalue_stability(self):
         return self._config.eigenvalue_stability
