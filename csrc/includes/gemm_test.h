@@ -1,17 +1,8 @@
-// Copyright (c) Microsoft Corporation.
-// SPDX-License-Identifier: Apache-2.0
-
-// DeepSpeed Team
 
 #pragma once
 
 #include <cuda_fp16.h>
-#ifndef __HIP_PLATFORM_AMD__
 #include <cuda_profiler_api.h>
-#endif
-#ifdef __HIP_PLATFORM_AMD__
-#include <rocblas/rocblas.h>
-#endif
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -67,13 +58,7 @@ public:
                            B,
                            A,
                            C,
-// TODO HIP: Remove backward compatibility for torch<=2.0 in future
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-                           static_cast<rocblas_gemm_algo>(algo));
-#else
                            static_cast<cublasGemmAlgo_t>(algo));
-#endif
         });
 
         int algo_bw1 = Run(loops, [=](int algo) {
@@ -88,12 +73,7 @@ public:
                            A,
                            C,
                            B,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-                           static_cast<rocblas_gemm_algo>(algo));
-#else
                            static_cast<cublasGemmAlgo_t>(algo));
-#endif
         });
 
         int algo_bw2 = Run(loops, [=](int algo) {
@@ -108,12 +88,7 @@ public:
                            B,
                            C,
                            A,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-                           static_cast<rocblas_gemm_algo>(algo));
-#else
                            static_cast<cublasGemmAlgo_t>(algo));
-#endif
         });
 
         return std::array<int, 3>({algo_fw, algo_bw1, algo_bw2});
@@ -125,15 +100,8 @@ public:
         float fast_latency = (std::numeric_limits<float>::max)();
         int fast_algo = 0;
 
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-        for (int algo = (int)rocblas_gemm_algo_standard; algo <= (int)rocblas_gemm_algo_standard;
-#elif defined(__HIP_PLATFORM_AMD__)
-        for (int algo = (int)HIPBLAS_GEMM_DEFAULT; algo <= (int)HIPBLAS_GEMM_DEFAULT;
-#else
         for (int algo = (int)CUBLAS_GEMM_DEFAULT_TENSOR_OP;
              algo <= (int)CUBLAS_GEMM_ALGO15_TENSOR_OP;
-#endif
              algo++) {
             int warm_up = 5;
             for (int i = 0; i < warm_up; ++i) f(algo);
@@ -218,12 +186,7 @@ public:
                                         stride_b,
                                         stride_c,
                                         bsz,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-                                        static_cast<rocblas_gemm_algo>(algo));
-#else
                                         static_cast<cublasGemmAlgo_t>(algo));
-#endif
         });
 
         int algo_bw1 = Run(loops, [=](int algo) {
@@ -253,12 +216,7 @@ public:
                                         stride_b,
                                         stride_c,
                                         bsz,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-                                        static_cast<rocblas_gemm_algo>(algo));
-#else
                                         static_cast<cublasGemmAlgo_t>(algo));
-#endif
         });
 
         int algo_bw2 = Run(loops, [=](int algo) {
@@ -285,12 +243,7 @@ public:
                                         stride_b,
                                         stride_c,
                                         bsz,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-                                        static_cast<rocblas_gemm_algo>(algo));
-#else
                                         static_cast<cublasGemmAlgo_t>(algo));
-#endif
         });
 
         return std::array<int, 3>({algo_fw, algo_bw1, algo_bw2});
@@ -302,18 +255,8 @@ public:
         float fast_latency = (std::numeric_limits<float>::max)();
         int fast_algo = 0;
 
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
-        for (int algo = (int)rocblas_gemm_algo_standard; algo <= (int)rocblas_gemm_algo_standard;
-#else
-#ifdef __HIP_PLATFORM_AMD__
-        for (int algo = (int)CUBLAS_GEMM_DEFAULT_TENSOR_OP;
-             algo <= (int)CUBLAS_GEMM_DEFAULT_TENSOR_OP;
-#else
         for (int algo = (int)CUBLAS_GEMM_DEFAULT_TENSOR_OP;
              algo <= (int)CUBLAS_GEMM_ALGO15_TENSOR_OP;
-#endif
-#endif
              algo++) {
             int warm_up = 5;
             for (int i = 0; i < warm_up; ++i) f(algo);
