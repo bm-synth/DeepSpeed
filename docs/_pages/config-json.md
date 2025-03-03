@@ -6,27 +6,27 @@ toc_label: "Contents"
 
 ### Batch Size Related Parameters
 
-**Note:** <i>**train_batch_size**</i> must be equal to  <i>**train_micro_batch_size_per_gpu**</i> * <i>**gradient_accumulation_steps**</i> * number of GPUs. For simplicity, you can choose to only specify two of the three parameters, the last one will be inferred automatically by DeepSpeed.
+**Note:** configuring <i>**train_batch_size**</i> is required.
 {: .notice--warning}
 
 <i>**train_batch_size**</i>: [integer]
 
 | Value                                                                                                                                                                                                                                                                                                                                                                             | Example |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| The effective training batch size. This is the amount of data samples that leads to one step of model update. ***train\_batch\_size*** is aggregated by the batch size that a single GPU processes in one forward/backward pass (a.k.a., ***train\_step\_batch\_size***),  the gradient accumulation steps (a.k.a., ***gradient\_accumulation\_steps***), and the number of GPUs. | `32`    |
+| The effective training batch size. This is the amount of data samples that leads to one step of model update. <i>**train_batch_size**</i> is aggregated by the batch size that a single GPU processes in one forward/backward pass (a.k.a., <i>**train_step_batch_size**</i>),  the gradient accumulation steps (a.k.a., <i>**gradient_accumulation_steps**</i>), and the number of GPUs. | `32`    |
 
 
 <i>**train_micro_batch_size_per_gpu**</i>: [integer]
 
 | Description                                                                                                                                                                                                                                                                                                                    | Default                        |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| Batch size to be processed by one GPU in one step (without gradient accumulation). When specified, ***gradient\_accumulation\_steps*** is automatically calculated using ***train\_batch\_size*** and number of GPUs. Should not be concurrently specified with ***gradient\_accumulation\_steps*** in the configuration JSON. | ***train\_batch\_size*** value |
+| Batch size to be processed by one GPU in one step (without gradient accumulation). When specified, <i>**gradient_accumulation_steps**</i> is automatically calculated using <i>**train_batch_size**</i> and number of GPUs. Should not be concurrently specified with <i>**gradient_accumulation_steps**</i> in the configuration JSON. | <i>**train_batch_size**</i> value |
 
 <i>**gradient_accumulation_steps**</i>: [integer]
 
 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Default |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| Number of training steps to accumulate gradients before averaging and applying them. This feature is sometimes useful to improve scalability since it results in less frequent communication of gradients between steps. Another impact of this feature is the ability to train with larger batch sizes per GPU. When specified, ***train\_step\_batch\_size*** is automatically calculated using ***train\_batch\_size*** and number of GPUs. Should not be concurrently specified with ***train\_step\_batch\_size*** in the configuration JSON. | `1`     |
+| Number of training steps to accumulate gradients before averaging and applying them. This feature is sometimes useful to improve scalability since it results in less frequent communication of gradients between steps. Another impact of this feature is the ability to train with larger batch sizes per GPU. When specified, <i>**train_step_batch_size**</i> is automatically calculated using <i>**train_batch_size**</i> and number of GPUs. Should not be concurrently specified with <i>**train_step_batch_size**</i> in the configuration JSON. | `1`     |
 
 
 
@@ -62,7 +62,7 @@ The Adam optimizer also supports the following two params keys/values in additio
 | torch\_adam   | Use torch's implementation of adam instead of our fused adam implementation | false   |
 | adam\_w\_mode | Apply L2 regularization (also known as AdamW)                               | true    |
 
-  Another example of ***optimizer*** with 1-bit Adam
+Another example of <i>**optimizer**</i> with 1-bit Adam specific parameters is as follows.
 
 ```json
 "optimizer": {
@@ -92,6 +92,7 @@ The 1-bit Adam optimizer supports the following three params keys/values in addi
 
 ### Scheduler Parameters
 
+
 DeepSpeed calls the `step()` method of the scheduler at every training step when `model_engine.step()` is executed.
 
 ***scheduler***: [dictionary]
@@ -116,25 +117,25 @@ Example of <i>**scheduler**</i>
 
 ### Communication options
 
-<i>**communication_data_type**</i>: [string]
+<i>**fp32_allreduce**</i>: [boolean]
 
 | Description                                                    | Default |
 | -------------------------------------------------------------- | ------- |
 | During gradient averaging perform allreduce with 32 bit values | `false` |
 
-***prescale\_gradients***: [boolean]
+<i>**prescale_gradients**</i>: [boolean]
 
 | Description                            | Default |
 | -------------------------------------- | ------- |
 | Scale gradients before doing allreduce | `false` |
 
-***gradient_predivide_factor***: [float]
+<i>**gradient_predivide_factor**</i>: [float]
 
 | Description                                                                                                                                       | Default |
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | Before gradient averaging predivide gradients by a specified factor, can sometimes help with fp16 stability when scaling to large numbers of GPUs | `1.0`   |
 
-***sparse\_gradients***: [boolean]
+<i>**sparse_gradients**</i>: [boolean]
 
 | Description                                                                                                              | Default |
 | ------------------------------------------------------------------------------------------------------------------------ | ------- |
@@ -145,7 +146,7 @@ Example of <i>**scheduler**</i>
 **Note:** this mode cannot be combined with the `amp` mode described below.
 {: .notice--warning}
 
-***fp16***: [dictionary]
+<i>**fp16**</i>: [dictionary]
 
 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Default |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -165,52 +166,46 @@ Example of <i>**scheduler**</i>
 
 <i>**fp16:enabled**</i>: [boolean]
 
-| Description                                                                                 | Default |
-| ------------------------------------------------------------------------------------------- | ------- |
-| <i>**enabled**</i> is a **fp16** parameter indicating whether or not FP16 training enabled. | `false` |
-
-<i>**fp16:auto_cast**</i>: [boolean]
-
 | Description                                                                            | Default |
 | -------------------------------------------------------------------------------------- | ------- |
-| ***enabled*** is a **fp16** parameter indicating whether or not FP16 training enabled. | `false` |
+| <i>**enabled**</i> is a **fp16** parameter indicating whether or not FP16 training enabled. | `false` |
 
 <i>**fp16:loss_scale**</i>: [float]
 
 | Description                                                                                                                                                                                                                  | Default |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| ***loss\_scale*** is a ***fp16*** parameter representing the loss scaling value for FP16 training. The default value of 0.0 results in dynamic loss scaling, otherwise the value will be used for static fixed loss scaling. | `0.0`   |
+| <i>**loss_scale**</i> is a <i>**fp16**</i> parameter representing the loss scaling value for FP16 training. The default value of 0.0 results in dynamic loss scaling, otherwise the value will be used for static fixed loss scaling. | `0.0`   |
 
 <i>**fp16:initial_scale_power**</i>: [integer]
 
-| Description                                                                                                                                                                                       | Default |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| ***initial\_scale\_power*** is a **fp16** parameter representing the power of the initial dynamic loss scale value. The actual loss scale is computed as 2<sup>***initial\_scale\_power***</sup>. | `32`    |
+| Description                                                                                                                                                                                                   | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| <i>**initial_scale_power**</i> is a **fp16** parameter representing the power of the initial dynamic loss scale value. The actual loss scale is computed as 2<sup><i>**initial_scale_power**</i></sup>. | `32`    |
 
 <i>**fp16:loss_scale_window**</i>: [integer]
 
 | Description                                                                                                                       | Default |
 | --------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| ***loss\_scale\_window*** is a **fp16** parameter representing the window over which to raise/lower the dynamic loss scale value. | `1000`  |
+| <i>**loss_scale_window**</i> is a **fp16** parameter representing the window over which to raise/lower the dynamic loss scale value. | `1000`  |
 
 <i>**fp16:hysteresis**</i>: [integer]
 
 | Description                                                                                    | Default |
 | ---------------------------------------------------------------------------------------------- | ------- |
-| ***hysteresis*** is a **fp16** parameter representing the delay shift in dynamic loss scaling. | `2`     |
+| <i>**hysteresis**</i> is a **fp16** parameter representing the delay shift in dynamic loss scaling. | `2`     |
 
-<i>**fp16:consecutive_hysteresis**</i>: [boolean]
+<i>**fp16:min_loss_scale**</i>: [integer]
 
 | Description                                                                                        | Default |
 | -------------------------------------------------------------------------------------------------- | ------- |
-| ***min\_loss\_scale*** is  a **fp16** parameter representing the minimum dynamic loss scale value. | `1000`  |
+| <i>**min_loss_scale**</i> is  a **fp16** parameter representing the minimum dynamic loss scale value. | `1000`  |
 
 ### Automatic mixed precision (AMP) training options
 
 **Note:** this mode cannot be combined with the `fp16` mode described above. In addition this mode is not currently compatible with ZeRO.
 {: .notice--warning}
 
-***amp***: [dictionary]
+<i>**amp**</i>: [dictionary]
 
 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Default |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -225,11 +220,11 @@ Example of <i>**scheduler**</i>
 }
 ```
 
-***amp:enabled***: [boolean]
+<i>**amp:enabled**</i>: [boolean]
 
 | Description                                                                              | Default |
 | ---------------------------------------------------------------------------------------- | ------- |
-| ***enabled*** is an **amp** parameter indicating whether or not AMP training is enabled. | `false` |
+| <i>**enabled**</i> is an **amp** parameter indicating whether or not AMP training is enabled. | `false` |
 
 ***amp params***: [various]
 
@@ -296,13 +291,13 @@ Enabling and configuring ZeRO memory optimizations
 | ------------------------------------------------------------------------------------------------------------ | ------- |
 | Number of elements allgathered at a time. Limits the memory required for the allgather for large model sizes | `5e8`   |
 
-***overlap_comm***: [boolean]
+<i>**overlap_comm**</i>: [boolean]
 
 | Description                                                                  | Default |
 | ---------------------------------------------------------------------------- | ------- |
 | Attempts to overlap the reduction of the gradients with backward computation | `false` |
 
-***reduce_scatter***: [boolean]
+<i>**reduce_scatter**</i>: [boolean]
 
 | Description                                                             | Default |
 | ----------------------------------------------------------------------- | ------- |
@@ -314,7 +309,7 @@ Enabling and configuring ZeRO memory optimizations
 | ------------------------------------------------------------------------------------------------------------------- | ------- |
 | Number of elements reduced/allreduced at a time. Limits the memory required for the allgather for large model sizes | `5e8`   |
 
-***reduce_bucket_size***: [integer]
+<i>**contiguous_gradients**</i>: [boolean]
 
 | Description                                                                                                                                                     | Default |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -389,173 +384,6 @@ Enabling and configuring ZeRO memory optimizations
 | -------------------------------------------------------------------- | ------- |
 | Print out state information of DeepSpeed object after initialization | `false` |
 
-
-### Autotuning
-
-```json
-{
-  "autotuning": {
-    "enabled": false,
-    "results_dir": "autotuning_results",
-    "exps_dir": "autotuning_exps",
-    "overwrite": false,
-    "metric": "throughput",
-    "start_profile_step": 3,
-    "end_profile_step": 5,
-    "fast": true,
-    "max_train_batch_size": null,
-    "mp_size": 1,
-    "num_tuning_micro_batch_sizes": 3,
-    "tuner_type": "model_based",
-    "tuner_early_stopping": 5,
-    "tuner_num_trials": 50,
-    "arg_mappings": null
-  }
-}
-```
-<i>**enabled**</i>: [boolean]
-
-| Description            | Default |
-| ---------------------- | ------- |
-| Enables the autotuner. | `false` |
-
-
-<i>**results_dir**</i>: [string]
-
-| Description                                                                                                                           | Default |
-| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| Path to the autotuning experiment results directory.  The default appears in the working directory from which Deepspeed was launched. | "autotuning_results"  |
-
-<i>**exps_dir**</i>: [string]
-
-| Description                                                                                                                              | Default |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| Path to the auotuning experiment descriptions directory. The default appears in the working directory from which Deepspeed was launched. | "autotuning_exps"  |
-
-<i>**overwrite**</i>: [boolean]
-
-| Description                                                                                                               | Default |
-|---------------------------------------------------------------------------------------------------------------------------| ------- |
-| Whether to run autotuning experiments whose results already exist. Setting it to true would overwrite the existing result. | `false` |
-
-
-<i>**metric**</i>: [string]
-
-| Description                                                                                                                                                                                                                                                            | Default      |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| The performance metric to use for ranking autotuning experiments. `latency`, `throughput`, and `FLOPS` are currently supported, referring to training step latency, training samples per second, and floating-point operations per second achieved per GPU respectively. | `throughput` |
-
-<i>**start_profile_step**</i>: [integer]
-
-| Description                                                                                                                                         | Default |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| The global training step at which to start profiling in an autotuning experiment. Note that warm-up is needed for accurate performance measurement. | `3`     |
-
-<i>**end_profile_step**</i>: [integer]
-
-| Description                                                                                                               | Default |
-| ------------------------------------------------------------------------------------------------------------------------- | ------- |
-| The global training step at which to end profiling in an autotuning experiment. Must not be less than start_profile_step. | `5`     |
-
-
-<i>**fast**</i>: [boolean]
-
-| Description                                                                                  | Default |
-| -------------------------------------------------------------------------------------------- | ------- |
-| Enables fast-model autotuning where only Zero stages and micro-batch sizes per GPU are tuned. | `true` |
-
-<i>**max_train_batch_size**</i>: [int]
-
-| Description                                                                       | Default |
-| --------------------------------------------------------------------------------- | ------- |
-| The maximum train batch size (global effective batch size) for the model training. | `null`  |
-
-<i>**mp_size**</i>: [int]
-
-| Description              | Default |
-| ------------------------ | ------- |
-| Model parallelism degree. | `1`     |
-
-
-<i>**num_tuning_micro_batch_sizes**</i>: [integer]
-
-| Description                                     | Default |
-| ----------------------------------------------- | ------- |
-| The number of micro-batch sizes to explore. | `3`     |
-
-<i>**tuner_type**</i>: [string]
-
-| Description                                                                              | Default       |
-| ---------------------------------------------------------------------------------------- | ------------- |
-| The algorithm defines the order of autotuning space exploration within a ZeRO stage. | `model_based` |
-
-
-<i>**tuner_early_stopping**</i>: [integer]
-
-| Description                                                                                                                                                | Default |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| The number of experiments to run beyond the current best experiment. If no better experiment is found within that number, the Autotuner stops the exploration. | `5`     |
-
-<i>**tuner_num_trials**</i>: [integer]
-
-| Description                                                                           | Default |
-| ------------------------------------------------------------------------------------- | ------- |
-| The maximum number of experiments to explore in the tuning space within a ZeRO stage. | `50`    |
-
-
-### Flops Profiler
-```json
-{
-  "flops_profiler": {
-    "enabled": false,
-    "profile_step": 1,
-    "module_depth": -1,
-    "top_modules": 1,
-    "detailed": true,
-    "output_file": null,
-    }
-}
-```
-<i>**enabled**</i>: [boolean]
-
-| Description                                                              | Default |
-| ------------------------------------------------------------------------ | ------- |
-| Enables the flops profiler. This would also enables wall_clock_breakdown | `false` |
-
-<i>**profile_step**</i>: [integer]
-
-| Description                                                                                                     | Default |
-| --------------------------------------------------------------------------------------------------------------- | ------- |
-| The global training step at which to profile. Note that warm up steps are needed for accurate time measurement. | `1`     |
-
-<i>**module_depth**</i>: [integer]
-
-| Description                                                                                                                                                                           | Default |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| The depth of the model at which to print the aggregated module information. When set to `-1`, it prints information from the top module to the innermost modules (the maximum depth). | `-1`    |
-
-<i>**top_modules**</i>: [integer]
-
-| Description                                                                  | Default |
-| ---------------------------------------------------------------------------- | ------- |
-| Limits the aggregated profile output to the number of top modules specified. | `1`     |
-
-<i>**detailed**</i>: [boolean]
-
-| Description                                  | Default |
-| -------------------------------------------- | ------- |
-| Whether to print the detailed model profile. | `true`  |
-
-<i>**output_file**</i>: [string]
-
-| Description                                                       | Default |
-| ----------------------------------------------------------------- | ------- |
-| Path to the output file. If None, the profiler prints to stdout.. | `null`  |
-
-| Description                                                          | Default |
-| -------------------------------------------------------------------- | ------- |
-| Print out state information of DeepSpeed object after initialization | `false` |
-
 ### Flops Profiler
 ```json
 {
@@ -568,31 +396,31 @@ Enabling and configuring ZeRO memory optimizations
     }
 }
 ```
-***enabled***: [boolean]
+<i>**enabled**</i>: [boolean]
 
 | Description                 | Default |
 | --------------------------- | ------- |
 | Enables the flops profiler. | `false` |
 
-***profile\_step***: [integer]
+<i>**profile_step**</i>: [integer]
 
 | Description                                                                                                     | Default |
 | --------------------------------------------------------------------------------------------------------------- | ------- |
 | The global training step at which to profile. Note that warm up steps are needed for accurate time measurement. | `1`     |
 
-***module\_depth***: [integer]
+<i>**module_depth**</i>: [integer]
 
 | Description                                                                                                                                                            | Default |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | The depth of the model at which to print the aggregated module information. When set to `-1`, it prints information on the innermost modules (with the maximum depth). | `-1`    |
 
-***top\_modules***: [integer]
+<i>**top_modules**</i>: [integer]
 
 | Description                                                                  | Default |
 | ---------------------------------------------------------------------------- | ------- |
 | Limits the aggregated profile output to the number of top modules specified. | `3`     |
 
-***detailed***: [boolean]
+<i>**detailed**</i>: [boolean]
 
 | Description                                  | Default |
 | -------------------------------------------- | ------- |
