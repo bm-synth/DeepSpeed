@@ -14,10 +14,8 @@ import psutil
 import gc
 from math import sqrt
 
-from numpy import prod
-
 import torch
-from torch.nn import functional as F
+from deepspeed import comm as dist
 try:
     from torch._six import inf
 except ModuleNotFoundError:
@@ -424,11 +422,9 @@ def get_flattened_grad_norm(parameters, norm_type=2, mpu=None, grad_norm_mask=No
                 # # mask_tensor_ = torch.zeros_like(p, device=p.device, dtype=bool)
                 # # for mask_idx in grad_norm_mask[idx]:
                 # #   mask_tensor_[mask_idx[0]:mask_idx[1]] = True
-                cum_sum_pairs = torch.tensor([1, -1], device=get_accelerator().current_device_name(),
+                cum_sum_pairs = torch.tensor([1, -1], device=get_accelerator().current_device(),
                                              dtype=p.dtype).repeat(grad_norm_mask[idx].shape[0], 1)
-                mask_tensor = torch.zeros(p.shape[0] + 1,
-                                          device=get_accelerator().current_device_name(),
-                                          dtype=p.dtype)
+                mask_tensor = torch.zeros(p.shape[0] + 1, device=get_accelerator().current_device(), dtype=p.dtype)
                 mask_tensor = mask_tensor.scatter_(0, grad_norm_mask[idx].view(-1),
                                                    cum_sum_pairs.view(-1)).cumsum(0).bool()[:-1]
 
@@ -821,25 +817,6 @@ def get_only_unique_item(items):
     unique_item, = item_set
 
     return unique_item
-
-
-def clip_gradients(parameters, max_norm=1.0, global_grad_norm=None, mpu=None, eps=1e-6):
-    """Clip the gradient of a list of parameters.
-    Args:
-        parameters: List of parameters whose .grad will be clipped.
-        global_grad_norm (float, optional): Precomputed gradient norm. Defaults to None.
-        mpu (optional): model parallelism unit. Defaults to None.
-        eps (float, optional): epsilon value added to grad norm. Defaults to 1e-6
-    Returns:
-        float: the global gradient norm
-    """
-    if global_grad_norm is None:
-        global_grad_norm = get_grad_norm(parameters, mpu=mpu)
-    clip_coef = max_norm / (global_grad_norm + eps)
-    if clip_coef < 1:
-        for p in parameters:
-            p.grad.detach().mul_(clip_coef)
-    return global_grad_norm
 
 
 def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None, use_graph=False, moe_ep_group=None):
