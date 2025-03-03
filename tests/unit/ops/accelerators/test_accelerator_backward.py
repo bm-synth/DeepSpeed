@@ -15,10 +15,7 @@ from deepspeed import DeepSpeedTransformerLayer, DeepSpeedTransformerConfig
 from deepspeed.accelerator import get_accelerator
 from unit.modeling import BertConfig, BertLayerNorm, BertEncoder as BertEncoderPostln
 from unit.modelingpreln import BertEncoder as BertEncoderPreln
-from unit.common import DistributedTest, is_rocm_pytorch
-from deepspeed.ops.op_builder import TransformerBuilder
-
-import sys
+from unit.common import DistributedTest
 
 #if not deepspeed.ops.__installed_ops__['transformer']:
 #pytest.skip(
@@ -265,17 +262,68 @@ def run_backward(ds_config, seq_len, atol=1e-2, verbose=False):
                          ]) # yapf: disable
 class TestCUDABackward(DistributedTest):
     world_size = 1
-    if is_rocm_pytorch():
-        #This is to flush denorms in forward pass. Please refer to https://github.com/pytorch/pytorch/blob/main/docs/source/notes/numerical_accuracy.rst#reduced-precision-fp16-and-bf16-gemms-and-convolutions-on-amd-instinct-mi200-devices
-        os.environ['ROCBLAS_INTERNAL_FP16_ALT_IMPL'] = '1'
 
-    @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[TransformerBuilder.NAME],
-                        reason="TransformerBuilder has not been implemented on this system.")
-    def test_backward(self, is_preln, use_fp16, batch_size, hidden_size, seq_len, heads, num_layers, atol):
-        # Only run fp16 test cases on devices with FP16 capability.
-        if not get_accelerator().is_fp16_supported() and (use_fp16 is True or is_preln is False):
+    def test_backward(self,
+                      batch_size,
+                      hidden_size,
+                      seq_len,
+                      heads,
+                      num_layers,
+                      is_preln,
+                      use_fp16,
+                      atol):
+        # Only run fp16 test cases on devices with 7+ capability.
+        major, _ = torch.cuda.get_device_capability()
+        if major < 7 and (use_fp16 is True or is_preln is False):
             return
 
-    run_backward(ds_config, seq_len, atol=atol, verbose=True)
+        ds_config = DeepSpeedTransformerConfig()
+        ds_config.layer_id = None
+        ds_config.batch_size = batch_size
+        ds_config.hidden_size = hidden_size
+        ds_config.intermediate_size = hidden_size
+        ds_config.heads = heads
+        ds_config.attn_dropout_ratio = 0.0
+        ds_config.hidden_dropout_ratio = 0.0
+        ds_config.num_hidden_layers = num_layers
+        ds_config.pre_layer_norm = is_preln
+        ds_config.initializer_range = 0.02
+        ds_config.fp16 = use_fp16
 
         run_backward(ds_config, seq_len, atol=atol, verbose=True)
+
+    #                         [
+    #                             (3,1024,128,16,24,True,False, 0.07),
+    #                             (3,1024,128,16,24,True,True, 0.05),
+    #                             (3,1024,128,16,24,False,False, 0.1),
+    #                             (3,1024,128,16,24,False,True, 0.2),
+    #                         ]) # yapf: disable
+    #def test_backward_stochastic(batch_size,
+    #                             hidden_size,
+    #                             seq_len,
+    #                             heads,
+    #                             num_layers,
+    #                             is_preln,
+    #                             use_fp16,
+    #                             atol):
+    #    # Only run fp16 test cases on devices with 7+ capability.
+    #    major, _ = torch.cuda.get_device_capability()
+    #    if major < 7 and (use_fp16 is True or is_preln is False):
+    #        return
+    #
+    #    ds_config = DeepSpeedTransformerConfig()
+    #    ds_config.layer_id = None
+    #    ds_config.batch_size = batch_size
+    #    ds_config.hidden_size = hidden_size
+    #    ds_config.intermediate_size = 4 * hidden_size
+    #    ds_config.max_seq_length = seq_len
+    #    ds_config.heads = heads
+    #    ds_config.attn_dropout_ratio = 0.0
+    #    ds_config.hidden_dropout_ratio = 0.0
+    #    ds_config.num_hidden_layers = num_layers
+    #    ds_config.pre_layer_norm = is_preln
+    #    ds_config.initializer_range = 0.02
+    #    ds_config.fp16 = use_fp16
+    #    ds_config.stochastic_mode = True
+    #
+    #    run_backward(ds_config, atol=atol)

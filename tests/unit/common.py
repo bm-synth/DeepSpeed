@@ -64,6 +64,7 @@ class DistributedTest(ABC):
     backend = "nccl"
     init_distributed = True
     set_dist_env = True
+    requires_cuda_env = True
 
     # Temporary directory that is shared among test methods in a class
     @pytest.fixture(autouse=True, scope="class")
@@ -82,6 +83,12 @@ class DistributedTest(ABC):
                 break
         else:
             world_size = self.world_size
+
+    def __call__(self, request=None):
+        self._fixture_kwargs = self._get_fixture_kwargs(request, self.run)
+        world_size = self.world_size
+        if self.requires_cuda_env and not torch.cuda.is_available():
+            pytest.skip("only supported in CUDA environments.")
 
         if isinstance(world_size, int):
             world_size = [world_size]
@@ -159,7 +166,8 @@ class DistributedTest(ABC):
         # turn off NCCL logging if set
         os.environ.pop('NCCL_DEBUG', None)
 
-        set_cuda_visibile()
+        if torch.cuda.is_available():
+            set_cuda_visibile()
 
         if self.init_distributed:
             deepspeed.init_distributed(dist_backend=self.backend)
@@ -282,6 +290,89 @@ def distributed_test(world_size=2, backend='nccl'):
     return dist_wrap
 
 
-def get_test_path(src):
+class DistributedTest(DistributedExec):
+    """
+    Implementation for running pytest with distributed execution.
+
+    There are 2 parameters that can be modified:
+        - world_size: Union[int,List[int]] = 2 -- the number of processes to launch
+        - backend: Literal['nccl','mpi','gloo'] = 'nccl' -- which backend to use
+
+    Features:
+        - able to call pytest.skip() inside tests
+        - works with pytest fixtures, parametrize, mark, etc.
+        - can contain multiple tests (each of which can be parametrized separately)
+        - class methods can be fixtures (usable by tests in this class only)
+        - world_size can be changed for individual tests using @pytest.mark.world_size(world_size)
+        - class_tmpdir is a fixture that can be used to get a tmpdir shared among
+          all tests (including DistributedFixture)
+
+    Usage:
+        - class name must start with "Test"
+        - must implement one or more test*(self, ...) methods
+
+    Example:
+        @pytest.fixture(params=[10,20])
+        def val1(request):
+            return request.param
+
+        @pytest.mark.fast
+        @pytest.mark.parametrize("val2", [30,40])
+        class TestExample(DistributedTest):
+            world_size = 2
+
+            @pytest.fixture(params=[50,60])
+            def val3(self, request):
+                return request.param
+
+            def test_1(self, val1, val2, str1="hello world"):
+                assert int(os.environ["WORLD_SIZE"]) == self.world_size
+                assert all(val1, val2, str1)
+
+            @pytest.mark.world_size(1)
+            @pytest.mark.parametrize("val4", [70,80])
+            def test_2(self, val1, val2, val3, val4):
+                assert int(os.environ["WORLD_SIZE"]) == 1
+                assert all(val1, val2, val3, val4)
+    """
+    is_dist_test = True
+
+    # Temporary directory that is shared among test methods in a class
+    @pytest.fixture(autouse=True, scope="class")
+    def class_tmpdir(self, tmpdir_factory):
+        fn = tmpdir_factory.mktemp(self.__class__.__name__)
+        return fn
+
+    def run(self, **fixture_kwargs):
+        self._current_test(**fixture_kwargs)
+
+    def __call__(self, request):
+        self._current_test = self._get_current_test_func(request)
+        self._fixture_kwargs = self._get_fixture_kwargs(request, self._current_test)
+
+        if self.requires_cuda_env and not torch.cuda.is_available():
+            pytest.skip("only supported in CUDA environments.")
+
+        # Catch world_size override pytest mark
+        for mark in getattr(request.function, "pytestmark", []):
+            if mark.name == "world_size":
+                world_size = mark.args[0]
+                break
+        else:
+            world_size = self.world_size
+
+        if isinstance(world_size, int):
+            world_size = [world_size]
+        for procs in world_size:
+            self._launch_procs(procs)
+            time.sleep(0.5)
+
+    def _get_current_test_func(self, request):
+        # DistributedTest subclasses may have multiple test methods
+        func_name = request.function.__name__
+        return getattr(self, func_name)
+
+
+def get_test_path(filename):
     curr_path = Path(__file__).parent
     return str(curr_path.joinpath(src))

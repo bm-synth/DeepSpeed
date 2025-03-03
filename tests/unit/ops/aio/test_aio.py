@@ -86,11 +86,6 @@ def _validate_handle_state(handle, single_submit, overlap_events):
 @pytest.mark.parametrize("overlap_events", [True, False])
 class TestRead(DistributedTest):
     world_size = 1
-    reuse_dist_env = True
-    requires_cuda_env = False
-    if not get_accelerator().is_available():
-        init_distributed = False
-        set_dist_env = False
 
     @pytest.mark.parametrize("use_unpinned_tensor", [True, False])
     def test_parallel_read(self, tmpdir, use_cuda_pinned_tensor, single_submit, overlap_events, use_unpinned_tensor):
@@ -155,15 +150,6 @@ class TestRead(DistributedTest):
 @pytest.mark.parametrize("overlap_events", [True, False])
 class TestWrite(DistributedTest):
     world_size = 1
-    reuse_dist_env = True
-    requires_cuda_env = False
-    if not get_accelerator().is_available():
-        init_distributed = False
-        set_dist_env = False
-
-    @pytest.mark.parametrize("use_unpinned_tensor", [True, False])
-    def test_parallel_write(self, tmpdir, use_cuda_pinned_tensor, single_submit, overlap_events, use_unpinned_tensor):
-        _skip_for_invalid_environment(use_cuda_pinned_tensor=use_cuda_pinned_tensor)
 
         ref_file, ref_buffer = _do_ref_write(tmpdir)
         h = AsyncIOBuilder().load().aio_handle(BLOCK_SIZE, QUEUE_DEPTH, single_submit, overlap_events, IO_PARALLEL)
@@ -226,14 +212,6 @@ class TestWrite(DistributedTest):
 @pytest.mark.parametrize("use_unpinned_tensor", [True, False])
 class TestAsyncQueue(DistributedTest):
     world_size = 1
-    requires_cuda_env = False
-    if not get_accelerator().is_available():
-        init_distributed = False
-        set_dist_env = False
-
-    @pytest.mark.parametrize("async_queue", [2, 3])
-    def test_read(self, tmpdir, async_queue, use_cuda_pinned_tensor, use_unpinned_tensor):
-        _skip_for_invalid_environment(use_cuda_pinned_tensor=use_cuda_pinned_tensor)
 
         ref_files = []
         for i in range(async_queue):

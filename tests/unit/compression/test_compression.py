@@ -13,8 +13,6 @@ from unit.modeling import BertConfig
 from unit.modelingpreln import BertEncoder as BertEncoderPreln
 from deepspeed.compression.basic_layer import LinearLayer_Compress, ColumnParallelLinear_Compress, RowParallelLinear_Compress
 from deepspeed.compression.helper import convert_conv1d_to_linear
-from deepspeed.accelerator import get_accelerator
-from deepspeed.utils.torch import required_torch_version
 from unit.common import DistributedTest
 
 pytestmark = pytest.mark.skipif(not required_torch_version(min_version=1.5),
@@ -97,7 +95,6 @@ def create_conv1d_model():
 
 
 class TestCompression(DistributedTest):
-
     def setup_method(self, method):
         reset_random()
 

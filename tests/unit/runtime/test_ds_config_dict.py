@@ -25,8 +25,8 @@ from deepspeed.runtime.config import DeepSpeedConfig, get_bfloat16_enabled
 class TestBasicConfig(DistributedTest):
     world_size = 1
 
-    def test_accelerator(self):
-        assert (get_accelerator().is_available())
+    def test_cuda(self):
+        assert (torch.cuda.is_available())
 
     def test_check_version(self):
         assert hasattr(deepspeed, "__git_hash__")

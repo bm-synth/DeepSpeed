@@ -568,8 +568,6 @@ class TestAmp(DistributedTest):
             model.step()
 
     def test_adam_O2_empty_grad(self):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
         config_dict = {
             "train_batch_size": 2,
             "steps_per_print": 1,

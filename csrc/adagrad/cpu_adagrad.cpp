@@ -11,17 +11,25 @@
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
+#if defined(__ENABLE_CUDA__)
+#include <cuda_runtime_api.h>
+#include "cublas_v2.h"
+#include "cuda.h"
+#include "curand.h"
+#include "custom_cuda_layers.h"
+#endif
 
 using namespace std::string_literals;
 static std::unordered_map<int, std::shared_ptr<void>> s_optimizers;
 
 // C++ interface
 
-template <typename ds_params_precision_t, typename ds_state_precision_t>
-void Adagrad_Optimizer::Step_1(ds_params_precision_t* _params,
-                               ds_params_precision_t* grads,
-                               ds_state_precision_t* _exp_avg_sq,
-                               size_t _param_size)
+void Adagrad_Optimizer::Step_1(float* _params,
+                               float* grads,
+                               float* _exp_avg_sq,
+                               size_t _param_size,
+                               ds_half_precision_t* dev_params,
+                               bool half_precision)
 {
     size_t rounded_size = 0;
 #if defined(__AVX512__) or defined(__AVX256__)
@@ -29,10 +37,19 @@ void Adagrad_Optimizer::Step_1(ds_params_precision_t* _params,
 #endif
     if (_param_size > rounded_size) {
         float step_size = -1 * _alpha;
+        ds_half_precision_t* grads_cast_h;
+        ds_half_precision_t* params_cast_h;
+        if (half_precision) {
+            grads_cast_h = reinterpret_cast<ds_half_precision_t*>(grads);
+            params_cast_h = reinterpret_cast<ds_half_precision_t*>(_params);
+        }
         for (size_t t = rounded_size; t < _param_size; t += TILE) {
             size_t copy_size = TILE;
             if ((t + TILE) > _param_size) copy_size = _param_size - t;
             size_t offset = copy_size + t;
+#if defined(__ENABLE_CUDA__)
+            if ((t / TILE) >= 2) { cudaStreamSynchronize(_streams[_buf_index]); }
+#endif
 #pragma omp parallel for
             for (size_t k = t; k < offset; k++) {
                 float grad = (float)grads[k];
@@ -47,20 +64,34 @@ void Adagrad_Optimizer::Step_1(ds_params_precision_t* _params,
                 grad += _eps;
                 grad = momentum / grad;
                 param = grad * step_size + param;
-                _params[k] = param;
+#if defined(__ENABLE_CUDA__)
+                if (dev_params) _doubled_buffer[_buf_index][k - t] = param;
+#endif
+                if (half_precision)
+                    params_cast_h[k] = (ds_half_precision_t)param;
+                else
+                    _params[k] = param;
                 // STORE UPDATE TERM TO GRAD'S MEMORY
                 grads[k] = grad * step_size;
                 _exp_avg_sq[k] = variance;
             }
+#if defined(__ENABLE_CUDA__)
+            if (dev_params) {
+                launch_param_update(
+                    _doubled_buffer[_buf_index], dev_params + t, (copy_size), _streams[_buf_index]);
+                _buf_index = !_buf_index;
+            }
+#endif
         }
     }
 }
 
-template <typename ds_params_precision_t, typename ds_state_precision_t>
-void Adagrad_Optimizer::Step_4(ds_params_precision_t* _params,
-                               ds_params_precision_t* grads,
-                               ds_state_precision_t* _exp_avg_sq,
-                               size_t _param_size)
+void Adagrad_Optimizer::Step_4(float* _params,
+                               float* grads,
+                               float* _exp_avg_sq,
+                               size_t _param_size,
+                               ds_half_precision_t* dev_params,
+                               bool half_precision)
 {
     size_t rounded_size = 0;
 #if defined(__AVX512__) or defined(__AVX256__)
@@ -104,11 +135,12 @@ int create_adagrad_optimizer(int optimizer_id,
     return 0;
 }
 
-template <typename ds_params_precision_t, typename ds_state_precision_t>
-void Adagrad_Optimizer::Step_8(ds_params_precision_t* _params,
-                               ds_params_precision_t* grads,
-                               ds_state_precision_t* _exp_avg_sq,
-                               size_t _param_size)
+void Adagrad_Optimizer::Step_8(float* _params,
+                               float* grads,
+                               float* _exp_avg_sq,
+                               size_t _param_size,
+                               ds_half_precision_t* dev_params,
+                               bool half_precision)
 {
     size_t rounded_size = 0;
 #if defined(__AVX512__) or defined(__AVX256__)
@@ -195,8 +227,48 @@ int ds_adagrad_step(int optimizer_id,
     opt->IncrementStep(step);
     opt->update_state(lr, epsilon, weight_decay);
 
-    invoke(opt, params_c, grads_c, exp_avg_sq_c, params_c.numel());
+#if defined(__ENABLE_CUDA__)
+    opt->SynchronizeStreams();
+#endif
+    return 0;
+}
 
+int ds_adagrad_step_plus_copy(int optimizer_id,
+                              size_t step,
+                              float lr,
+                              float epsilon,
+                              float weight_decay,
+                              torch::Tensor& params,
+                              torch::Tensor& grads,
+                              torch::Tensor& exp_avg_sq,
+                              torch::Tensor& gpu_params)
+{
+#if defined(__ENABLE_CUDA__)
+    auto params_c = params.contiguous();
+    auto gpu_params_c = gpu_params.contiguous();
+    auto exp_avg_sq_c = exp_avg_sq.contiguous();
+    auto grads_c = grads.contiguous();
+
+    float* params_ptr = (float*)params_c.data_ptr();
+    float* grads_ptr = (float*)grads_c.data_ptr();
+    ds_half_precision_t* gpu_params_ptr = (ds_half_precision_t*)gpu_params_c.data_ptr();
+    float* exp_avg_sq_ptr = (float*)exp_avg_sq_c.data_ptr();
+
+    std::shared_ptr<Adagrad_Optimizer> opt =
+        std::static_pointer_cast<Adagrad_Optimizer>(s_optimizers[optimizer_id]);
+    opt->IncrementStep(step);
+    opt->update_state(lr, epsilon, weight_decay);
+    opt->Step_8(params_ptr,
+                grads_ptr,
+                exp_avg_sq_ptr,
+                params_c.size(0),
+                gpu_params_ptr,
+                (params.options().dtype() == at::kHalf));
+
+    opt->SynchronizeStreams();
+#else
+    assert(false);
+#endif
     return 0;
 }
 
