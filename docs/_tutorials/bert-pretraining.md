@@ -310,7 +310,7 @@ Note:
 
 For more details about the transformer kernel, please see [DeepSpeed
 Transformer Kernel](/tutorials/transformer_kernel/) and [DeepSpeed Fast-Bert
-Training](https://www.deepspeed.ai/2020/05/27/fastest-bert-training.html).
+Training](https://www.deepspeed.ai/news/2020/05/27/fastest-bert-training.html).
 
 
 ### Start Training
