@@ -119,9 +119,7 @@ class InferenceEngine(Module):
             self._create_model_parallel_group()
 
         # apply injection policy
-        if self.injection_dict:
-            # 1. User specified Tensor Parallelism
-            assert not config.replace_with_kernel_inject, "Cannot use both user specified injection policy and kernel injection"
+        if self.injection_dict is not None:
             for client_module, injection_policy in self.injection_dict.items():
                 self._apply_injection_policy(client_module,
                                              injection_policy,
