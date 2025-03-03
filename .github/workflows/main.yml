@@ -16,7 +16,7 @@ on:
 
 jobs:
   # unit tests running on nvidia gpus
-  build:
+  nv-torch12-p40:
     runs-on: [self-hosted, nvidia, torch12]
 
     steps:
