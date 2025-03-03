@@ -1709,15 +1709,14 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             one_dim_param = param.contiguous().view(-1)
 
             # ds_numel is unpadded, so the last chunk of the secondary tensor might not be secondary_partition_size
-            sec_numel = max(0, min(param.ds_numel - secondary_start, secondary_partition_size))
+            sec_numel = param.ds_numel - secondary_start if secondary_end > param.ds_numel else secondary_partition_size
 
             # copy from full tensor to secondary tensor
             param.ds_secondary_tensor.narrow(0, 0,
                                              sec_numel).copy_(one_dim_param.narrow(0, secondary_start, sec_numel))
 
             # TODO: This is a temporary fix to avoid the issue that 2nd tensor all-gather happens before 2nd tensor partition is done
-            if not get_accelerator().resolves_data_dependency():
-                get_accelerator().current_stream().synchronize()
+            get_accelerator().current_stream().synchronize()
 
             print_rank_0(f"{param.ds_id} partitioned type {param.dtype} dev {param.device} shape {param.shape}",
                          force=False)
