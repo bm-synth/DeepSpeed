@@ -74,6 +74,17 @@ unnecessary memory overhead. CBO in DeepSpeed fuses smaller operands into approx
 pre-defined sized buffer large enough to achieve great performance without the
 unnecessary memory overhead.
 
+### Contiguous Memory Optimization (CMO)
+CMO reduces memory fragmentation during training, preventing out of memory errors
+due to lack of contiguous memory. Memory fragmentation is a result of interleaving between
+short lived and long lived memory objects. During the forward propagation activation
+checkpoints are long lived but the activations that recomputed are short lived. Similarly,
+during the backward computation, the activation gradients are short lived while the parameter
+gradients are long lived. CMO transfers activation checkpoints and parameter gradients
+to contiguous buffers preventing memory fragmentation.
+
+## Additional Memory and Bandwidth Optimizations
+
 ### Smart Gradient Accumulation
 Gradient accumulation allows running larger batch size with limited memory by breaking an
 effective batch into several sequential micro-batches, and averaging the parameter
