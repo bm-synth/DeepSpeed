@@ -5,6 +5,13 @@
 import os
 
 try:
+    # Importing logger currently requires that torch is installed, hence the try...except
+    # TODO: Remove logger dependency on torch.
+    from deepspeed.utils import logger as accel_logger
+except ImportError as e:
+    accel_logger = None
+
+try:
     from accelerator.abstract_accelerator import DeepSpeedAccelerator as dsa1
 except ImportError as e:
     dsa1 = None
@@ -104,14 +111,16 @@ def get_accelerator():
         # XPU_Accelerator is already imported in detection stage
         ds_accelerator = XPU_Accelerator()
     _validate_accelerator(ds_accelerator)
-    print(f"Setting ds_accelerator to {ds_accelerator._name} ({ds_set_method})")
+    if accel_logger is not None:
+        accel_logger.info(f"Setting ds_accelerator to {ds_accelerator._name} ({ds_set_method})")
     return ds_accelerator
 
 
 def set_accelerator(accel_obj):
     global ds_accelerator
     _validate_accelerator(accel_obj)
-    print(f"Setting ds_accelerator to {accel_obj._name} (model specified)")
+    if accel_logger is not None:
+        accel_logger.info(f"Setting ds_accelerator to {accel_obj._name} (model specified)")
     ds_accelerator = accel_obj
 
 
