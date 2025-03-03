@@ -64,14 +64,14 @@ Pipeline Parallelism
    pipeline
 
 Optimizers
-----------
+--------------------
 .. toctree::
    :maxdepth: 2
 
    optimizers
 
 Learning Rate Schedulers
-------------------------
+--------------------
 .. toctree::
    :maxdepth: 2
 
@@ -83,27 +83,6 @@ Flops Profiler
    :maxdepth: 2
 
    flops-profiler
-
-Autotuning
---------------------
-.. toctree::
-   :maxdepth: 2
-
-   autotuning
-
-Memory Usage
-------------------
-.. toctree::
-   :maxdepth: 2
-
-   memory
-
-Monitoring
-----------
-.. toctree::
-   :maxdepth: 2
-
-   monitor
 
 Indices and tables
 ------------------
