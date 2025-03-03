@@ -187,13 +187,19 @@ Example of <i>**scheduler**</i>
 | ----------------------------------------------------------------------------------------------------------------------------- | ------- |
 | During gradient averaging perform communication with selected data type. By default it will be determined by selected regime  |  None   |
 
-<i>**prescale_gradients**</i>: [boolean]
+***prescale\_gradients***: [boolean]
 
 | Description                            | Default |
 | -------------------------------------- | ------- |
 | Scale gradients before doing allreduce | `false` |
 
-<i>**gradient_predivide_factor**</i>: [float]
+***gradient_predivide_factor***: [float]
+
+| Description                  | Default |
+| ---------------------------- | ------- |
+| Before gradient averaging predivide gradients by a specified factor, can sometimes help with fp16 stability when scaling to large numbers of GPUs | `1.0`
+
+***sparse\_gradients***: [boolean]
 
 | Description                                                                                                                                       | Default |
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |

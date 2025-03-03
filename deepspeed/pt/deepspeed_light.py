@@ -112,7 +112,6 @@ class DeepSpeedLight(Module):
         self.global_steps = 0
         self.micro_steps = 0
         self.skipped_steps = 0
-        self.gradient_predivide_factor = 1.0
         self.gradient_average = True
         self.warn_unscaled_loss = True
 
@@ -291,6 +290,9 @@ class DeepSpeedLight(Module):
 
     def postscale_gradients(self):
         return not self._config.prescale_gradients
+
+    def gradient_predivide_factor(self):
+        return self._config.gradient_predivide_factor
 
     def steps_per_print(self):
         return self._config.steps_per_print
@@ -516,17 +518,44 @@ class DeepSpeedLight(Module):
         return optimizer
 
     def _configure_zero_optimizer(self, optimizer):
-        logging.info('Creating fp16 zero optimizer')
-        optimizer = FP16_DeepSpeedZeroOptimizer(
-            optimizer,
-            static_loss_scale=self.loss_scale(),
-            dynamic_loss_scale=self.dynamic_loss_scale(),
-            dynamic_loss_args=self.dynamic_loss_scale_args(),
-            dp_process_group=self.data_parallel_group,
-            clip_grad=self.gradient_clipping(),
-            all_gather_partitions=not self.disable_allgather(),
-            allgather_size=self.allgather_size(),
-            mpu=self.mpu)
+        zero_stage = self.zero_optimization_stage()
+        logging.info('Creating fp16 ZeRO stage {} optimizer'.format(zero_stage))
+
+        if zero_stage == ZERO_OPTIMIZATION_OPTIMIZER_STATES:
+            assert self.zero_reduce_scatter(), 'Stage 1 only supports reduce scatter mode'
+            logging.info('Creating fp16 ZeRO Optimizer Stage 1')
+            optimizer = FP16_DeepSpeedZeroOptimizer_Stage1(
+                optimizer,
+                static_loss_scale=self.loss_scale(),
+                dynamic_loss_scale=self.dynamic_loss_scale(),
+                dynamic_loss_args=self.dynamic_loss_scale_args(),
+                clip_grad=self.gradient_clipping(),
+                all_gather_partitions=self.zero_allgather_partitions(),
+                allgather_size=self.zero_allgather_bucket_size(),
+                max_elements_per_comm=self.zero_reduce_bucket_size(),
+                dp_process_group=self.data_parallel_group,
+                mpu=self.mpu)
+        elif zero_stage == ZERO_OPTIMIZATION_GRADIENTS:
+            assert self.gradient_accumulation_steps() == 1, "ZeRO stage 2 does not support gradient accumulation, if you need gradient accumulation please use stage 1"
+            optimizer = FP16_DeepSpeedZeroOptimizer(
+                optimizer,
+                timers=self.timers,
+                static_loss_scale=self.loss_scale(),
+                dynamic_loss_scale=self.dynamic_loss_scale(),
+                dynamic_loss_args=self.dynamic_loss_scale_args(),
+                clip_grad=self.gradient_clipping(),
+                contiguous_gradients=self.zero_contiguous_gradients(),
+                reduce_bucket_size=self.zero_reduce_bucket_size(),
+                allgather_bucket_size=self.zero_allgather_bucket_size(),
+                dp_process_group=self.data_parallel_group,
+                reduce_scatter=self.zero_reduce_scatter(),
+                overlap_comm=self.zero_overlap_comm(),
+                mpu=self.mpu,
+                postscale_gradients=self.postscale_gradients(),
+                gradient_predivide_factor=self.gradient_predivide_factor())
+        else:
+            raise NotImplementedError("ZeRO stage {} not implemented".format(zero_stage))
+        logging.info('Creating fp16 zero stage {} optimizer'.format(zero_stage))
 
         return optimizer
 
@@ -621,7 +650,16 @@ class DeepSpeedLight(Module):
 
     def allreduce_gradients(self, bucket_size=MEMORY_OPT_ALLREDUCE_SIZE):
         if self.is_gradient_accumulation_boundary():
-            self.buffered_allreduce_fallback(elements_per_buffer=bucket_size)
+            if self.zero_optimization_stage() == ZERO_OPTIMIZATION_OPTIMIZER_STATES:
+                assert self.zero_reduce_scatter()
+                self.optimizer.reduce_scatter_gradients(
+                    postscale_gradients=self.postscale_gradients(),
+                    gradient_predivide_factor=self.gradient_predivide_factor(),
+                    gradient_average=self.gradient_average)
+            elif self.zero_optimization_partition_gradients():
+                self.optimizer.overlapping_partition_gradients_reduce_epilogue()
+            else:
+                self.buffered_allreduce_fallback(elements_per_buffer=bucket_size)
 
     def backward(self, loss, allreduce_gradients=True):
         r"""Execute backward pass on the loss
@@ -824,14 +862,14 @@ class DeepSpeedLight(Module):
             tensor_to_allreduce = tensor.float()
 
         if self.postscale_gradients():
-            if self.gradient_predivide_factor != 1.0:
-                tensor_to_allreduce.mul_(1. / self.gradient_predivide_factor)
+            if self.gradient_predivide_factor() != 1.0:
+                tensor_to_allreduce.mul_(1. / self.gradient_predivide_factor())
 
             dist.all_reduce(tensor_to_allreduce, group=self.data_parallel_group)
 
             if self.gradient_average:
-                if self.gradient_predivide_factor != self.dp_world_size:
-                    tensor_to_allreduce.mul_(self.gradient_predivide_factor /
+                if self.gradient_predivide_factor() != self.dp_world_size:
+                    tensor_to_allreduce.mul_(self.gradient_predivide_factor() /
                                              self.dp_world_size)
         else:
             tensor_to_allreduce.div_(self.dp_world_size)
