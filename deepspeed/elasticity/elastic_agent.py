@@ -43,7 +43,10 @@ class DSElasticAgent(LocalElasticAgent):
         self.ds_env = env
 
     @staticmethod
-    def _set_master_addr_port(store: Store, master_addr: Optional[str], master_port: Optional[int]):
+    def _set_master_addr_port(store: Store,
+                              master_addr: Optional[str],
+                              master_port: Optional[int],
+                              local_addr: Optional[str] = None):
         if master_port is None:
             sock = get_free_port()
             with closing(sock):
