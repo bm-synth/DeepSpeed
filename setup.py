@@ -23,12 +23,14 @@ import warnings
 import cpufeature
 from setuptools import setup, find_packages
 
+torch_available = True
 try:
     import torch
     from torch.utils.cpp_extension import BuildExtension
 except ImportError:
-    raise ImportError('Unable to import torch, please visit https://pytorch.org/ '
-                      'to see how to properly install torch on your system.')
+    torch_available = False
+    print('[WARNING] Unable to import torch, pre-compiling ops will be disabled. ' \
+        'Please visit https://pytorch.org/ to see how to properly install torch on your system.')
 
 from op_builder import ALL_OPS, get_default_compute_capatabilities
 
@@ -70,7 +72,7 @@ extras_require = {
 }
 
 # If MPI is available add 1bit-adam requirements
-if torch.cuda.is_available():
+if torch_available and torch.cuda.is_available():
     if shutil.which('ompi_info') or shutil.which('mpiname'):
         onebit_adam_requires = fetch_requirements(
             'requirements/requirements-1bit-adam.txt')
@@ -125,12 +127,19 @@ if len(install_ops) == 0:
 print(f'BUILD_MASK={BUILD_MASK}, install_ops={install_ops}')
 
 cmdclass = {}
-cmdclass['build_ext'] = BuildExtension.with_options(use_ninja=False)
 
-TORCH_MAJOR = int(torch.__version__.split('.')[0])
-TORCH_MINOR = int(torch.__version__.split('.')[1])
+# For any pre-installed ops force disable ninja
+if torch_available:
+    cmdclass['build_ext'] = BuildExtension.with_options(use_ninja=False)
 
-if not torch.cuda.is_available():
+if torch_available:
+    TORCH_MAJOR = torch.__version__.split('.')[0]
+    TORCH_MINOR = torch.__version__.split('.')[1]
+else:
+    TORCH_MAJOR = "0"
+    TORCH_MINOR = "0"
+
+if torch_available and not torch.cuda.is_available():
     # Fix to allow docker builds, similar to https://github.com/NVIDIA/apex/issues/486
     print(
         "[WARNING] Torch did not find cuda available, if cross-compiling or running with cpu only "
@@ -164,6 +173,9 @@ ext_modules = []
 # Default to pre-install kernels to false so we rely on JIT
 BUILD_OP_DEFAULT = int(os.environ.get('DS_BUILD_OPS', 0))
 print(f"DS_BUILD_OPS={BUILD_OP_DEFAULT}")
+
+if BUILD_OP_DEFAULT:
+    assert torch_available, "Unable to pre-compile ops without torch installed. Please install torch before attempting to pre-compile ops."
 
 
 def command_exists(cmd):
@@ -206,8 +218,24 @@ if BUILD_MASK & DS_BUILD_SPARSE_ATTN:
         # remove from installed ops list
         install_ops[SPARSE_ATTN] = False
 
-# Add development requirements
-install_requires += dev_requires
+install_ops = dict.fromkeys(ALL_OPS.keys(), False)
+for op_name, builder in ALL_OPS.items():
+    op_compatible = builder.is_compatible()
+
+    # If op is compatible update install reqs so it can potentially build/run later
+    if op_compatible:
+        reqs = builder.python_requirements()
+        install_requires += builder.python_requirements()
+
+    # If op install enabled, add builder to extensions
+    if op_enabled(op_name) and op_compatible:
+        assert torch_available, f"Unable to pre-compile {op_name}, please first install torch"
+        install_ops[op_name] = op_enabled(op_name)
+        ext_modules.append(builder.builder())
+
+compatible_ops = {op_name: op.is_compatible() for (op_name, op) in ALL_OPS.items()}
+
+print(f'Install Ops={install_ops}')
 
 # Write out version/git info
 git_hash_cmd = "git rev-parse --short HEAD"
@@ -261,7 +289,7 @@ else:
 torch_version = ".".join([TORCH_MAJOR, TORCH_MINOR])
 # Set cuda_version to 0.0 if cpu-only
 cuda_version = "0.0"
-if torch.version.cuda is not None:
+if torch_available and torch.version.cuda is not None:
     cuda_version = ".".join(torch.version.cuda.split('.')[:2])
 torch_info = {"version": torch_version, "cuda_version": cuda_version}
 

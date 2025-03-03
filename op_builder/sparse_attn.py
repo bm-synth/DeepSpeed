@@ -1,8 +1,7 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
+"""
+Copyright 2020 The Microsoft DeepSpeed Team
+"""
+import warnings
 from .builder import OpBuilder
 
 try:
@@ -32,6 +31,12 @@ class SparseAttnBuilder(OpBuilder):
         #required_commands = ['llvm-config|llvm-config-9', 'cmake']
         #command_status = list(map(self.command_exists, required_commands))
         #deps_compatible = all(command_status)
+
+        try:
+            import torch
+        except ImportError:
+            self.warning(f"unable to import torch, please install it first")
+            return False
 
         # torch-cpu will not have a cuda version
         if torch.version.cuda is None:

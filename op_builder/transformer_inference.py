@@ -1,9 +1,4 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
-from .builder import CUDAOpBuilder, installed_cuda_version
+from .builder import CUDAOpBuilder
 
 
 class InferenceBuilder(CUDAOpBuilder):

@@ -1,5 +1,5 @@
 import os
-import torch
+import sys
 import subprocess
 from .builder import CUDAOpBuilder
 
@@ -22,6 +22,7 @@ class CPUAdamBuilder(TorchCPUOpBuilder):
         return args
 
     def include_paths(self):
+        import torch
         CUDA_INCLUDE = os.path.join(torch.utils.cpp_extension.CUDA_HOME, "include")
         return ['csrc/includes', CUDA_INCLUDE]
 
@@ -43,6 +44,7 @@ class CPUAdamBuilder(TorchCPUOpBuilder):
         return '-D__SCALAR__'
 
     def cxx_args(self):
+        import torch
         CUDA_LIB64 = os.path.join(torch.utils.cpp_extension.CUDA_HOME, "lib64")
         SIMD_WIDTH = self.simd_width()
 

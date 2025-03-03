@@ -27,6 +27,13 @@ WARNING = f"{YELLOW} [WARNING] {END}"
 DEFAULT_TORCH_EXTENSION_PATH = "/tmp/torch_extensions"
 DEFAULT_COMPUTE_CAPABILITIES = "6.0;6.1;7.0"
 
+try:
+    import torch
+except ImportError:
+    print(
+        f"{WARNING} unable to import torch, please install it if you want to pre-compile any deepspeed ops."
+    )
+
 
 def installed_cuda_version():
     import torch.utils.cpp_extension

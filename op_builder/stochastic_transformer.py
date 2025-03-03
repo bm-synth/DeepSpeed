@@ -1,8 +1,6 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
+"""
+Copyright 2020 The Microsoft DeepSpeed Team
+"""
 from .transformer import TransformerBuilder
 
 
