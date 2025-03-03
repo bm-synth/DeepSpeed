@@ -52,6 +52,9 @@ from .utils import ensure_directory_exists
 from ..ops.op_builder import UtilsBuilder
 from ..ops.adam import DeepSpeedCPUAdam
 from ..ops.adam import FusedAdam
+from ..moe.sharded_moe import TopKGate, MOELayer
+from ..moe.layer import MoE
+from ..git_version_info import version
 
 from deepspeed.profiling.flops_profiler.profiler import FlopsProfiler
 
@@ -135,6 +138,12 @@ class DeepSpeedEngine(Module):
         self.enable_backward_allreduce = True
         self.progressive_layer_drop = None
         self.dist_backend = "nccl"
+        self.has_moe_layers = False
+        self.num_experts = None
+        self.gate_modules = []
+        self.moe_layers = []
+        self._step_applied = False
+        self._global_grad_norm = None
 
         # for debug purposes - can then debug print: debug_get_module_name(module)
         debug_extract_module_and_param_names(model)
@@ -1005,7 +1014,52 @@ class DeepSpeedEngine(Module):
         for _, module in self.module.named_modules():
             if isinstance(module, MoE):
                 self.has_moe_layers = True
-                self.num_experts.append(module.num_experts)
+                self.num_experts = module.num_experts
+                break
+
+        if self.has_moe_layers:
+            for _, module in self.module.named_modules():
+                if isinstance(module, TopKGate):
+                    self.gate_modules.append(module)
+                    if self.wall_clock_breakdown:
+                        module.wall_clock_breakdown = True
+                if isinstance(module, MOELayer):
+                    self.moe_layers.append(module)
+                    if self.wall_clock_breakdown:
+                        module.wall_clock_breakdown = True
+
+        if not self.pipeline_parallelism:
+            # PipeEngine's mpu object is different from Megatron's mpu object
+            # so we handle them separately
+            if self.mpu is not None:
+                if groups.is_initialized():
+                    # Scenario 4 - Case 1
+                    assert self.mpu.get_data_parallel_world_size() == groups.get_data_parallel_world_size(), "mpu object provided must match mpu object provided to groups.initialize()"
+                    assert self.mpu.get_model_parallel_world_size() == groups.get_model_parallel_world_size(), "mpu object provided must match mpu object provided to groups.initialize()"
+                else:
+                    # Scenario 3
+                    groups.initialize(mpu=self.mpu)
+            else:
+                if not groups.is_initialized():
+                    # Scenario 1
+                    groups.initialize()
+                #else:
+                # Scenario 2
+                # Scenario 4 - Case 2
+                # pass
+
+            self.data_parallel_group = groups.get_data_parallel_group()
+            self.dp_world_size = groups.get_data_parallel_world_size()
+            self.mp_world_size = groups.get_model_parallel_world_size()
+            self.broadcast_src_rank = _get_global_rank(groups.get_data_parallel_group(),
+                                                       0)
+        else:
+            self.data_parallel_group = self.mpu.get_data_parallel_group()
+            self.dp_world_size = self.mpu.get_data_parallel_world_size()
+            self.mp_world_size = self.mpu.get_model_parallel_world_size()
+            self.broadcast_src_rank = _get_global_rank(
+                self.mpu.get_data_parallel_group(),
+                0)
 
         if self.has_moe_layers:
             for _, module in self.module.named_modules():
@@ -1715,22 +1769,6 @@ class DeepSpeedEngine(Module):
 
         return loss
 
-    def _cast_inputs_half(self, inputs):
-        if isinstance(inputs, (list, tuple)):
-            new_inputs = []
-            for v in inputs:
-                new_inputs.append(self._cast_inputs_half(v))
-            return inputs.__class__(new_inputs)
-        elif isinstance(inputs, dict):
-            new_inputs = {}
-            for k, v in inputs.items():
-                new_inputs[k] = self._cast_inputs_half(v)
-            return new_inputs
-        elif hasattr(inputs, 'half') and inputs.is_floating_point():
-            return inputs.half()
-        else:
-            return inputs
-
     def print_forward_breakdown(self, fwd_time):
         gate_time = 0.0
         moe_time = 0.0
@@ -1747,14 +1785,13 @@ class DeepSpeedEngine(Module):
             falltoall += l.time_falltoall
             salltoall += l.time_salltoall
 
-        # TODO: Allreduce/average them across ranks for more accurate timing.
+        #TODO: Allreduce/average them across ranks for more accurate timing.
 
-        # if deepspeed.comm.get_rank() == 0:
+        #if torch.distributed.get_rank() == 0:
         log_dist(
-            f"time (ms) | fwd: {fwd_time:.2f} (fwd_moe: {moe_time:.2f}, 1st_a2a: {falltoall:.2f}, 2nd_a2a: {salltoall:.2f}, top_k: {gate_time:.2f})",
+            f"rank={torch.distributed.get_rank()} time (ms) | forward: {fwd_time:.2f} (forward_moe: {moe_time:.2f}, 1st alltoall: {falltoall:.2f}, 2nd alltoall: {salltoall:.2f}, top-k: {gate_time:.2f})",
             ranks=[0])
 
-    @instrument_w_nvtx
     def allreduce_gradients(self, bucket_size=MEMORY_OPT_ALLREDUCE_SIZE):
         # Pass (PP) gas boundary flag to optimizer (required for zero)
         self.optimizer.is_gradient_accumulation_boundary = self.is_gradient_accumulation_boundary(
@@ -2063,11 +2100,18 @@ class DeepSpeedEngine(Module):
                 if self.monitor.enabled:
                     self._write_monitor()
 
+            if self.wall_clock_breakdown():
+                fwd_time = self.timers('forward').elapsed(reset=False) * 1000
+                self.timers.log([
+                    'forward',
+                    'backward',
+                    'backward_inner',
+                    'backward_allreduce',
+                    'step'
+                ],
+                                reset=False)
                 if self.has_moe_layers:
-                    fwd_time = self.timers(FORWARD_GLOBAL_TIMER).elapsed(reset=False)
                     self.print_forward_breakdown(fwd_time=fwd_time)
-
-                self.timers.log(self.engine_timers.global_timers)
 
         self.micro_steps += 1
         see_memory_usage("Engine after step", force=self.memory_breakdown())
