@@ -20,6 +20,12 @@ DS_COMM_ALL_REDUCE_OFF = False
 DS_COMM_REDUCE_OFF = False
 
 
+def disable_compiler_collective(func):
+    if required_torch_version(min_version=2.3):
+        return func
+    return compiler.disable(func)
+
+
 def build_shm_op():
     builder = get_accelerator().create_op_builder("ShareMemCommBuilder")
     if builder is None or not deepspeed.ops.__compatible_ops__[builder.NAME]:
@@ -198,10 +204,6 @@ class TorchBackend(Backend):
             return Noop()
         else:
             return torch.distributed.broadcast(tensor=tensor, src=src, group=group, async_op=async_op)
-
-    @disable_compiler_collective
-    def broadcast_object_list(self, object_list, src, group=None, device=None):
-        return torch.distributed.broadcast_object_list(object_list=object_list, src=src, group=group, device=device)
 
     @disable_compiler_collective
     def all_gather(self, tensor_list, tensor, group=None, async_op=False):
