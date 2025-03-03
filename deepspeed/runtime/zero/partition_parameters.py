@@ -32,8 +32,8 @@ from ..swap_tensor.partitioned_param_swapper import AsyncPartitionedParameterSwa
 from deepspeed.inference.quantization.utils import _quantize_param, WEIGHT_QUANTIZATION_LAYERS, wrap_quantized_functional, wrap_load_from_state_dict
 
 partitioned_param_data_shape = [0]
-zero_init_context = 0
-top_level_context = None
+zero_init_context = []
+all_wrapped_classes = set()
 
 
 class NoGatherHandle:
@@ -318,86 +318,11 @@ class InsertPostInitMethodToModuleSubClasses(object):
         assert self.dtype in [
             torch.half, torch.bfloat16, torch.float
         ], f"Invalid data type {self.dtype}, allowed values are [torch.half, torch.bfloat16, torch.float]"
+        self.wrapped_cls = set()
 
     def __enter__(self):
         if not self.enabled:
             return
-
-        global zero_init_context
-        if zero_init_context == 0:
-            self.patch_init_and_builtins()
-            global top_level_context
-            top_level_context = self
-
-            return wrapper
-
-        def _enable_class(cls):
-            cls._old_init = cls.__init__
-            cls.__init__ = partition_after(cls.__init__)
-
-        def _init_subclass(cls, **kwargs):
-            cls.__init__ = partition_after(cls.__init__)
-
-        # Replace .__init__() for all existing subclasses of torch.nn.Module recursively
-        for subclass in get_all_subclasses(torch.nn.modules.module.Module):
-            # print(f"subclass={subclass.__module__}.{subclass.__qualname__}")
-            _enable_class(subclass)
-
-        # holding on to the current __init__subclass__ for exit
-        torch.nn.modules.module.Module._old_init_subclass = torch.nn.modules.module.Module.__init_subclass__
-        torch.Tensor.__old_new__ = torch.Tensor.__new__
-
-        # Replace .__init__() for future subclasses of torch.nn.Module
-        torch.nn.modules.module.Module.__init_subclass__ = classmethod(_init_subclass)
-        torch.Tensor.__new__ = new_cuda_tensor
-        torch.empty = empty_cuda_tensor
-
-        if self.mem_efficient_linear:
-            print_rank_0(
-                "nn.functional.linear has been overridden with a more memory efficient version. This will persist unless manually reset.",
-                force=False)
-            self.linear_bk = torch.nn.functional.linear
-            torch.nn.functional.linear = LinearFunctionForZeroStage3.apply
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        if not self.enabled:
-            return
-
-        global zero_init_context
-        zero_init_context -= 1
-
-        # Replace .__init__() for all existing subclasses of torch.nn.Module
-        for subclass in get_all_subclasses(torch.nn.modules.module.Module):
-            _disable_class(subclass)
-
-        # Replace .__init__() for future subclasses of torch.nn.Module
-        torch.nn.modules.module.Module.__init_subclass__ = torch.nn.modules.module.Module._old_init_subclass
-
-        torch.Tensor.__new__ = torch.Tensor.__old_new__
-        torch.empty = _orig_torch_empty
-
-        #un doing it here will undo it during training
-        #if self.mem_efficient_linear:
-        #    torch.nn.functional.linear = self.linear_bk
-
-        # Now that we cleaned up the metaclass injection, raise the exception.
-        if exc_type is not None:
-            return False
-
-    # To be implemented by inheriting classes
-    def _post_init_method(self, module):
-        pass
-
-    def _set_dtype(self, ds_config, dtype):
-        if ds_config is not None and dtype is None:
-            self.dtype = torch.half if ds_config.fp16_enabled else torch.float
-        elif dtype is None:
-            self.dtype = torch.half
-        else:
-            self.dtype = dtype or torch.float16 if get_accelerator().is_fp16_supported(
-            ) else torch.bfloat16 if get_accelerator().is_bf16_supported else torch.float32
-
-    def patch_init_and_builtins(self):
 
         def apply_with_gather(orig_module_apply_fn: Callable) -> Callable:
             """many models make use of child modules like Linear or Embedding which
@@ -558,30 +483,45 @@ class InsertPostInitMethodToModuleSubClasses(object):
                 cls.__init__ = partition_after(cls.__init__)
 
         # Replace .__init__() for all existing subclasses of torch.nn.Module recursively
+        global zero_init_context
+        self.nest_level = len(zero_init_context)
+
+        global all_wrapped_classes
         for subclass in get_all_subclasses(torch.nn.modules.module.Module):
-            _enable_class(subclass)
+            # Only wrap classes that haven't been wrapped yet
+            if subclass not in all_wrapped_classes:
+                _enable_class(subclass)
+                self.wrapped_cls.add(subclass)
 
-        # holding onto some methods so we can put them back the way they were in __exit__
-        torch.nn.modules.module.Module._old_init_subclass = torch.nn.modules.module.Module.__init_subclass__
-        torch.nn.modules.module.Module._old_apply = torch.nn.modules.module.Module.apply
-        torch.Tensor.__old_new__ = torch.Tensor.__new__
+        all_wrapped_classes = all_wrapped_classes.union(self.wrapped_cls)
 
-        # Replace .__init__() for future subclasses of torch.nn.Module
-        torch.nn.modules.module.Module.__init_subclass__ = classmethod(_init_subclass)
-        torch.nn.modules.module.Module.apply = apply_with_gather(torch.nn.modules.module.Module._old_apply)
+        # Wrap some functions only at top level call of Init
+        if self.nest_level == 0:
+            # holding onto some methods so we can put them back the way they were in __exit__
+            torch.nn.modules.module.Module._old_init_subclass = torch.nn.modules.module.Module.__init_subclass__
+            torch.nn.modules.module.Module._old_apply = torch.nn.modules.module.Module.apply
+            torch.Tensor.__old_new__ = torch.Tensor.__new__
 
-        torch.Tensor.__new__ = get_new_tensor_fn_for_dtype(self.dtype)
-        torch.empty = zero_wrapper_for_fp_tensor_constructor(_orig_torch_empty, self.dtype)
-        torch.zeros = zero_wrapper_for_fp_tensor_constructor(_orig_torch_zeros, self.dtype)
-        torch.ones = zero_wrapper_for_fp_tensor_constructor(_orig_torch_ones, self.dtype)
-        torch.full = zero_wrapper_for_fp_tensor_constructor(_orig_torch_full, self.dtype)
+            # Replace .__init__() for future subclasses of torch.nn.Module
+            torch.nn.modules.module.Module.__init_subclass__ = classmethod(_init_subclass)
+            torch.nn.modules.module.Module.apply = apply_with_gather(torch.nn.modules.module.Module._old_apply)
 
-        if self.mem_efficient_linear:
-            print_rank_0(
-                "nn.functional.linear has been overridden with a more memory efficient version. This will persist unless manually reset.",
-                force=False)
-            self.linear_bk = torch.nn.functional.linear
-            torch.nn.functional.linear = zero3_linear_wrap
+            torch.Tensor.__new__ = get_new_tensor_fn_for_dtype(self.dtype)
+            torch.empty = zero_wrapper_for_fp_tensor_constructor(_orig_torch_empty, self.dtype)
+            torch.zeros = zero_wrapper_for_fp_tensor_constructor(_orig_torch_zeros, self.dtype)
+            torch.ones = zero_wrapper_for_fp_tensor_constructor(_orig_torch_ones, self.dtype)
+            torch.full = zero_wrapper_for_fp_tensor_constructor(_orig_torch_full, self.dtype)
+
+            if self.mem_efficient_linear:
+                print_rank_0(
+                    "nn.functional.linear has been overridden with a more memory efficient version. This will persist unless manually reset.",
+                    force=False)
+                self.linear_bk = torch.nn.functional.linear
+                torch.nn.functional.linear = zero3_linear_wrap
+
+            self.torch_func_wrapped = True
+
+        zero_init_context.append(self)
 
             if self.quantized_initialization:
                 print_rank_0("nn.functional.linear has been overridden with quantized linear version.", force=False)
@@ -590,10 +530,14 @@ class InsertPostInitMethodToModuleSubClasses(object):
                 for cls in WEIGHT_QUANTIZATION_LAYERS:
                     cls._load_from_state_dict = wrap_load_from_state_dict(cls._load_from_state_dict)
 
-                logger.info("Enable Zero3 engine with INT4 quantization.")
+        self.remove_wrappers()
 
-        if dist.get_rank() == 0:
-            logger.info("finished initializing model with %.2fB parameters", param_count / 1e9)
+        # Exiting the top level context
+        global zero_init_context
+        zero_init_context.pop()
+        if self.nest_level == 0:
+            if dist.get_rank() == 0:
+                logger.info("finished initializing model with %.2fB parameters", param_count / 1e9)
 
     def unpatch_init_and_builtins(self):
         if self.patched:
@@ -636,22 +580,51 @@ class InsertPostInitMethodToModuleSubClasses(object):
         torch.eye = _orig_torch_eye
         torch.randn = _orig_torch_randn
 
+    def remove_wrappers(self):
+
+        def _disable_class(cls):
+            cls.__init__ = cls._old_init
+
+        for subclass in self.wrapped_cls:
+            _disable_class(subclass)
+        self.wrapped_cls.clear()
+
+        # This context is the top level of nested Init
+        if self.nest_level == 0 and self.torch_func_wrapped:
+            # putting methods back the way we found them
+            torch.nn.modules.module.Module.__init_subclass__ = torch.nn.modules.module.Module._old_init_subclass
+            torch.nn.modules.module.Module.apply = torch.nn.modules.module.Module._old_apply
+
+            torch.Tensor.__new__ = torch.Tensor.__old_new__
+            torch.empty = _orig_torch_empty
+            torch.zeros = _orig_torch_zeros
+            torch.ones = _orig_torch_ones
+            torch.full = _orig_torch_full
+
+            # un doing it here will undo it during training
+            # if self.mem_efficient_linear:
+            #    torch.nn.functional.linear = self.linear_bk
+            #        if self.mem_efficient_linear:
+            #            torch.nn.functional.linear = self.linear_bk
+
+            self.torch_func_wrapped = False
+
+            global all_wrapped_classes
+            for subclass in get_all_subclasses(torch.nn.modules.module.Module):
+                if subclass not in all_wrapped_classes:
+                    msg = f"`{subclass}' was not properly set up for sharding by zero.Init(). A subclass of torch.nn.Module must be defined before zero.Init() where an instance of the class is created."
+                    raise RuntimeError(msg)
+            all_wrapped_classes.clear()
+
 
 def shutdown_init_context():
     """
     This function is used to initialize deepspeed engine inside the context of Init.
-    We need to remove the wrappers but keep the context.
+    We need to remove the wrappers but keep the list of contexts.
     """
-    if top_level_context:
-        top_level_context.unpatch_init_and_builtins()
-
-
-def restore_init_context():
-    """
-    This function is used to restore the wrappers after deepspeed engine is initialized.
-    """
-    if top_level_context:
-        top_level_context.patch_init_and_builtins()
+    global zero_init_context
+    for ctx in zero_init_context:
+        ctx.remove_wrappers()
 
 
 class AllGatherHandle:
