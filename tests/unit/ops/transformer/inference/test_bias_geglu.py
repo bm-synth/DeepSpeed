@@ -8,11 +8,13 @@ import torch
 import deepspeed
 from deepspeed.ops.op_builder import InferenceBuilder
 from deepspeed.accelerator import get_accelerator
+from deepspeed.ops.transformer.inference.op_binding.gated_activation import GatedActivationOp
+from deepspeed.utils.types import ActivationFuncType
+from .inference_test_utils import allclose, get_dtypes
 
 if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
     pytest.skip("Inference ops are not available on this system", allow_module_level=True)
 
-inference_module = None
 torch_minor_version = None
 
 

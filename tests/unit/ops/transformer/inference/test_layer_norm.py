@@ -8,6 +8,7 @@ import torch
 import pytest
 from deepspeed.accelerator import get_accelerator
 from deepspeed.ops.op_builder import InferenceBuilder
+from deepspeed.ops.transformer.inference.op_binding.layer_norm import LayerNormOp
 from .inference_test_utils import allclose, get_dtypes, assert_almost_equal
 try:
     import triton  # noqa: F401 # type: ignore
@@ -20,8 +21,6 @@ except ImportError:
 
 if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
     pytest.skip("Inference ops are not available on this system", allow_module_level=True)
-
-inference_module = None
 
 
 def ref_implementation(vals, gamma, beta, epsilon, channels, dtype):
@@ -129,10 +128,7 @@ def residual_store_ref_implementation(vals, bias, res, gamma, beta, epsilon, cha
 
 
 def residual_store_ds_implementation(vals, bias, res, gamma, beta, epsilon):
-    global inference_module
-    if inference_module is None:
-        inference_module = InferenceBuilder().load()
-    return inference_module.layer_norm_residual_store_pre_ln_res(vals, bias, res, gamma, beta, epsilon)
+    return LayerNormOp.layer_norm_residual_store_pre_ln_res(vals, bias, res, gamma, beta, epsilon)
 
 
 @pytest.mark.inference_ops

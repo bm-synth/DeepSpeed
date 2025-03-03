@@ -88,8 +88,8 @@ class DeepSpeedSelfAttention(nn.Module):
                 torch.empty(self.hidden_size_per_partition * 3, dtype=data_type_fp, device=device)
             ]
 
-    def compute_attention(self, qkv_out, input_mask, layer_past, alibi):
-        if isinstance(qkv_out, list):
+    def compute_attention(self, qkv_out, input_mask, layer_past, alibi, is_prompt, token_idx, position_ids):
+        if isinstance(qkv_out, list) or isinstance(qkv_out, tuple):
             qkv_out = qkv_out[0]
 
         no_masking = input_mask is None or input_mask is False
@@ -107,7 +107,10 @@ class DeepSpeedSelfAttention(nn.Module):
             no_masking=no_masking,
             layer_id=self.config.layer_id,
             num_layers=DeepSpeedSelfAttention.num_layers,
-            alibi=alibi)
+            alibi=alibi,
+            is_prompt=is_prompt,
+            token_idx=token_idx,
+            position_ids=position_ids)
 
         context_layer, key_layer, value_layer = attn_key_value
         return context_layer, key_layer, value_layer
@@ -135,7 +138,8 @@ class DeepSpeedSelfAttention(nn.Module):
                 output_attentions=False,
                 norm_w=None,
                 norm_b=None,
-                alibi=None):
+                alibi=None,
+                **kwargs):
         if self.attn_qkvw is None:
             self._attn_qkvw, self._attn_qkvb = self._merge_qkv()
         else:
@@ -154,14 +158,19 @@ class DeepSpeedSelfAttention(nn.Module):
                                     weight=self._attn_qkvw,
                                     bias=(self._attn_qkvb if self._attn_qkvb is not None else norm_b),
                                     gamma=norm_w,
-                                    beta=norm_b,
-                                    add_bias=(self.attn_qkvb is not None),
-                                    num_layers=DeepSpeedSelfAttention.num_layers,
-                                    num_heads=self.num_attention_heads_per_partition)
+                                    beta=norm_b)
+
+        is_prompt = kwargs.get("first_token", qkv_out[0].shape[1] > 1)
+        token_idx = kwargs.get("token_idx", None)
+        position_ids = kwargs.get("position_ids", None)
+
         context_layer, key_layer, value_layer = self.compute_attention(qkv_out=qkv_out,
                                                                        input_mask=input_mask,
                                                                        layer_past=layer_past,
-                                                                       alibi=alibi)
+                                                                       alibi=alibi,
+                                                                       is_prompt=is_prompt,
+                                                                       token_idx=token_idx,
+                                                                       position_ids=position_ids)
 
         output = self.vector_matmul_func(input=context_layer, weight=self.attn_ow)
         inp_norm = qkv_out[-1]
@@ -211,8 +220,8 @@ class BloomSelfAttention(DeepSpeedSelfAttention):
 
         return tensor_list
 
-    def compute_attention(self, qkv_out, input_mask, layer_past, alibi):
-        if isinstance(qkv_out, list):
+    def compute_attention(self, qkv_out, input_mask, layer_past, alibi, is_prompt, token_idx, position_ids):
+        if isinstance(qkv_out, list) or isinstance(qkv_out, tuple):
             qkv_out = qkv_out[0]
 
         no_masking = input_mask is None

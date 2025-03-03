@@ -487,7 +487,10 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
                                            unsigned layer_id,
                                            unsigned num_layers,
                                            at::Tensor& alibi,
-                                           float rope_theta)
+                                           float rope_theta,
+                                           bool is_prompt,
+                                           std::optional<at::Tensor> token_idx,
+                                           std::optional<at::Tensor> position_ids)
 {
     unsigned bsz = query_key_value.size(0);
     unsigned seq_len = query_key_value.size(1);
@@ -2223,7 +2226,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
           "DeepSpeed memory allocation for GPT inference with " #_name " (CUDA)");                \
     m.def("dequantize_" #_name,                                                                   \
           &ds_dequantize<_dtype>,                                                                 \
-          "DeepSpeed dequantize with " #_name " (CUDA)")
+          "DeepSpeed dequantize with " #_name " (CUDA)");
 
     DEF_OPS(fp32, float);
     DEF_OPS(fp16, __half);

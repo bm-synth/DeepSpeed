@@ -7,6 +7,9 @@ import torch
 import deepspeed
 from deepspeed.accelerator import get_accelerator
 from deepspeed.ops.op_builder import InferenceBuilder
+from deepspeed.ops.transformer import DeepSpeedInferenceConfig
+from deepspeed.ops.transformer.inference.op_binding import ResidualAddOp
+from .inference_test_utils import get_dtypes
 
 if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
     pytest.skip("Inference ops are not available on this system", allow_module_level=True)
@@ -16,11 +19,6 @@ def allclose(x, y):
     assert x.dtype == y.dtype
     rtol, atol = {torch.float32: (5e-4, 5e-5), torch.float16: (3e-2, 2e-2)}[x.dtype]
     return torch.allclose(x, y, rtol=rtol, atol=atol)
-
-
-@pytest.fixture(scope="module")
-def inference_module():
-    return InferenceBuilder().load()
 
 
 def res_add_bias_ref(hidden_state, residual, attn_output, attn_bias, final_bias, mp_size=1, pre_attn_norm=True):
@@ -57,8 +55,8 @@ def run_residual_add_reference(hidden_state, residual, attn_output, attn_bias, f
 @pytest.mark.parametrize("mp_size", [1, 2])
 @pytest.mark.parametrize("pre_attn_norm", [True, False])
 @pytest.mark.parametrize("use_triton_ops", [True, False])
-def test_residual_add(inference_module, batch, sequence, hidden_dim, dtype, mlp_after_attn, add_bias, mp_size,
-                      pre_attn_norm, use_triton_ops):
+def test_residual_add(batch, sequence, hidden_dim, dtype, mlp_after_attn, add_bias, mp_size, pre_attn_norm,
+                      use_triton_ops):
     if not deepspeed.HAS_TRITON and use_triton_ops:
         pytest.skip("triton has to be installed for the test")
     ds_out = torch.randn((batch, sequence, hidden_dim), dtype=dtype, device=get_accelerator().device_name())
@@ -78,16 +76,8 @@ def test_residual_add(inference_module, batch, sequence, hidden_dim, dtype, mlp_
     if use_triton_ops:
         from deepspeed.ops.transformer.inference.triton import residual_add_bias
         ds_out = residual_add_bias(*res_add_args)
-    if dtype == torch.float16:
-        ds_out = inference_module.residual_add_bias_fp16(*res_add_args)
-    elif dtype == torch.float32:
-        ds_out = inference_module.residual_add_bias_fp32(*res_add_args)
     else:
-        if dtype == torch.float16:
-            ds_out = inference_module.residual_add_bias_fp16(*res_add_args)
-        elif dtype == torch.float32:
-            ds_out = inference_module.residual_add_bias_fp32(*res_add_args)
-        else:
-            raise ValueError(f"Unsupported dtype: {dtype}")
+        config = DeepSpeedInferenceConfig(dtype=dtype)
+        ds_out = ResidualAddOp(config).residual_add_func(*res_add_args)
 
     assert (allclose(ds_out, ref_out))
