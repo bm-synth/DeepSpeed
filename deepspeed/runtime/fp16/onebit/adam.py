@@ -1,14 +1,14 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
+'''
+Copyright 2020 The Microsoft DeepSpeed Team
+'''
 import types
 import torch
+import importlib
 import numpy as np
-from deepspeed.accelerator import get_accelerator
-from deepspeed.utils.torch import required_torch_version
-from deepspeed import comm as dist
+import time
+import torch.distributed as dist
+
+from deepspeed.utils.logging import logger
 
 
 class OnebitAdam(torch.optim.Optimizer):
@@ -37,19 +37,19 @@ class OnebitAdam(torch.optim.Optimizer):
         cuda_aware (boolean, required): Set True if the underlying MPI implementation
             supports CUDA-Aware communication. (default: False)
         comm_backend_name (string, optional): Set to 'mpi' if needed. (default: 'nccl')
-    .. _Adam\\: A Method for Stochastic Optimization:
+    .. _Adam\: A Method for Stochastic Optimization:
         https://arxiv.org/abs/1412.6980
     .. _On the Convergence of Adam and Beyond:
         https://openreview.net/forum?id=ryQu7f-RZ
     """
-
     def __init__(self,
                  params,
                  deepspeed=None,
                  lr=1e-3,
                  freeze_step=100000,
                  bias_correction=True,
-                 betas=(0.9, 0.999),
+                 betas=(0.9,
+                        0.999),
                  eps=1e-8,
                  eps_inside_sqrt=False,
                  weight_decay=0.,
@@ -70,6 +70,8 @@ class OnebitAdam(torch.optim.Optimizer):
 
         super(OnebitAdam, self).__init__(params, defaults)
         self.eps_mode = 0 if eps_inside_sqrt else 1
+        assert (dist.is_initialized())
+
         self.comm_time = 0.0
         self.step_time = 0.0
         self.ave_step = 1
@@ -80,31 +82,24 @@ class OnebitAdam(torch.optim.Optimizer):
         self.initialize = False
         self.freeze_step = freeze_step
         self.cuda_aware = cuda_aware
-        self.using_pipeline = False
 
         self.comm_backend_name = comm_backend_name
 
-        assert dist.is_initialized(), "Please initialize the torch distributed backend."
         # Empty initializer. Set handle based on the comm backend as follows.
         self.comm_backend_handle = None
+
         if self.comm_backend_name == 'nccl':
-            assert (
-                required_torch_version(min_version=1.8)
-            ), "Please use torch 1.8 or greater to enable NCCL backend in 1-bit Adam. Alternatively, please specify 'mpi' as the 'comm_backend_name' in config file to proceed with the MPI backend"
+            TORCH_MAJOR = int(torch.__version__.split('.')[0])
+            TORCH_MINOR = int(torch.__version__.split('.')[1])
+            assert TORCH_MAJOR >= 1 and TORCH_MINOR >= 8, "Please use torch 1.8 or greater to enable NCCL backend in 1-bit Adam. Alternatively, please specify 'mpi' as the 'comm_backend_name' in config file to proceed with the MPI backend"
+            assert dist.is_initialized() == True, "Please initialize the torch distributed backend."
             from deepspeed.runtime.comm.nccl import NcclBackend
-            self.using_pipeline = hasattr(self.deepspeed, 'pipeline_enable_backward_allreduce')
-            self.comm_backend_handle = NcclBackend(self.deepspeed.mpu)
+            self.comm_backend_handle = NcclBackend()
+
         elif self.comm_backend_name == 'mpi':
             from deepspeed.runtime.comm.mpi import MpiBackend
             self.comm_backend_handle = MpiBackend(cuda_aware)
-        elif self.comm_backend_name == 'hccl':
-            from deepspeed.runtime.comm.hccl import HcclBackend
-            self.using_pipeline = hasattr(self.deepspeed, 'pipeline_enable_backward_allreduce')
-            self.comm_backend_handle = HcclBackend(self.deepspeed.mpu)
-        elif self.comm_backend_name == 'compressed':
-            from deepspeed.runtime.comm.compressed import CompressedBackend
-            self.using_pipeline = hasattr(self.deepspeed, 'pipeline_enable_backward_allreduce')
-            self.comm_backend_handle = CompressedBackend(self.deepspeed.mpu)
+
         self.size = self.comm_backend_handle.size
 
         self.divider = int(self.size * 8 / np.gcd(self.size, 8))
@@ -117,7 +112,7 @@ class OnebitAdam(torch.optim.Optimizer):
             grads (list of tensors, optional): weight gradient to use for the
                 optimizer update. If gradients have type torch.half, parameters
                 are expected to be in type torch.float. (default: None)
-            output params (list of tensors, optional): A reduced precision copy
+            output params (list of tensors, optional): A reduced recision copy
                 of the updated weights written out in addition to the regular
                 updated weights. Have to be of same type as gradients. (default: None)
             scale (float, optional): factor to divide gradient tensor values
@@ -169,20 +164,26 @@ class OnebitAdam(torch.optim.Optimizer):
                     # Exponential moving average of squared gradient values
                     state['exp_avg_sq'] = torch.zeros_like(p.data)
 
-                if not self.initialize or (self.adam_freeze_key and 'worker_error' not in state.keys()):
                     state['tensor_size'] = torch.numel(p.data)
                     state['corrected_tensor_size'] = state['tensor_size']
 
                     if state['tensor_size'] % (self.size * self.divider) != 0:
-                        state['corrected_tensor_size'] += ((self.size * self.divider) - (state['tensor_size'] %
-                                                                                         (self.size * self.divider)))
-                    state['server_chunk_size'] = state['corrected_tensor_size'] // self.size
-                    get_accelerator().empty_cache()
-                    state['worker_error'] = torch.zeros(state['corrected_tensor_size'], device=p.device)
-                    state['server_error'] = torch.zeros(state['server_chunk_size'], device=p.device)
-                    get_accelerator().empty_cache()
+                        state['corrected_tensor_size'] += ((self.size * self.divider) -
+                                                           (state['tensor_size'] %
+                                                            (self.size * self.divider)))
+                    state['server_chunk_size'] = state[
+                        'corrected_tensor_size'] // self.size
+
+                if not self.initialize or (self.adam_freeze_key
+                                           and 'worker_error' not in state.keys()):
+                    torch.cuda.empty_cache()
+                    state['worker_error'] = torch.zeros(state['corrected_tensor_size'],
+                                                        device=p.device)
+                    state['server_error'] = torch.zeros(state['server_chunk_size'],
+                                                        device=p.device)
+                    torch.cuda.empty_cache()
                     self.adam_freeze_key = True
-                    if not self.initialize and dist.get_rank() == 0:
+                    if not self.initialize and torch.distributed.get_rank() == 0:
                         print("Cupy Buffers Initialized Successfully.")
 
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
@@ -201,7 +202,7 @@ class OnebitAdam(torch.optim.Optimizer):
                     if 'non_freeze' in group.keys() and group['non_freeze'] is True:
                         dist.all_reduce(grad)
                         grad.mul_(1 / dist.get_world_size())
-                        exp_avg.mul_(beta1).add_(1 - beta1, grad)
+                        exp_avg.mul_(beta1).add(1 - beta1, grad)
                         exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
                         grad = None
                     else:
@@ -211,9 +212,11 @@ class OnebitAdam(torch.optim.Optimizer):
 
                         if self.size > 1:
                             exp_avg.set_(
-                                self.comm_backend_handle.compressed_allreduce(exp_avg, state['worker_error'],
-                                                                              state['server_error'],
-                                                                              self.deepspeed.local_rank))
+                                self.comm_backend_handle.compressed_allreduce(
+                                    exp_avg,
+                                    state['worker_error'],
+                                    state['server_error'],
+                                    self.deepspeed.local_rank))
                         # Because 1-bit compression cannot represent exact zero, it is required to
                         # provide a momentum mask for those params that have constant exact zeros in their
                         # momentums, otherwise the compression error would keep accumulating.
@@ -223,7 +226,8 @@ class OnebitAdam(torch.optim.Optimizer):
                         # (See example in DeepSpeedExamples/bing_bert/deepspeed_train.py.)
                         if 'exp_avg_mask' in group:
                             if exp_avg.device != group['exp_avg_mask'].device:
-                                group['exp_avg_mask'] = group['exp_avg_mask'].to(device=exp_avg.device)
+                                group['exp_avg_mask'] = group['exp_avg_mask'].to(
+                                    device=exp_avg.device)
                             exp_avg.mul_(group['exp_avg_mask'])
 
                     if self.initialize:
@@ -243,17 +247,15 @@ class OnebitAdam(torch.optim.Optimizer):
         if not self.initialize:
             self.adam_freeze_key = False
             self.initialize = True
-            print(f"Finished the initialization step at rank {dist.get_rank()}")
+            print(
+                f"Finished the initialization step at rank {torch.distributed.get_rank()}"
+            )
             return loss
 
         if self.adam_freeze_key is False:
             if state['step'] >= self.freeze_step:
-                print('OnebitAdam - starting compressed communication')
                 self.adam_freeze_key = True
-                if self.using_pipeline:
-                    self.deepspeed.pipeline_enable_backward_allreduce = False
-                else:
-                    self.deepspeed.enable_backward_allreduce = False
+                self.deepspeed.enable_backward_allreduce = False
 
         return loss
 
@@ -269,27 +271,24 @@ class OnebitAdam(torch.optim.Optimizer):
         for i, group in enumerate(self.param_groups):
             if 'exp_avg_mask' in group:
                 state_dict['param_groups'][i]['exp_avg_mask'] = group['exp_avg_mask']
-            elif 'exp_avg_mask' not in group and 'exp_avg_mask' in state_dict['param_groups'][i]:
+            elif 'exp_avg_mask' not in group and 'exp_avg_mask' in state_dict[
+                    'param_groups'][i]:
                 state_dict['param_groups'][i].pop('exp_avg_mask')
         super().load_state_dict(state_dict)
         if self.state[self.param_groups[0]['params'][0]]['step'] < self.freeze_step:
-            if dist.get_rank() == 0:
-                print("Checkpoint loaded and OnebitAdam warmup stage starts/continues.")
+            if torch.distributed.get_rank() == 0:
+                print("Checkpoint loaded and 1-bit Adam warmup stage starts/continues.")
             if self.adam_freeze_key is True:
                 self.adam_freeze_key = False
-                if self.using_pipeline:
-                    self.deepspeed.pipeline_enable_backward_allreduce = True
-                else:
-                    self.deepspeed.enable_backward_allreduce = True
+                self.deepspeed.enable_backward_allreduce = True
         else:
-            if dist.get_rank() == 0:
-                print("Checkpoint loaded and OnebitAdam compression stage starts/continues.")
+            if torch.distributed.get_rank() == 0:
+                print(
+                    "Checkpoint loaded and 1-bit Adam compression stage starts/continues."
+                )
             if self.adam_freeze_key is False:
                 self.adam_freeze_key = True
-                if self.using_pipeline:
-                    self.deepspeed.pipeline_enable_backward_allreduce = False
-                else:
-                    self.deepspeed.enable_backward_allreduce = False
+                self.deepspeed.enable_backward_allreduce = False
         # We reset the compression errors when loading checkpoints for 3 reasons:
         # 1) The worker and server error at each GPU are distinct, so in current implementation
         # only rank 0's errors are saved in the checkpoint. Thus we have to reset the errors.

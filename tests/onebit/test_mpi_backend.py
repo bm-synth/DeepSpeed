@@ -1,31 +1,25 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 from mpi4py import MPI
+import time
 import torch
-import deepspeed.comm as dist
+import torch.distributed as dist
 import numpy as np
 import deepspeed
 
 from deepspeed.runtime.comm.mpi import MpiBackend
-from deepspeed.accelerator import get_accelerator
 
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
 rank = comm.Get_rank()
 
-deepspeed.init_distributed(dist_backend=get_accelerator().communication_backend_name())
+deepspeed.init_distributed(dist_backend='nccl')
 
 # Change cuda_aware to True to test out CUDA-Aware MPI communication
 backend = MpiBackend(cuda_aware=False)
 
-local_rank = rank % get_accelerator().device_count()
-device = torch.device(get_accelerator().device_name(), local_rank)
+device = torch.device('cuda', rank % torch.cuda.device_count())
 
 
-# A simulated compression function using deepspeed.comm
+# A simulated compression function using torch.distributed
 def torch_sim(a):
     a_sign = a.sign().add_(1).bool().float().add_(-0.5).mul_(2.0)
     scale = a.norm() / np.sqrt(a.numel())
@@ -38,11 +32,12 @@ def torch_sim(a):
     a_list = torch.chunk(a_compressed, chunks=dist.get_world_size())
     server_scale = [chunk_a.norm() / np.sqrt(chunk_a.numel()) for chunk_a in a_list]
     a_sign_list = torch.chunk(a_server_sign, dist.get_world_size())
-    a_server_compressed = torch.cat([server_scale[i] * a_sign_list[i] for i in range(dist.get_world_size())])
+    a_server_compressed = torch.cat(
+        [server_scale[i] * a_sign_list[i] for i in range(dist.get_world_size())])
     rank = dist.get_rank()
     server_error = a_list[rank] - server_scale[rank] * a_sign_list[rank]
-    get_accelerator().synchronize()
-    dist.barrier()
+    torch.cuda.synchronize()
+    torch.distributed.barrier()
     return a_server_compressed, worker_error, server_error
 
 
@@ -62,7 +57,8 @@ worker_error = torch.zeros(right_tensor_size, device=device)
 server_error = torch.zeros(right_server_size, device=device)
 
 a_torch, worker_error_torch, server_error_torch = torch_sim(a)
-get_accelerator().empty_cache()
+torch.cuda.empty_cache()
+local_rank = rank % torch.cuda.device_count()
 
 a_after = backend.compressed_allreduce(a, worker_error, server_error, local_rank)
 

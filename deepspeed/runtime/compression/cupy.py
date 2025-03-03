@@ -1,7 +1,6 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
+'''
+Copyright 2020 The Microsoft DeepSpeed Team
+'''
 
 import cupy
 from torch.utils.dlpack import to_dlpack
@@ -9,7 +8,6 @@ from torch.utils.dlpack import from_dlpack
 
 
 class CupyBackend(object):
-
     def __init__(self):
         pass
 

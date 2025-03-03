@@ -1,10 +1,6 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
+import time
 import torch
-import deepspeed.comm as dist
+import torch.distributed as dist
 import numpy as np
 import argparse
 import deepspeed
@@ -12,7 +8,6 @@ import os
 
 from deepspeed.runtime.comm.nccl import NcclBackend
 from deepspeed.utils.timer import SynchronizedWallClockTimer
-from deepspeed.accelerator import get_accelerator
 from statistics import mean
 
 timers = SynchronizedWallClockTimer()
@@ -21,11 +16,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--local_rank', type=int, default=-1)
 args = parser.parse_args()
 
-deepspeed.init_distributed(dist_backend=get_accelerator().communication_backend_name())
+deepspeed.init_distributed(dist_backend='nccl')
 args.local_rank = int(os.environ['LOCAL_RANK'])
 
-get_accelerator().set_device(args.local_rank)
-device = torch.device(get_accelerator().device_name(), args.local_rank)
+torch.cuda.set_device(args.local_rank)
+device = torch.device("cuda", args.local_rank)
 
 size = dist.get_world_size()
 rank = dist.get_rank()
@@ -67,7 +62,7 @@ print("Shape of the compressed buffer:", a_compressed.shape) if rank == 0 else N
 for i in range(iters):
     timers('compressed_allreduce').start()
     backend.compressed_allreduce(a, worker_error, server_error, local_rank)
-    #deepspeed.comm.all_reduce(a_compressed)
+    #torch.distributed.all_reduce(a_compressed)
     timers('compressed_allreduce').stop()
     time_list.append(timers('compressed_allreduce').elapsed())
 
@@ -86,7 +81,9 @@ if rank == 0:
 minlat = round(min(time_list) * convert)
 maxlat = round(max(time_list) * convert)
 meanlat = round(mean(time_list) * convert, places)
-print("min, max, and mean = {} ms, {} ms, {} ms".format(minlat, maxlat, meanlat)) if rank == 0 else None
+print("min, max, and mean = {} ms, {} ms, {} ms".format(minlat,
+                                                        maxlat,
+                                                        meanlat)) if rank == 0 else None
 #print("tensor shape", a.shape)
 duration = meanlat / 1e3
 tput = ((tensor_size * 4) / duration)
