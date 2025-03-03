@@ -203,21 +203,12 @@ def top1gating(logits: Tensor,
     # if we don't want to drop any tokens
     if not drop_tokens:
         new_capacity = torch.max(exp_counts).to(logits.device)
-        # Communicate across expert processes to pick the maximum capacity.
-        if ep_group is not None:
-            dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=ep_group)
+        dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=dist.get_world_group())
         if groups._get_expert_model_parallel_world_size() == 1:
             # If the non-expert is tensor-parallel, we need to pad the capacity to 'tp'.
             # This is since we are going to activate drop_tokens() to drop duplicate tokens.
-            tp = 1 if groups.mpu is None else bwc_tensor_model_parallel_world_size(mpu=groups.mpu)
+            tp = 1 if groups.mpu is None else groups.mpu.get_tensor_model_parallel_world_size()
             new_capacity = torch.ceil(new_capacity / tp).mul(tp).to(new_capacity.dtype)
-        # Make sure the capacity value does not exceed the number of tokens.
-        capacity = min(new_capacity, torch.tensor(mask1.size(0)).to(new_capacity.device))
-
-    # if we don't want to drop any tokens
-    if not drop_tokens:
-        new_capacity = torch.max(exp_counts).to(logits.device)
-        dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=dist.group.WORLD)
         capacity = new_capacity
 
     # Compute l_aux
@@ -281,12 +272,14 @@ def top1gating(logits: Tensor,
     return l_aux, combine_weights, dispatch_mask, exp_counts
 
 
-def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+def top2gating(logits: Tensor,
+               capacity_factor: float,
+               min_capacity: int,
+               drop_tokens: bool = True,
+               top2_2nd_expert_sampling: bool = True) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     """Implements Top2Gating on logits."""
     # everything is in fp32 in this function
     gates = F.softmax(logits, dim=1)
-
-    capacity = _capacity(gates, torch.tensor(capacity_factor * 2), torch.tensor(min_capacity))
 
     # Create a mask for 1st's expert per token
     indices1_s = torch.argmax(gates, dim=1)
@@ -315,7 +308,7 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     l_aux = torch.mean(me * ce) * num_experts * num_experts
 
     # gating decisions
-    exp_counts = torch.sum(mask1 + mask2, dim=0).detach().to(logits.device)
+    exp_counts = torch.sum(mask1 + mask2, dim=0)
 
     if drop_tokens:
         # Calculate configured capacity and remove locations outside capacity from mask
@@ -325,12 +318,11 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     else:
         # Do not drop tokens - set capacity according to current expert assignments
         new_capacity = torch.max(exp_counts)
-        if ep_group is not None:
-            dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=ep_group)
+        dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=dist.get_world_group())
         if groups._get_expert_model_parallel_world_size() == 1:
             # If the non-expert is tensor-parallel, we need to pad the capacity to 'tp'.
             # This is since we are going to activate drop_tokens() to drop duplicate tokens.
-            tp = 1 if groups.mpu is None else bwc_tensor_model_parallel_world_size(mpu=groups.mpu)
+            tp = 1 if groups.mpu is None else groups.mpu.get_tensor_model_parallel_world_size()
             new_capacity = torch.ceil(new_capacity / tp).mul(tp).to(new_capacity.dtype)
         capacity = new_capacity
 
@@ -359,7 +351,7 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     combine_weights = combine1_sec + combine2_sec
     dispatch_mask = combine_weights.bool()
 
-    return l_aux, combine_weights, dispatch_mask, exp_counts
+    return l_aux, combine_weights, dispatch_mask, exp_counts.detach().to('cpu')
 
 
 class TopKGate(Module):
@@ -389,11 +381,14 @@ class TopKGate(Module):
                  min_capacity: int = 4,
                  noisy_gate_policy: Optional[str] = None,
                  drop_tokens: bool = True,
-                 use_rts: bool = True) -> None:
+                 use_rts: bool = True,
+                 top2_2nd_expert_sampling: bool = True) -> None:
         super().__init__()
 
+        # Only top-1 and top-2 are supported at the moment.
+        if k != 1 and k != 2:
+            raise ValueError('Only top-1 and top-2 gatings are supported.')
         self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
-        self.ep_group = ep_group
         self.k = k
         self.capacity_factor = capacity_factor
         self.eval_capacity_factor = eval_capacity_factor
@@ -404,6 +399,7 @@ class TopKGate(Module):
         self.gate_time = 0.0
         self.drop_tokens = drop_tokens
         self.use_rts = use_rts
+        self.top2_2nd_expert_sampling = top2_2nd_expert_sampling
 
     def forward(self,
                 input: torch.Tensor,
@@ -413,13 +409,11 @@ class TopKGate(Module):
         if self.wall_clock_breakdown:
             self.timers(TOPK_GATE_TIMER).start()
 
-        if self.wg.weight.dtype != torch.float32:
-            self.wg = self.wg.float()
         input_fp32 = input.float()
         # input jittering
         if self.noisy_gate_policy == 'Jitter' and self.training:
             input_fp32 = multiplicative_jitter(input_fp32, device=input.device)
-        logits = self.wg(input_fp32)
+        logits = torch.nn.functional.linear(input_fp32, weight=self.wg.weight.float(), bias=None)
 
         if self.k == 1:
             gate_output = top1gating(logits, self.capacity_factor if self.training else self.eval_capacity_factor,
@@ -428,7 +422,7 @@ class TopKGate(Module):
 
         else:
             gate_output = top2gating(logits, self.capacity_factor if self.training else self.eval_capacity_factor,
-                                     self.min_capacity)
+                                     self.min_capacity, self.drop_tokens, self.top2_2nd_expert_sampling)
 
         if self.wall_clock_breakdown:
             self.timers(TOPK_GATE_TIMER).stop()
