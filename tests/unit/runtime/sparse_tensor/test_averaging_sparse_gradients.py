@@ -8,6 +8,10 @@ import pytest
 import deepspeed
 from unit.common import DistributedTest
 from unit.util import skip_on_arch
+from deepspeed.accelerator import get_accelerator
+
+if get_accelerator().device_name() == 'hpu':
+    pytest.skip("sparse_gradients not supported by HPU.", allow_module_level=True)
 
 
 class Model(torch.nn.Module):
