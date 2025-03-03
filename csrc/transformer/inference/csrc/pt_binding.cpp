@@ -916,15 +916,15 @@ void quantized_gemm(void* output,
                     int bsz,
                     int hidden_size)
 {
-    // T* weight16 = (T*)InferenceContext::Instance().GetWorkSpace() + 12 * hidden_size * bsz;
+    T* weight16 = (T*)Context::Instance().GetWorkSpace() + 12 * hidden_size * bsz;
 
-    auto options = at::TensorOptions()
-                       .dtype(at::kHalf)
-                       .layout(at::kStrided)
-                       .device(at::kCUDA)
-                       .requires_grad(false);
-    auto tmp = torch::empty(weight.sizes(), options);
-    T* weight16 = (T*)tmp.data_ptr();
+    // auto options = at::TensorOptions()
+    //                    .dtype(at::kHalf)
+    //                    .layout(at::kStrided)
+    //                    .device(at::kCUDA)
+    //                    .requires_grad(false);
+    // auto tmp = torch::empty(weight.sizes(), options);
+    // T* weight16 = (T*)tmp.data_ptr();
     launch_dequantize(weight16,
                       (int8_t*)weight.data_ptr(),
                       (float*)qscale.data_ptr(),
@@ -1389,7 +1389,7 @@ at::Tensor ds_vector_matmul(at::Tensor& input,
                        .layout(at::kStrided)
                        .device(at::kCUDA)
                        .requires_grad(false);
-    int out_size = (q_int8 || transposed_mode) ? weight.size(0) : weight.size(1);
+    int out_size = q_int8 ? weight.size(0) : weight.size(1);
     int bsz = input.size(0) * input.size(1);
 
     T* workspace = (T*)InferenceContext::Instance().GetWorkSpace();
@@ -1769,8 +1769,10 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                            at::Tensor& bias,
                            at::Tensor& weight_out,
                            at::Tensor& weight_out_scale,
+                           const float epsilon,
+                           bool preLayerNorm,
                            bool q_int8,
-                           bool transposed_mode)
+                           bool async_op)
 {
     auto options = at::TensorOptions()
                        .dtype(input.options().dtype())
@@ -1778,10 +1780,9 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                        .device(at::kCUDA)
                        .requires_grad(false);
 
-    int intm_dim = (transposed_mode || q_int8) ? weight.size(0) : weight.size(1);
+    int intm_dim = q_int8 ? weight.size(0) : weight.size(1);
 
-    // auto output = at::from_blob((T*)InferenceContext::Instance().GetWorkSpace() +
-    // torch::numel(input),
+    // auto output = at::from_blob((T*)Context::Instance().GetWorkSpace() + torch::numel(input),
     //                            {input.size(0), input.size(1), out_size},
     //                            options);
     // T* intermediate = (T*)input.data_ptr() + torch::numel(input);
@@ -1800,10 +1801,10 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                           bsz,
                           input.size(2));
     } else {
-        cublasSetStream(InferenceContext::Instance().GetCublasHandle(),
-                        InferenceContext::Instance().GetCurrentStream());
-        cublas_gemm_ex(InferenceContext::Instance().GetCublasHandle(),
-                       (transposed_mode ? CUBLAS_OP_T : CUBLAS_OP_N),
+        cublasSetStream(Context::Instance().GetCublasHandle(),
+                        Context::Instance().GetCurrentStream());
+        cublas_gemm_ex(Context::Instance().GetCublasHandle(),
+                       CUBLAS_OP_N,
                        CUBLAS_OP_N,
                        intm_dim,
                        bsz,
@@ -1813,8 +1814,7 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                        (T*)weight.data_ptr(),
                        (T*)input.data_ptr(),
                        (T*)intermediate.data_ptr(),
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
+#ifdef __HIP_PLATFORM_HCC__
                        rocblas_gemm_algo_standard);
 #else
                        CUBLAS_GEMM_DEFAULT_TENSOR_OP);
@@ -1826,7 +1826,7 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                      bsz,
                      InferenceContext::Instance().GetCurrentStream());
 
-    int out_size = (transposed_mode || q_int8) ? weight_out.size(0) : weight_out.size(1);
+    int out_size = q_int8 ? weight_out.size(0) : weight_out.size(1);
     auto output = at::empty({input.size(0), input.size(1), out_size}, options);
     if (q_int8) {
         quantized_gemm<T>(output.data_ptr(),
@@ -1837,8 +1837,8 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                           bsz,
                           input.size(2));
     } else {
-        cublas_gemm_ex(InferenceContext::Instance().GetCublasHandle(),
-                       (transposed_mode ? CUBLAS_OP_T : CUBLAS_OP_N),
+        cublas_gemm_ex(Context::Instance().GetCublasHandle(),
+                       CUBLAS_OP_N,
                        CUBLAS_OP_N,
                        out_size,
                        bsz,
@@ -1848,15 +1848,14 @@ at::Tensor fused_gemm_gelu(at::Tensor& input,
                        (T*)weight_out.data_ptr(),
                        (T*)intermediate.data_ptr(),
                        (T*)output.data_ptr(),
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
+#ifdef __HIP_PLATFORM_HCC__
                        rocblas_gemm_algo_standard);
 #else
                        CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 #endif
     }
-    // cudaEventRecord(InferenceContext::Instance().GetCompEvent(2),
-    //                InferenceContext::Instance().GetCurrentStream(true));
+    // cudaEventRecord(Context::Instance().GetCompEvent(2),
+    //                Context::Instance().GetCurrentStream(true));
     return output;
 }
 

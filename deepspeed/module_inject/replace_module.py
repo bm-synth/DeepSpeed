@@ -66,22 +66,32 @@ class ReplaceWithTensorSlicing:
         src_shape = src.shape
         dst_shape = dst.shape
 
-        src_split = torch.split(src.data, src.shape[-1] // 3, dim=-1)
-
+        if self.out_dim == 0:
+            src_split = torch.split(src.data,
+                                    src_shape[self.out_dim] // self.mp_size,
+                                    dim=0)
+        else:
+            src_split = torch.split(src.data, src.shape[-1] // 3, dim=-1)
         if (len(src_shape) == 2 and len(dst_shape) == 2):
-            if src_shape[1] == dst_shape[1]:
-                return src
-
-            self.merge_assert(src_shape[1], dst_shape[1])
-            qkv_size = dst_shape[1] // 3
-            qkv_split = [torch.split(src_s, qkv_size, dim=1) for src_s in src_split]
-
-            weight_split = [
-                torch.cat([qkv_s[i] for qkv_s in qkv_split],
-                          axis=1) for i in range(len(qkv_split[0]))
-            ]
-            dst.data.copy_(weight_split[self.gpu_index].to(
-                torch.cuda.current_device()).contiguous())
+            if src_shape[self.out_dim] == dst_shape[self.out_dim]:
+                return torch.nn.parameter.Parameter(src)
+            if self.out_dim == 1:
+                self.merge_assert(src_shape[self.out_dim], dst_shape[self.out_dim])
+                qkv_size = dst_shape[self.out_dim] // 3
+                qkv_split = [
+                    torch.split(src_s,
+                                qkv_size,
+                                dim=self.out_dim) for src_s in src_split
+                ]
+                weight_split = [
+                    torch.cat([qkv_s[i] for qkv_s in qkv_split],
+                              axis=self.out_dim) for i in range(len(qkv_split[0]))
+                ]
+                dst.data.copy_(weight_split[self.gpu_index].to(
+                    torch.cuda.current_device()).contiguous())
+            else:
+                dst.data.copy_(src_split[self.gpu_index].to(
+                    torch.cuda.current_device()).contiguous())
         else:
             if src_shape[0] == dst_shape[0]:
                 return src
@@ -145,8 +155,7 @@ def get_transformer_name(replaced_module):
 
 
 class GroupQuantizer:
-    def __init__(self, q_int8=True, num_groups=32, group_size=32, num_bits=8):
-        self.num_groups = num_groups
+    def __init__(self, q_int8=True, group_size=1, num_bits=8):
         self.group_size = group_size
         self.num_bits = num_bits
         self.q_int8 = q_int8
@@ -157,8 +166,9 @@ class GroupQuantizer:
             inputs.scale = torch.empty(1)
             return inputs
         q_range = 2**self.num_bits
+        num_groups = inputs.shape[0] // self.group_size
         inputs = inputs.to(torch.cuda.current_device())
-        input_flat = inputs.reshape(self.num_groups, -1).contiguous()
+        input_flat = inputs.reshape(num_groups, -1).contiguous()
         input_min = torch.min(input_flat, dim=1, keepdim=True)[0].float()
         input_max = torch.max(input_flat, dim=1, keepdim=True)[0].float()
         scale = torch.max(input_min.abs(), input_max.abs()) * 2.0 / (q_range)
@@ -168,7 +178,7 @@ class GroupQuantizer:
         #print(inputs.shape)
         inputs_split = inputs.split(inputs.shape[parallel_dim] // 2, dim=parallel_dim)
         input_flat = [
-            inputs_split[i].reshape(self.num_groups,
+            inputs_split[i].reshape(num_groups,
                                     -1).contiguous() for i in range(2)
         ]
         input_min = [
@@ -190,7 +200,7 @@ class GroupQuantizer:
         out.scale = torch.cat([scale.squeeze().unsqueeze(0),
                                scale1[0],
                                scale1[1]],
-                              dim=0).reshape(self.num_groups,
+                              dim=0).reshape(num_groups,
                                              -1).contiguous()
         return out
 
@@ -294,6 +304,11 @@ def generic_injection(module, fp16=False, enable_cuda_graph=True):
                 setattr(module, name, new_module)
 
 
+selected_policy_g = None
+megatron_v2_g = False
+transformer_config_g = None
+
+
 def replace_transformer_layer(orig_layer_impl,
                               model,
                               checkpoint_dict,
@@ -333,6 +348,9 @@ def replace_transformer_layer(orig_layer_impl,
                             inference=False,
                             layer_id=0):
         policy = policy_cls(child, inference=inference)
+        global selected_policy_g
+        if selected_policy_g is None:
+            selected_policy_g = policy
         if not policy.cuda_graph_supported:
             # policy says cuda graph is not supported raise an error if set
             assert not config.enable_cuda_graph, "cuda graph is not supported with this model, please disable"
@@ -358,6 +376,8 @@ def replace_transformer_layer(orig_layer_impl,
             moe = True
 
         attn_linear_layer, qkvw, qkvb, dense_w, dense_b, scale_attention, megatron_v2 = policy.attention()
+        global megatron_v2_g
+        megatron_v2_g = megatron_v2
         if not moe or config.moe.type == 'standard':
             mlp_linear_layer, _h4h_w, _h4h_b, _4hh_w, _4hh_b = policy.mlp()
         else:
@@ -460,6 +480,8 @@ def replace_transformer_layer(orig_layer_impl,
                     bigscience_bloom=bigscience_bloom,
                     max_out_tokens=config.max_out_tokens,
                     scale_attn_by_inverse_layer_idx=scale_attn_by_inverse_layer_idx)
+                global transformer_config_g
+                transformer_config_g = transformer_config
 
             if moe:
                 new_module = transformer_inference.DeepSpeedMoEInference(
@@ -553,9 +575,27 @@ def replace_transformer_layer(orig_layer_impl,
                 _res_4hh_w.data = transpose(_res_4hh_w.data)
                 _res_coef.data = transpose(_res_coef.data)
 
-            attn_block = new_module.attention
-            attn_block.attn_qkvw = mp_replace.qkv_copy(attn_block.attn_qkvw, qkvw)
-            attn_block.attn_qkvb = mp_replace.qkv_copy(attn_block.attn_qkvb, qkvb)
+            if qkvw.is_meta or qkvw.numel() == 0 or qkvw.is_meta:
+                if qkvw.is_meta or qkvw.ds_tensor.numel() < attn_block.attn_qkvw.numel():
+                    if qkvb is None:
+                        attn_block.attn_qkvb = None
+                    if dense_b is None:
+                        attn_block.attn_ob = None
+                    pass
+                else:
+                    with GatheredParameters([
+                            attn_block.attn_qkvw,
+                            attn_block.attn_qkvb,
+                            attn_block.attn_ow,
+                            attn_block.attn_ob
+                    ],
+                                            modifier_rank=0):
+                        attn_block.attn_qkvw = mp_replace.copy(
+                            attn_block.attn_qkvw,
+                            qkvw)
+                        attn_block.attn_qkvb = mp_replace.copy(
+                            attn_block.attn_qkvb,
+                            qkvb)
 
                         attn_block.attn_ow = mp_replace.copy(attn_block.attn_ow, dense_w)
                         attn_block.attn_ob = mp_replace.copy(attn_block.attn_ob, dense_b)
@@ -838,7 +878,9 @@ def replace_transformer_layer(orig_layer_impl,
                     mp_replace,
                     ckpt_type,
                     quantizer,
-                )
+                    param_names=selected_policy_g.get_param_names(),
+                    transformer_config=transformer_config_g,
+                    megatron_v2=megatron_v2_g)
                 pbar.update(1)
         else:
             num_checkpoints = len(checkpoint) // ckpt_mp_size
@@ -849,19 +891,55 @@ def replace_transformer_layer(orig_layer_impl,
                 pbar = tqdm.tqdm(total=num_checkpoints,
                                  desc=f"Loading {num_checkpoints} checkpoint shards")
             for i in range(num_checkpoints):
-                if not deepspeed.comm.is_initialized() or deepspeed.comm.get_rank() == 0:
-                    pbar.update(1)
+                pbar.update(1)
+                ckpt_index = i * ckpt_mp_size + sd_offset
+                ckpt_files = [
+                    os.path.join(base_dir1,
+                                 ckpt_list[ckpt_index +
+                                           j]) if base_dir1 else ckpt_list[ckpt_index +
+                                                                           j]
+                    for j in range(sd_count)
+                ]
+                sds = [
+                    torch.load(ckpt_file,
+                               map_location='cpu') for ckpt_file in ckpt_files
+                ]
+                load_model_with_checkpoint(
+                    replaced_module,
+                    sds,
+                    mp_replace,
+                    ckpt_type,
+                    quantizer,
+                    int(rank % tp_split_size),
+                    param_names=selected_policy_g.get_param_names(),
+                    transformer_config=transformer_config_g,
+                    megatron_v2=megatron_v2_g)
+                sds = [None for _ in sds]
+                gc.collect()
 
-                ckpt_index = i * ckpt_mp_size + (rank // checkpoint_stride)
-                ckpt_file = os.path.join(
-                    base_dir,
-                    checkpoint[ckpt_index]) if base_dir else checkpoint[ckpt_index]
-                sd = torch.load(ckpt_file, map_location='cpu')
-                load_model_with_checkpoint(replaced_module,
-                                           sd,
-                                           mp_replace,
-                                           ckpt_type,
-                                           rank % (world_size // ckpt_mp_size))
+            if "non_tp" in checkpoint:
+                pbar = tqdm.tqdm(
+                    total=len(checkpoint["non_tp"]),
+                    desc=f"Loading {len(checkpoint['non_tp'])} checkpoint shards")
+
+                for i in range(len(checkpoint["non_tp"])):
+                    pbar.update(1)
+                    ckpt_file = os.path.join(base_dir1,
+                                             checkpoint["non_tp"][i]
+                                             ) if base_dir1 else checkpoint["non_tp"][i]
+                    sds = [torch.load(ckpt_file, map_location='cpu')]
+                    load_model_with_checkpoint(
+                        replaced_module,
+                        sds,
+                        mp_replace,
+                        ckpt_type,
+                        quantizer,
+                        int(rank % tp_split_size),
+                        param_names=selected_policy_g.get_param_names(),
+                        transformer_config=transformer_config_g,
+                        megatron_v2=megatron_v2_g)
+                    sds = [None for _ in sds]
+                    gc.collect()
         print(f"checkpoint loading time at rank {rank}: {time.time()-start_time} sec")
 
     if config.save_mp_checkpoint_path is not None:
@@ -884,6 +962,7 @@ def replace_transformer_layer(orig_layer_impl,
         non_tp_ckpt_name = f'non-tp.pt'
         ckpt_files = [non_tp_ckpt_name]
         os.makedirs(config.save_mp_checkpoint_path, exist_ok=True)
+
         if not dist.is_initialized() or dist.get_rank() == 0:
             print("Saving tp-sharded checkpoints")
             torch.save(
@@ -894,7 +973,7 @@ def replace_transformer_layer(orig_layer_impl,
                     if transformer_name not in k
                 }),
                 f'{config.save_mp_checkpoint_path}/{non_tp_ckpt_name}')
-            config = json.dumps({
+            new_config = json.dumps({
                 'type':
                 ckpt_name,
                 'base_dir':
@@ -918,14 +997,7 @@ def replace_transformer_layer(orig_layer_impl,
             })
             with open(f"{config.save_mp_checkpoint_path}/ds-inference_config.json",
                       "w") as cfg:
-                cfg.write(config)
-        torch.save(
-            OrderedDict({
-                k: v
-                for k,
-                v in dict(replaced_module.state_dict()).items() if transformer_name in k
-            }),
-            f'{save_mp_checkpoint_path}/{ckpt_name}-tp_{rank:0>2d}.pt')
+                cfg.write(new_config)
 
         rep_sd = replaced_module.state_dict()
         for n, p in replaced_module.named_parameters():

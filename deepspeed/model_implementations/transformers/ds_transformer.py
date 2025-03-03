@@ -68,21 +68,15 @@ class DeepSpeedTransformerInference(nn.Module):
                 self.attention = DeepSpeedSelfAttention(self.config, mp_group, quantize_scales, quantize_groups,
                                                         merge_count)
 
-        if deepspeed.HAS_TRITON and self.config.use_triton:
-            self.mlp = TritonMLP(self.config)
-        else:
-            self.mlp = DeepSpeedMLP(self.config, mp_group, quantize_scales, quantize_groups, merge_count,
-                                    mlp_extra_grouping)
-
-        device = get_accelerator().current_device_name()  # if config.bigscience_bloom else 'cpu'
-        if self.config.set_empty_params:
-            self.norm_w = None
-            self.norm_b = None
-        else:
-            self.norm_w = nn.Parameter(torch.empty(self.config.hidden_size, dtype=data_type, device=device),
-                                       requires_grad=False)
-            self.norm_b = nn.Parameter(torch.empty(self.config.hidden_size, dtype=data_type, device=device),
-                                       requires_grad=False)
+        device = torch.cuda.current_device()  #if config.bigscience_bloom else 'cpu'
+        self.norm_w = nn.Parameter(torch.empty(self.config.hidden_size,
+                                               dtype=data_type,
+                                               device=device),
+                                   requires_grad=False)
+        self.norm_b = nn.Parameter(torch.empty(self.config.hidden_size,
+                                               dtype=data_type,
+                                               device=device),
+                                   requires_grad=False)
         self.layer_past = None
         self.layer_norm = LayerNormOp()
         if DeepSpeedTransformerInference.workspace is None:
@@ -154,9 +148,7 @@ class DeepSpeedTransformerInference(nn.Module):
 
         if (self.config.dtype in [torch.float16, torch.bfloat16, torch.int8]) \
             and input.dtype == torch.float:
-            target_dtype = torch.half if self.config.dtype == torch.int8 else self.config.dtype
-            input = input.to(target_dtype)
-
+            input = input.half()
         with torch.no_grad():
             attention_output, key, value, context_outputtn_ctx, inp_norm = \
                                      self.attention(input,
