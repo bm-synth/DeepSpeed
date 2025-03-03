@@ -1,13 +1,8 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
-from unit.common import DistributedTest
-from unit.simple_model import *
-from unit.checkpoint.common import checkpoint_correctness_verification
-from unit.util import skip_on_arch
+from tests.unit.common import DistributedTest
+from tests.unit.simple_model import *
+
+from tests.unit.checkpoint.common import checkpoint_correctness_verification
 
 import pytest
 
@@ -17,8 +12,6 @@ class TestPipelineCheckpoint(DistributedTest):
 
     @pytest.mark.parametrize("zero_stage", [0, 1])
     def test_checkpoint_pipe_engine(self, zero_stage, tmpdir):
-        skip_on_arch(min_arch=7)
-
         config_dict = {
             "train_batch_size": 2,
             "train_micro_batch_size_per_gpu": 1,
@@ -58,10 +51,10 @@ class TestPipelineCheckpoint(DistributedTest):
                                             models=models,
                                             hidden_dim=models[0].hidden_dim,
                                             tmpdir=tmpdir,
+                                            fp16=config_dict['fp16']['enabled'],
                                             load_optimizer_states=True,
                                             load_lr_scheduler_states=True,
-                                            train_batch=True,
-                                            dtype=torch.float16 if zero_stage > 0 else torch.float32)
+                                            train_batch=True)
 
     @pytest.mark.parametrize(
         "base_topo,test_topo",

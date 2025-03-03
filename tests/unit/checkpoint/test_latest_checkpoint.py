@@ -1,19 +1,9 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 import deepspeed
 
-import pytest
-from unit.common import DistributedTest
-from unit.simple_model import *
+from tests.unit.common import DistributedTest
+from tests.unit.simple_model import *
 
-from unit.checkpoint.common import checkpoint_correctness_verification
-from deepspeed.ops.op_builder import FusedAdamBuilder
-
-if not deepspeed.ops.__compatible_ops__[FusedAdamBuilder.NAME]:
-    pytest.skip("This op had not been implemented on this system.", allow_module_level=True)
+from tests.unit.checkpoint.common import checkpoint_correctness_verification
 
 
 class TestLatestCheckpoint(DistributedTest):
@@ -38,8 +28,8 @@ class TestLatestCheckpoint(DistributedTest):
                                             tmpdir=tmpdir,
                                             load_optimizer_states=True,
                                             load_lr_scheduler_states=False,
-                                            empty_tag=True,
-                                            dtype=torch.float)
+                                            fp16=False,
+                                            empty_tag=True)
 
     def test_missing_latest(self, tmpdir):
         config_dict = {
@@ -54,6 +44,8 @@ class TestLatestCheckpoint(DistributedTest):
         }
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=config_dict, model=model, model_parameters=model.parameters())
+        model, _, _,_ = deepspeed.initialize(config=config_dict,
+                                            model=model,
+                                            model_parameters=model.parameters())
         # should be no-op, since latest doesn't exist
         model.load_checkpoint(tmpdir)
