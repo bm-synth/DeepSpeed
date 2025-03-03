@@ -19,6 +19,9 @@ import subprocess
 # -----------------------------------------------------------------------------
 # util class/functions for triton
 def is_nfs_path(path):
+    if os.name == 'nt':
+        return False
+
     # Normalize the path to get the absolute path
     path = os.path.abspath(path)
 
