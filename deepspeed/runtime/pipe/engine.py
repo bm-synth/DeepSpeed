@@ -1389,5 +1389,10 @@ class PipelineEngine(DeepSpeedEngine):
                 self._exec_instr = MethodType(self._INSTRUCTION_MAP[type(cmd)], self)
                 self._exec_instr(**cmd.kwargs)
 
-    def get_additional_losses(self):
-        return self.agg_additional_losses
+    def set_batch_fn(self, fn):
+        """Execute a post-processing function on input data.
+
+        Args:
+            fn (function): The function to run.
+        """
+        self.batch_fn = fn
