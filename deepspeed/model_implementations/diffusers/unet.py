@@ -4,6 +4,7 @@
 # DeepSpeed Team
 
 import torch
+from deepspeed.accelerator import get_accelerator
 from ..features.cuda_graph import CUDAGraph
 
 

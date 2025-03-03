@@ -67,7 +67,7 @@ class DSClipEncoder(CUDAGraph, torch.nn.Module):
         self.static_inputs[self.iter] = inputs
         self.static_kwargs[self.iter] = kwargs
 
-        with torch.cuda.graph(self._cuda_graphs[self.iter]):
+        with get_accelerator().capture_to_graph(self._cuda_graphs[self.iter]):
             self.static_output[self.iter] = self._forward(*self.static_inputs[self.iter],
                                                           **self.static_kwargs[self.iter])
 
