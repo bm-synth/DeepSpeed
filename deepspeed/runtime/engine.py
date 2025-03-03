@@ -376,108 +376,6 @@ class DeepSpeedEngine(Module):
 
         self._is_compiled = False
 
-    def _optimized_linear_offload_setup(self):
-        self.optimized_linear_base_weight_sharding = False
-        self.optimized_linear_lora_enabled = False
-        offload_ratio = None
-        for _, module in self.module.named_modules():
-            if isinstance(module, LoRAOptimizedLinear):
-                self.optimized_linear_lora_enabled = True
-                offload_ratio = None
-                if offload_ratio is not None:
-                    assert offload_ratio == module.lora_config.offload_ratio, \
-                        "all lora_config offload ratios should be the same across the model"
-                offload_ratio = module.lora_config.offload_ratio
-                if module.zero_shards > 1:
-                    # set attr so checkpoint saving can handle BWS properly
-                    self.optimized_linear_base_weight_sharding = True
-
-        if offload_ratio is None:
-            # Nothing enabled, do nothing
-            return
-
-        total_params = 0
-        for _, p in self.module.named_parameters():
-            if hasattr(p, 'ds_optim_param'):
-                total_params += p.numel()
-
-        offload_limit = total_params * offload_ratio
-        logger.info(f'offloading {offload_ratio*100}% of eligible params, specifically {offload_limit} params')
-        total_offloaded = 0
-        for _, p in self.module.named_parameters():
-            if hasattr(p, 'ds_optim_param'):
-                if total_offloaded < offload_limit:
-                    total_offloaded += p.numel()
-                    p.ds_offload = True
-                    p.offload()
-                else:
-                    p.ds_offload = False
-
-    def _configure_tensor_parallel_states(self, model):
-        """
-        Configures the tensor parallel states for the model.
-        This includes setting up the tensor parallel groups, initializing the TP mesh,
-        and registering a pre-hook to ensure that the Dataloader inputs are consistent across ranks.
-        """
-        self._set_client_model(model)
-
-        # sanity check
-        # currently, the compatibility between 'autotp' and 'zero > 1' has not been validated
-        assert self.zero_optimization_stage(
-        ) <= 1, "Currently, the compatibility between 'autotp' and 'zero_stage > 1' has not been validated"
-
-        self.mpu = groups
-        self.mpu._init_tp_mesh_device(tensor_model_parallel_size=self.autotp_size())
-
-        self.first_dataloader_check = None
-
-        def check_dataloader_inputs_same_across_ranks(module, args, kwargs):
-
-            def broadcast_and_check(args, bcast_rank, bcast_group):
-                if isinstance(args, tuple):
-                    args = list(args)
-                if len(args) > 0:
-                    if self.mpu.get_tensor_model_parallel_rank() == 0:
-                        _src_args = [args]
-                        dist.broadcast_object_list(object_list=_src_args,
-                                                   src=bcast_rank,
-                                                   group=bcast_group,
-                                                   device=get_accelerator().current_device())
-                        # Rank 0 does not need to compare with itself
-                        is_equal = True
-                    else:
-                        _src_args = [None]
-                        dist.broadcast_object_list(object_list=_src_args,
-                                                   src=bcast_rank,
-                                                   group=bcast_group,
-                                                   device=get_accelerator().current_device())
-
-                        is_equal = compare_tensors_in_structures(args, _src_args[0])
-
-                    equal_tensor = torch.tensor(is_equal,
-                                                dtype=self.communication_data_type,
-                                                device=get_accelerator().current_device())
-                    dist.all_reduce(equal_tensor, group=bcast_group)
-                    assert torch.equal(
-                        equal_tensor,
-                        torch.tensor(groups.get_tensor_model_parallel_world_size(),
-                                     dtype=self.communication_data_type,
-                                     device=get_accelerator().current_device())
-                    ), "Data inconsistency within the TP group. Please check the Dataloader implementation to ensure consistency."
-
-            bcast_rank = self.mpu.get_tensor_model_parallel_src_rank()
-            bcast_group = self.mpu.get_tensor_model_parallel_group()
-
-            broadcast_and_check(args, bcast_rank, bcast_group)
-            broadcast_and_check(kwargs, bcast_rank, bcast_group)
-
-            logger.info(f":The Dataloader has passed the TP group consistency check.")
-            self.first_dataloader_check.remove()
-
-        self.first_dataloader_check = self.module.register_forward_pre_hook(check_dataloader_inputs_same_across_ranks,
-                                                                            prepend=True,
-                                                                            with_kwargs=True)
-
     def destroy(self):
         if self.optimizer is not None and hasattr(self.optimizer, 'destroy'):
             self.optimizer.destroy()
@@ -3816,64 +3714,15 @@ class DeepSpeedEngine(Module):
         """Compile the module using the specified backend and kwargs.
         If a compiler_fn is set, it will be used instead of torch.compile().
         """
-        # Avoid graph breaks
-        deepspeed.utils.nvtx.enable_nvtx = False
-
         if not is_compile_supported():
             raise RuntimeError("compile is not supported in your version of PyTorch.")
 
         if self.is_compiled:
             return
 
-        if 'backend' in compile_kwargs:
-            logger.warning("The `backend` in `compile_kwargs` will be overridden. Use the `backend` argument instead.")
-
-        # create new dict to avoid modifying original dict
-        self.module.compile(**{**compile_kwargs, 'backend': backend})
+        self.module.compile(backend=backend, **compile_kwargs)
         self._is_compiled = True
 
     @property
     def is_compiled(self) -> bool:
         return self._is_compiled
-
-    def offload_states(self,
-                       include: Container[OffloadStateTypeEnum] = None,
-                       device: OffloadDeviceEnum = OffloadDeviceEnum.cpu,
-                       pin_memory: bool = True,
-                       non_blocking: bool = False) -> None:
-        """Offload the engine's states to the specified device.
-
-        Arguments:
-            include: Optional. The set of states to offload. If not provided, all states are offloaded.
-            device: Optional. The device to move the ZeRO optimizer buffers to. Currently only `OffloadDeviceEnum.cpu` is supported.
-            pin_memory: Optional. Whether to pin the memory of the offloaded states.
-            non_blocking: Optional. Whether to offload the states asynchronously.
-        """
-        assert self.zero_optimization_stage(
-        ) == ZeroStageEnum.weights, "Moving buffers across devices is supported only for ZeRO stage 3."
-
-        opt_offload_config = self.zero_offload_optimizer()
-        assert opt_offload_config is None or opt_offload_config.device == OffloadDeviceEnum.none, "Moving states across devices is not supported for offloaded optimizer states."
-        param_offload_config = self.zero_offload_param()
-        assert param_offload_config is None or param_offload_config.device == OffloadDeviceEnum.none, "Moving states across devices is not supported for offloaded parameters."
-
-        assert not self.zero_offload_param(), "Moving states across devices is not supported for offloaded parameters."
-
-        if device == OffloadDeviceEnum.none:
-            logger.warning("No device specified for offloading states.")
-            return
-
-        if device == OffloadDeviceEnum.nvme:
-            raise ValueError("NVMe offload is not supported for offloading states.")
-
-        self.optimizer.offload_states(include=include, device=device, pin_memory=pin_memory, non_blocking=non_blocking)
-
-    def reload_states(self, non_blocking: bool = False) -> None:
-        """Reload the engine states to the original device.
-
-        Arguments:
-            non_blocking: Optional. Whether to offload the states asynchronously.
-        """
-        assert self.zero_optimization_stage(
-        ) == ZeroStageEnum.weights, "Moving buffers back is supported only for ZeRO stage 3."
-        self.optimizer.reload_states(non_blocking=non_blocking)
