@@ -16,6 +16,8 @@
 #define MEGABYTE (1024 * 1024)
 #define GIGABYTE (1024 * 1024 * 1024)
 
+#define MAX_OUT_TOKENS 8192
+
 // TODO: refactor out
 #define WARP_SIZE 32
 

@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // SPDX-License-Identifier: Apache-2.0
 
-// DeepSpeed Team
-
 #include "conversion_utils.h"
 #include "inference_cuda_layers.h"
 #include "memory_access_utils.h"
@@ -23,9 +21,6 @@ inline __device__ float gelu(const float x)
     return x * 0.5f * (1.0f + tanhf(sqrt_param * (x + mul_param * x * x * x)));
 }
 
-/*
-In-place gelu(biasAdd(x)) for channels last
-*/
 template <typename T>
 __global__ void fused_bias_gelu(T* input, const T* bias, int total_count, int intermediate_size)
 {
