@@ -5,10 +5,10 @@
 
 import torch
 from deepspeed.accelerator import get_accelerator
+from ..features.cuda_graph import CUDAGraph
 
 
 class DSClipEncoder(CUDAGraph, torch.nn.Module):
-
     def __init__(self, enc, enable_cuda_graph=False):
         super().__init__(enable_cuda_graph=enable_cuda_graph)
         enc.text_model._build_causal_attention_mask = self._build_causal_attention_mask
@@ -21,7 +21,6 @@ class DSClipEncoder(CUDAGraph, torch.nn.Module):
         self.static_output = [None, None]
         self._cuda_graphs = [None, None]
         self.iter = 0
-        self.enable_cuda_graph = enable_cuda_graph
         self.config = self.enc.config
 
     def _build_causal_attention_mask(self, bsz, seq_len, dtype):
