@@ -131,4 +131,12 @@ class MoE(torch.nn.Module):
             * exp_counts (int): expert count
         """
         output = self.deepspeed_moe(hidden_states, used_token)
+        if self.use_residual:
+            # Residual MoE
+            output_mlp = self.mlp(hidden_states)
+            if type(output_mlp) is tuple:
+                output_mlp = output_mlp[0]  # Ignore the bias term for now
+            coef = self.coefficient(hidden_states)
+            coef = torch.nn.functional.softmax(coef, dim=-1)
+            output = output * coef[..., 0:1] + output_mlp * coef[..., 1:]
         return output, self.deepspeed_moe.l_aux, self.deepspeed_moe.exp_counts
