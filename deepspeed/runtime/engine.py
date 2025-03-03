@@ -832,10 +832,12 @@ class DeepSpeedEngine(Module):
             return None
 
     def _set_distributed_vars(self, args):
-        device_rank = args.device_rank if args is not None and hasattr(args, 'device_rank') else self.local_rank
+        device_rank = args.device_rank if args is not None and hasattr(
+            args,
+            'device_rank') else self.local_rank
         if device_rank >= 0:
-            get_accelerator().set_device(device_rank)
-            self.device = torch.device(get_accelerator().device_name(device_rank))
+            torch.cuda.set_device(device_rank)
+            self.device = torch.device("cuda", device_rank)
             self.world_size = dist.get_world_size()
             self.global_rank = dist.get_rank()
         else:
