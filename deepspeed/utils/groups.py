@@ -30,6 +30,7 @@ from deepspeed.utils import log_dist
 from deepspeed.utils.bwc import bwc_tensor_model_parallel_world_size, bwc_pipeline_parallel_world_size
 from deepspeed.utils.exceptions import DeprecatedException
 from deepspeed.accelerator import get_accelerator
+
 # Expert parallel group that the current rank belongs to.
 _EXPERT_PARALLEL_GROUP = {}
 # Expert data parallel group that the current rank belongs to.
@@ -46,6 +47,8 @@ expert_tensor_parallel_world_size = 1
 _ALL_TO_ALL_GROUP = {}
 
 _DATA_PARALLEL_GROUP = None
+
+mesh_device = None
 
 
 # Deprecated groups initialize function.
@@ -469,6 +472,8 @@ def _get_data_parallel_rank():
 def _get_sequence_parallel_world_size():
     """Return world size for the model parallel group."""
     global mpu
+    if mesh_device is not None:
+        return dist.get_world_size(mesh_device.get_group(mesh_dim="sequence_parallel"))
     if mpu is not None and hasattr(mpu, 'get_sequence_parallel_world_size'):
         return mpu.get_sequence_parallel_world_size()
     return 1
@@ -484,9 +489,11 @@ def _get_sequence_parallel_rank():
 
 def _get_sequence_parallel_group():
     global mpu
-    if mpu is not None and hasattr(mpu, 'get_sequence_parallel_group'):
-        return mpu.get_sequence_parallel_group()
-    return None
+    if mpu is None or not hasattr(mpu, 'get_sequence_parallel_group'):
+        if mesh_device is None:
+            raise KeyError("No sequence parallel group found")
+        return mesh_device.get_group(mesh_dim="sequence_parallel")
+    return mpu.get_sequence_parallel_group()
 
 
 def _get_sequence_data_parallel_world_size():
