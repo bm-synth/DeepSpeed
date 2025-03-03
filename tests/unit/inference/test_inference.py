@@ -385,7 +385,6 @@ class TestModelTask(DistributedTest):
             pipe.model,
             mp_size=1,
             dtype=dtype,
-            replace_method="auto",
             replace_with_kernel_inject=True,
             enable_cuda_graph=enable_cuda_graph,
         )
@@ -459,7 +458,6 @@ class TestMPSize(DistributedTest):
         pipe.model = deepspeed.init_inference(pipe.model,
                                               mp_size=self.world_size,
                                               dtype=dtype,
-                                              replace_method="auto",
                                               replace_with_kernel_inject=True)
         check_injection(pipe.model)
         # Switch device to GPU so that input tensors are not on CPU
@@ -572,8 +570,7 @@ class TestAutoTensorParallelism(DistributedTest):
 
         pipe.model = deepspeed.init_inference(pipe.model,
                                               mp_size=world_size,
-                                              dtype=dtype,
-                                              replace_method="")
+                                              dtype=dtype)
         # Switch device to GPU so that input tensors are not on CPU
         pipe.device = torch.device(f"cuda:{local_rank}")
         ds_output = pipe(query, **inf_kwargs)
