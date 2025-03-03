@@ -6,11 +6,7 @@ Functionality of swapping optimizer tensors to/from (NVMe) storage devices.
 """
 
 import os
-import torch
 import argparse
-import time
-import sys
-from multiprocessing import Pool
 import multiprocessing as mp
 from ds_aio_basic import aio_basic_multiprocessing
 from ds_aio_handle import aio_handle_multiprocessing
@@ -66,6 +62,10 @@ def parse_arguments():
                         help='Per iop parallelism')
 
     parser.add_argument('--gpu', action='store_true', help='Use GPU memory')
+
+    parser.add_argument('--use_accelerator_pin_memory',
+                        action='store_true',
+                        help='Obtain pinned (CPU page-locked) tensors from accelerator')
 
     args = parser.parse_args()
     print(f'args = {args}')

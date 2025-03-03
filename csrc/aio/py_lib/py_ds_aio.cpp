@@ -60,57 +60,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
              "async"_a,
              "file_offset"_a = 0)
 
-        .def("pwrite",
-             &deepspeed_aio_handle_t::pwrite,
-             "Parallel file write with option of parallelism. Returns count of completed write ops",
-             "buffer"_a,
-             "filename"_a,
-             "validate"_a,
-             "async"_a,
-             "file_offset"_a = 0)
+        .def("new_cpu_locked_tensor", &deepspeed_aio_handle_t::new_cpu_locked_tensor)
+        .def("free_cpu_locked_tensor", &deepspeed_aio_handle_t::free_cpu_locked_tensor)
 
-        .def("sync_pread",
-             &deepspeed_aio_handle_t::sync_pread,
-             "Synchrononous parallel file read. Returns count of completed read ops",
-             "buffer"_a,
-             "filename"_a,
-             "file_offset"_a = 0)
-
-        .def("sync_pwrite",
-             &deepspeed_aio_handle_t::sync_pwrite,
-             "Synchronous parallel file write. Returns count of completed write ops",
-             "buffer"_a,
-             "filename"_a,
-             "file_offset"_a = 0)
-
-        .def("async_pread",
-             &deepspeed_aio_handle_t::async_pread,
-             "Asynchronous parallel file read. Returns 0 on success. Returns 0 on success, and "
-             "following wait() returns count of completed ops.",
-             "buffer"_a,
-             "filename"_a,
-             "file_offset"_a = 0)
-
-        .def("async_pwrite",
-             &deepspeed_aio_handle_t::async_pwrite,
-             "Asynchronous parallel file write. Returns 0 on success, and following wait() returns "
-             "count of completed ops.",
-             "buffer"_a,
-             "filename"_a,
-             "file_offset"_a = 0)
-
-        .def("new_cpu_locked_tensor",
-             &deepspeed_aio_handle_t::new_cpu_locked_tensor,
-             "Allocate pinned CPU tensor.",
-             "num_elem"_a,
-             "example_tenosr"_a)
-
-        .def("free_cpu_locked_tensor",
-             &deepspeed_aio_handle_t::free_cpu_locked_tensor,
-             "Free pinned CPU tensor.",
-             "tensor"_a)
-
-        .def("wait",
-             &deepspeed_aio_handle_t::wait,
-             "Wait for (ongoing) asynchronous operations to complete");
+        .def("wait", &deepspeed_aio_handle_t::wait);
 }
