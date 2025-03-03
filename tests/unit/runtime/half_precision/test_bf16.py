@@ -289,7 +289,7 @@ class TestZeroEmptyGrad(DistributedTest):
 
 
 @pytest.mark.parametrize("comp_type", [torch.float16, torch.bfloat16, torch.float], ids=["fp16", "bfp16", "fp32"])
-@pytest.mark.parametrize("comm_type", [torch.float16, torch.bfloat16], ids=["fp16", "bfp16"])
+@pytest.mark.parametrize("comm_type", [torch.float16, torch.bfloat16, None], ids=["fp16", "bfp16", "default"])
 class TestZeroDtypeCocktail(DistributedTest):
     world_size = 2
 
