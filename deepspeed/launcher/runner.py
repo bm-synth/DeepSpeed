@@ -230,7 +230,7 @@ def fetch_hostfile(hostfile_path):
             if hostname in resource_pool:
                 logger.error("Hostfile contains duplicate hosts, unable to "
                              "proceed with training.")
-                raise ValueError("host {} is already defined".format(hostname))
+                raise ValueError(f"host {hostname} is already defined")
             resource_pool[hostname] = slot_count
 
     return resource_pool
@@ -442,43 +442,10 @@ def main(args=None):
     # validate that passwordless-ssh is workly properly with this hostfile
     if multi_node_exec and not args.no_ssh_check and not args.no_ssh:
         first_host = list(active_resources.keys())[0]
-        try:
-            ssh_check_cmd = "ssh -o PasswordAuthentication=no "
-            if args.ssh_port is not None:
-                ssh_check_cmd += f"-p {args.ssh_port} "
-            ssh_check_cmd += f"{first_host} hostname"
-            safe_ssh_cmd = shlex.split(ssh_check_cmd)
-            subprocess.check_call(safe_ssh_cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        except subprocess.CalledProcessError:
-            raise RuntimeError(
-                f"Using hostfile at {args.hostfile} but host={first_host} was not reachable via ssh. If you are running with a single node please remove {args.hostfile} or setup passwordless ssh."
-            )
-
-    if not args.master_addr:
-        assert multi_node_exec
-        first_host = list(active_resources.keys())[0]
-        ssh_check_cmd = "ssh "
-        if args.ssh_port is not None:
-            ssh_check_cmd += f" -p {args.ssh_port}"
-        ssh_check_cmd += f" {first_host} hostname -I"
-        hostname_cmd = shlex.split(ssh_check_cmd)
-        try:
-            result = subprocess.check_output(hostname_cmd)
-        except subprocess.CalledProcessError as err:
-            logger.error(
-                "Unable to detect suitable master address via 'hostname -I', please manually specify one via --master_addr"
-            )
-            raise err
+        hostname_cmd = [f"ssh {first_host} hostname -I"]
+        result = subprocess.check_output(hostname_cmd, shell=True)
         args.master_addr = result.decode('utf-8').split()[0]
-        if not args.master_addr:
-            raise RuntimeError(
-                f"Unable to detect suitable master address via 'hostname -I', please manually specify one via --master_addr"
-            )
         logger.info(f"Using IP address of {args.master_addr} for node {first_host}")
-
-    if args.autotuning != "":
-        run_autotuning(args, active_resources)
-        return
 
     if args.num_nodes > 0:
         updated_active_resources = collections.OrderedDict()
@@ -508,8 +475,13 @@ def main(args=None):
 
     if not multi_node_exec:
         deepspeed_launch = [
-            sys.executable, "-u", "-m", "deepspeed.launcher.launch", f"--world_info={world_info_base64}",
-            f"--master_addr={args.master_addr}", f"--master_port={args.master_port}"
+            sys.executable,
+            "-u",
+            "-m",
+            "deepspeed.launcher.launch",
+            f"--world_info={world_info_base64}",
+            f"--master_addr={args.master_addr}",
+            f"--master_port={args.master_port}"
         ]
         if args.no_ssh:
             deepspeed_launch.append(f"--node_rank={args.node_rank}")
@@ -575,7 +547,7 @@ def main(args=None):
 
         cmd = runner.get_cmd(env, active_resources)
 
-    logger.info("cmd = {}".format(' '.join(cmd)))
+    logger.info(f"cmd = {' '.join(cmd)}")
     result = subprocess.Popen(cmd, env=env)
 
     def sigkill_handler(signum, frame):
