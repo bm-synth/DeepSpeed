@@ -867,16 +867,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                  mem_efficient_linear=True,
                  remote_device=None,
                  pin_memory=False,
-                 config_dict_or_path=None,
-                 config=None,
-                 enabled=True,
-                 dtype=None,
-                 mpu=None,
-                 zero_param_parallel_group=None,
-                 zero_quantized_weights=False,
-                 zero_quantized_nontrainable_weights=False,
-                 sequence_data_parallel_group=None,
-                 param_swapper=None):
+                 deepspeed_config=None,
+                 param_dict=None,
+                 enabled=True):
         """A context to enable massive model construction for training with
         ZeRO-3. Models are automatically partitioned (or, sharded) across the
         system and converted to half precision.
@@ -901,7 +894,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 ``"cpu"``. Defaults to pin_memory value in config, otherwise ``False``.
             config_dict_or_path (dict or ``json file``, optional): If provided, provides configuration
                 for swapping fp16 params to NVMe.
-            config (dict or ``json file``, optional): Deprecated, use config_dict_or_path instead.
+            param_dict (dict, optional): Instead of requiring a deepspeed_config you can pass your deepspeed config
+                as a dictionary instead for swapping fp16 params to NVMe.
             enabled (bool, optional): If ``False``, this context has no
                 effect. Defaults to ``True``.
             dtype (``dtype``, optional): Can be used to change the data type of the parameters.
@@ -1008,10 +1002,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         self.rank = dist.get_rank(group=self.ds_process_group)
         self.dp_world_size = dist.get_world_size(group=self.ds_process_group)
 
-        self.zero_param_process_group = zero_param_parallel_group
-        if _ds_config is not None and _ds_config.zero_config.zero_hpz_partition_size > 1 and self.zero_param_process_group is None:
-            groups._create_zero_param_parallel_group(_ds_config.zero_config.zero_hpz_partition_size)
-            self.zero_param_process_group = groups._get_zero_param_intra_parallel_group()
+        self._validate_remote_device(remote_device, deepspeed_config, param_dict)
 
         self.num_ranks_in_param_group = self.dp_world_size
         self.rank_in_group = self.rank
@@ -1060,8 +1051,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                                                                 ]) else False
 
         # Enable fp16 param swapping to NVMe
-        if self.remote_device == OffloadDeviceEnum.nvme:
-            self.param_swapper = param_swapper or AsyncPartitionedParameterSwapper(_ds_config, self.dtype)
+        if self.remote_device == OFFLOAD_NVME_DEVICE:
+            _ds_config = DeepSpeedConfig(deepspeed_config, param_dict=param_dict)
+            self.param_swapper = AsyncPartitionedParameterSwapper(_ds_config)
         else:
             self.param_swapper = None
 
@@ -1101,13 +1093,15 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             param.data = param.data.to(self.local_device)
             self._zero_init_param(param)
 
-    def _validate_remote_device(self, remote_device, ds_config):
+    def _validate_remote_device(self, remote_device, ds_config, param_dict):
         if ds_config is not None:
-            if remote_device in [None, OffloadDeviceEnum.cpu]:
-                if ds_config.zero_config.offload_param is not None:
-                    offload_param_device = ds_config.zero_config.offload_param.device
-                    assert offload_param_device != OffloadDeviceEnum.nvme, \
-                        f"'device' in DeepSpeed Config cannot be {offload_param_device} if remote device is {remote_device}."
+            _ds_config = DeepSpeedConfig(ds_config, param_dict=param_dict)
+            if remote_device in [None, OFFLOAD_CPU_DEVICE]:
+                if _ds_config.zero_config.offload_param is not None:
+                    offload_param_device = _ds_config.zero_config.offload_param[
+                        OFFLOAD_PARAM_DEVICE]
+                    assert offload_param_device != OFFLOAD_NVME_DEVICE, \
+                    f"{OFFLOAD_PARAM_DEVICE} in DeepSpeed Config cannot be {offload_param_device} if remote device is {remote_device}."
 
             if remote_device == OffloadDeviceEnum.nvme:
                 assert ds_config.zero_config.offload_param is not None, \
