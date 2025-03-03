@@ -19,9 +19,9 @@ ATTN_HEADS = 8
 
 
 def remove_file(test_id, filename):
-    cmd = f"if [ -f {filename} ] ; then rm -v {filename}; fi"
+    cmd = shlex.split(f"if [ -f {filename} ] ; then rm -v {filename}; fi")
     print(f"{test_id} cmd: {cmd}")
-    subprocess.run(cmd, shell=True, check=False, executable='/bin/bash')
+    subprocess.run(cmd, check=False, executable='/bin/bash')
 
 
 def grep_loss_from_file(file_name):
@@ -151,7 +151,7 @@ class GPT2CheckpointTestCase(BaseTestCase):
         try:
             cmd = shlex.split(f"rm -rf {checkpoint_name}")
             print(f"{self.id()} cmd: {cmd}")
-            subprocess.run(cmd, shell=True, check=False, executable='/bin/bash')
+            subprocess.run(cmd, check=False, executable='/bin/bash')
         except:
             print("No old checkpoint")
 
