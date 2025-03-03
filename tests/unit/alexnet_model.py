@@ -121,10 +121,11 @@ def train_cifar(model, config, num_steps=400, average_dp_losses=True, fp16=True,
         trainset = cifar_trainset(fp16=fp16)
         config['local_rank'] = dist.get_rank()
 
-        engine, _, _, _ = deepspeed.initialize(config=config,
-                                               model=model,
-                                               model_parameters=[p for p in model.parameters()],
-                                               training_data=trainset)
+        with no_child_process_in_deepspeed_io():
+            engine, _, _, _ = deepspeed.initialize(config=config,
+                                                   model=model,
+                                                   model_parameters=[p for p in model.parameters()],
+                                                   training_data=trainset)
 
         losses = []
         for step in range(num_steps):
