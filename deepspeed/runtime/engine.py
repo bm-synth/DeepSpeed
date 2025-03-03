@@ -78,7 +78,8 @@ def split_half_float_double_csr(tensors):
         "torch.cuda.HalfTensor",
         "torch.cuda.FloatTensor",
         "torch.cuda.DoubleTensor",
-        CSRTensor.type()
+        "torch.cuda.BFloat16Tensor",
+        SparseTensor.type()
     ]
 
     for t in tensors:
@@ -984,6 +985,8 @@ class DeepSpeedEngine(Module):
                         f"fp16 is enabled but the following parameters have dtype that is not fp16: {', '.join(names)}"
                     )
             self.module.half()
+        elif self.bfloat16_enabled():
+            self.module.bfloat16()
         else:
             if not all(
                 [param.dtype == torch.float for param in self.module.parameters()]):
@@ -1162,17 +1165,15 @@ class DeepSpeedEngine(Module):
                 ), 'You are using an untested ZeRO Optimizer. Please add <"zero_allow_untested_optimizer": true> in the configuration file to use it.'
 
                 if self.global_rank == 0:
-                    logger.warning("**** You are using ZeRO with an untested optimizer, proceed with caution *****")
-            if model_dtype == torch.bfloat16 and grad_accum_dtype == torch.float32 and self.zero_optimization_stage(
-            ) == 1 and not self.zero_cpu_offload():
-                return BFLOAT16
-            return ZERO_OPTIMIZATION
-        elif amp_enabled:
-            if model_dtype != grad_accum_dtype:
-                raise NotImplementedError(
-                    "Model data type and gradient accumulation data type must be equal to use Amp")
-            if model_dtype == torch.bfloat16 or model_dtype == torch.float16:
-                raise NotImplementedError("Cannot enable both amp with (legacy) fp16 or bfloat16 mode")
+                    logger.warning(
+                        "**** You are using ZeRO with an untested optimizer, proceed with caution *****"
+                    )
+            self.optimizer = self._configure_zero_optimizer(basic_optimizer)
+        elif self.amp_enabled():
+            assert not (self.fp16_enabled() or self.bfloat16_enabled()), "Cannot enable both amp with (legacy) fp16 or bfloat16 mode"
+            amp_params = self.amp_params()
+            if self.global_rank == 0:
+                logger.info(f"Initializing AMP with these params: {amp_params}")
             try:
                 logger.info("Initializing Apex amp from: {}".format(amp.__path__))
             except NameError:
@@ -1963,24 +1964,22 @@ class DeepSpeedEngine(Module):
 
         # Quantize the updated parameter if there is no overflow
         if self.quantizer:
-            tensor_to_quantize = self.optimizer.bit16_groups if self.zero_optimization_stage(
-            ) == 2 else self.optimizer.fp16_groups
-            if self.compression_scheduler.weight_quantization_enabled:
-                self.quantizer.quantize(
-                    tensor_to_quantize,
-                    (self.optimizer.overflow if self.fp16_enabled() else False),
-                    self.eigenvalue_enabled(),
-                    block_eigenvalue,
-                )
-        # zero grad in basic optimizer could be unreliable and may not exhibit
-        # the behavior that we want
-        if self.bfloat16_enabled():
-            # TODO: Temporary until bf16_optimizer and zero_optimizer are integrated
-            if self.zero_optimization() and hasattr(self.optimizer, "zero_grad"):
-                self.optimizer.zero_grad()
+            if self.fp16_enabled():
+                tensor_to_quantize = self.optimizer.bit16_groups if self.zero_optimization_stage(
+                ) == 2 else self.optimizer.fp16_groups
             else:
-                pass
-        elif self.zero_optimization() or self.fp16_enabled() or self.amp_enabled():
+                tensor_to_quantize = self.optimizer.param_groups
+            self.quantizer.quantize(
+                tensor_to_quantize,
+                (self.optimizer.overflow if self.fp16_enabled() else False),
+                self.eigenvalue_enabled(),
+                block_eigenvalue)
+        #zero grad in basic optimizer could be unreliable and may not exhibit
+        #the behaviour that we want
+        if not self.zero_optimization() and not self.fp16_enabled(
+        ) and not self.amp_enabled():
+            self.zero_grad()
+        else:
             self.optimizer.zero_grad()
         else:
             self.zero_grad()
@@ -2861,11 +2860,9 @@ class DeepSpeedEngine(Module):
         method will hang waiting to synchronize with other processes if it's called just for the
         process with rank 0.
         """
-        if self._optimizer_has_ckpt_event_prologue():
-            # Custom preparation for checkpoint save, if applicable
-            self.optimizer.checkpoint_event_prologue()
-
-        rank = self.local_rank if self.use_node_local_storage() else self.global_rank
+        if self.zero_optimization_partition_weights():
+            # Prepare for state_dict() by ensuring all parameters are partitioned
+            self.optimizer.save_checkpoint_prologue()
 
         # This is to make sure the checkpoint names are created without collision
         # There seems to be issue creating them in parallel
@@ -3124,22 +3121,23 @@ class DeepSpeedEngine(Module):
         will be missing and others unsaved and then it'd be impossible to reconstruct state_dict
         from the flattened weights.
 
-        optimizer.fp16_groups seems to be the easiest to use as it's in all zeroX versions.
+        optimizer.bit16_groups seems to be the easiest to use as it's in all zeroX versions.
         """
         param_group_shapes = []
         cnt = 0
         numel = 0
 
-        # zero2 started using a round_robin_fp16_groups which is a shuffled version of fp16_groups -
+        # zero2 started using a round_robin_bit16_groups which is a shuffled version of bit16_groups -
         # if we don't use it, we get parameters ordered incorrectly
-        if hasattr(self.optimizer, "round_robin_fp16_groups"):
-            fp16_groups = self.optimizer.round_robin_fp16_groups
+        if hasattr(self.optimizer, "round_robin_bit16_groups"):
+            bit16_groups = self.optimizer.round_robin_bit16_groups
         else:
-            fp16_groups = self.optimizer.fp16_groups
+            bit16_groups = self.optimizer.bit16_groups if self.zero_optimization_stage(
+            ) == 2 else self.optimizer.fp16_groups
 
-        for fp16_group in fp16_groups:
+        for bit16_group in bit16_groups:
             param_shapes = OrderedDict()
-            for param in fp16_group:
+            for param in bit16_group:
                 cnt += 1
                 numel += param.ds_numel if hasattr(param, "ds_numel") else param.numel()
                 shape = param.ds_shape if hasattr(param, "ds_shape") else param.shape

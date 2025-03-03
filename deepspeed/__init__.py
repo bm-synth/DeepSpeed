@@ -1,6 +1,7 @@
 '''
 Copyright 2020 The Microsoft DeepSpeed Team
 '''
+
 import sys
 import types
 from typing import Optional, Union
@@ -114,8 +115,7 @@ def initialize(args=None,
         __version__,
         __git_hash__,
         __git_branch__),
-          flush=True)
-
+             ranks=[0])
     assert model is not None, "deepspeed.initialize requires a model"
 
     if not isinstance(model, PipelineModule):

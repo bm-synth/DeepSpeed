@@ -5,6 +5,7 @@
 
 import pytest
 import torch
+from deepspeed.git_version_info import torch_info
 
 import deepspeed
 from deepspeed.accelerator import get_accelerator, is_current_accelerator_supported
@@ -63,28 +64,21 @@ def bf16_required_version_check(accelerator_check=True):
         return False
 
 
-def required_amp_check():
-    from importlib.util import find_spec
-    if find_spec('apex') is None:
+def bf16_required_version_check():
+    TORCH_MAJOR = int(torch.__version__.split('.')[0])
+    TORCH_MINOR = int(torch.__version__.split('.')[1])
+
+    if type(torch.cuda.nccl.version()) != tuple:
         return False
     else:
+        NCCL_MAJOR = torch.cuda.nccl.version()[0]
+        NCCL_MINOR = torch.cuda.nccl.version()[1]
+
+    CUDA_MAJOR = int(torch_info['cuda_version'].split('.')[0])
+    if (TORCH_MAJOR > 1 or
+        (TORCH_MAJOR == 1 and TORCH_MINOR >= 10)) and (CUDA_MAJOR >= 11) and (
+            NCCL_MAJOR > 2 or
+            (NCCL_MAJOR == 2 and NCCL_MINOR >= 10)) and torch.cuda.is_bf16_supported():
         return True
-
-
-class no_child_process_in_deepspeed_io:
-
-    def __enter__(self):
-        # deepspeed_io defaults to creating a dataloader that uses a
-        # multiprocessing pool. Our tests use pools and we cannot nest pools in
-        # python. Therefore we're injecting this kwarg to ensure that no pools
-        # are used in the dataloader.
-        self.old_method = deepspeed.runtime.engine.DeepSpeedEngine.deepspeed_io
-
-        def new_method(*args, **kwargs):
-            kwargs["num_local_io_workers"] = 0
-            return self.old_method(*args, **kwargs)
-
-        deepspeed.runtime.engine.DeepSpeedEngine.deepspeed_io = new_method
-
-    def __exit__(self, *_):
-        deepspeed.runtime.engine.DeepSpeedEngine.deepspeed_io = self.old_method
+    else:
+        return False

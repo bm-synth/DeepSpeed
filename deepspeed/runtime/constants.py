@@ -116,19 +116,14 @@ SPARSE_GRADIENTS_DEFAULT = False
 # Users can configure in ds_config.json as below example:
 BFLOAT16_FORMAT = '''
 BFLOAT16 parameters should be of the format:
-"bf16": {
+"bfloat16": {
   "enabled": true
 }
 '''
-BFLOAT16 = "bf16"
-BFLOAT16_OLD = "bfloat16"  # keeping for backwards compatibility
+BFLOAT16 = "bfloat16"
 
 BFLOAT16_ENABLED = "enabled"
 BFLOAT16_ENABLED_DEFAULT = False
-
-# BFLOAT16 optimizer immediate gradient update
-BFLOAT16_IMMEDIATE_GRAD_UPDATE = "immediate_grad_update"
-BFLOAT16_IMMEDIATE_GRAD_UPDATE_DEFAULT = False
 
 #########################################
 # FP16 support
