@@ -219,15 +219,11 @@ else:
     git_branch = "unknown"
 
 if sys.platform == "win32":
-    shutil.rmtree('.\\deepspeed\\ops\\csrc', ignore_errors=True)
-    pathlib.Path('.\\deepspeed\\ops\\csrc').unlink(missing_ok=True)
-    shutil.copytree('.\\csrc', '.\\deepspeed\\ops\\csrc', dirs_exist_ok=True)
-    shutil.rmtree('.\\deepspeed\\ops\\op_builder', ignore_errors=True)
-    pathlib.Path('.\\deepspeed\\ops\\op_builder').unlink(missing_ok=True)
-    shutil.copytree('.\\op_builder', '.\\deepspeed\\ops\\op_builder', dirs_exist_ok=True)
-    shutil.rmtree('.\\deepspeed\\accelerator', ignore_errors=True)
-    pathlib.Path('.\\deepspeed\\accelerator').unlink(missing_ok=True)
-    shutil.copytree('.\\accelerator', '.\\deepspeed\\accelerator', dirs_exist_ok=True)
+    # This creates a symbolic links on Windows.
+    # It needs Administrator privilege to create symlinks on Windows.
+    create_dir_symlink('.\\deepspeed\\ops\\csrc', '..\\..\\csrc')
+    create_dir_symlink('.\\deepspeed\\ops\\op_builder', '..\\..\\op_builder')
+    create_dir_symlink('.\\deepspeed\\accelerator', '..\\accelerator')
     egg_info.manifest_maker.template = 'MANIFEST_win.in'
 
 # Parse the DeepSpeed version string from version.txt.
