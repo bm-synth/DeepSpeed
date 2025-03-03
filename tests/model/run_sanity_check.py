@@ -10,11 +10,13 @@ import sys
 import unittest
 
 sys.path.append('../DeepSpeedExamples/Megatron_GPT2')
+sys.path.append('../DeepSpeedExamples/BingBertSquad')
 
 import os
 
 # Import the test cases here.
 import Megatron_GPT2
+import BingBertSquad
 
 
 def pytest_hack(runner_result):
@@ -32,12 +34,11 @@ def pytest_hack(runner_result):
 
 def test_megatron():
     runner = unittest.TextTestRunner(failfast=True)
-    pytest_hack(runner.run(Megatron_GPT2.suite()))
 
-
-def test_megatron_checkpoint():
-    runner = unittest.TextTestRunner(failfast=True)
-    pytest_hack(runner.run(Megatron_GPT2.checkpoint_suite()))
+    # Add test suites here.
+    #pytest_hack(runner.run(Megatron_GPT2.suite()))
+    #pytest_hack(runner.run(Megatron_GPT2.checkpoint_suite()))
+    pytest_hack(runner.run(BingBertSquad.suite()))
 
 
 def test_squad():
