@@ -2170,6 +2170,7 @@ class DeepSpeedEngine(Module):
                 ],
                                 reset=False)
                 if self.has_moe_layers:
+                    fwd_time = self.timers(FORWARD_GLOBAL_TIMER).elapsed(reset=False)
                     self.print_forward_breakdown(fwd_time=fwd_time)
 
         self.micro_steps += 1
