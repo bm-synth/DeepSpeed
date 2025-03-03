@@ -349,21 +349,6 @@ EIGENVALUE_VERBOSE_DEFAULT = False
 EIGENVALUE_MAX_ITER = "max_iter"
 EIGENVALUE_MAX_ITER_DEFAULT = 100
 
-EIGENVALUE_TOL = "tol"
-EIGENVALUE_TOL_DEFAULT = 1e-2
-
-EIGENVALUE_STABILITY = "stability"
-EIGENVALUE_STABILITY_DEFAULT = 1e-6
-
-EIGENVALUE_GAS_BOUNDARY_RESOLUTION = "gas_boundary_resolution"
-EIGENVALUE_GAS_BOUNDARY_RESOLUTION_DEFAULT = 1
-
-EIGENVALUE_LAYER_NAME = "layer_name"
-EIGENVALUE_LAYER_NAME_DEFAULT = "bert.encoder.layer"
-
-EIGENVALUE_LAYER_NUM = "layer_num"
-EIGENVALUE_LAYER_NUM_DEFAULT = 0
-
 #########################################
 # Progressive Layer Drop (PLD)
 #########################################
@@ -392,66 +377,12 @@ class ValidationMode:
 #########################################
 # Checkpoint config params
 #########################################
-# "checkpoint": {
-#   tag_validation=["Ignore"|"Warn"|"Fail"]
-#   load_universal=false
-#   use_node_local_storage=false
-#   parallel_write: {
-#     pipeline_stage: [True|False]
-#   }
-# }
+# "checkpoint": {tag_validation=["Ignore"|"Warn"|"Fail"]}
 CHECKPOINT = "checkpoint"
 CHECKPOINT_TAG_VALIDATION = "tag_validation"
 CHECKPOINT_TAG_VALIDATION_DEFAULT = ValidationMode.WARN
-CHECKPOINT_TAG_VALIDATION_MODES = [ValidationMode.WARN, ValidationMode.IGNORE, ValidationMode.FAIL]
-
-LOAD_UNIVERSAL_CHECKPOINT = "load_universal"
-LOAD_UNIVERSAL_CHECKPOINT_DEFAULT = False
-
-USE_NODE_LOCAL_STORAGE_CHECKPOINT = "use_node_local_storage"
-USE_NODE_LOCAL_STORAGE_CHECKPOINT_DEFAULT = False
-
-CHECKPOINT_PARALLEL_WRITE = "parallel_write"
-CHECKPOINT_PARALLEL_WRITE_PIPELINE_STAGE = "pipeline_stage"
-CHECKPOINT_PARALLEL_WRITE_PIPELINE_STAGE_DEFAULT = False
-
-#########################################
-# Data types config params
-#########################################
-# "data_types": {
-#   grad_accum_dtype=["bf16"|"fp16"|"fp32"]
-#   }
-# }
-
-DATA_TYPES = "data_types"
-GRAD_ACCUM_DTYPE = "grad_accum_dtype"
-GRAD_ACCUM_DTYPE_DEFAULT = None
-
-#########################################
-# Drop the last incomplete Batch
-# #########################################
-# dataloader_drop_last. By default, this feature is not enabled.
-# Users can configure in ds_config.json as below example:
-DATALOADER_DROP_LAST_FORMAT = '''
-The last incomplete batch can be dropped by setting:
-"dataloader_drop_last": True
-'''
-DATALOADER_DROP_LAST = "dataloader_drop_last"
-DATALOADER_DROP_LAST_DEFAULT = False
-
-#########################################
-# PIPELINE PARALLELISM
-#########################################
-PIPE_REPLICATED = 'ds_pipe_replicated'
-
-#########################################
-# DATA PARALLELISM
-#########################################
-DATA_PARALLEL_GROUP = "data_parallel_group"
-GLOBAL_RANK = "global_rank"
-
-#########################################
-# EXPERT-DATA PARALLELISM TOPO Config
-#########################################
-USE_DATA_BEFORE_EXPERT_PARALLEL = "use_data_before_expert_parallelism"
-USE_DATA_BEFORE_EXPERT_PARALLEL_DEFAULT = False
+CHECKPOINT_TAG_VALIDATION_MODES = [
+    ValidationMode.WARN,
+    ValidationMode.IGNORE,
+    ValidationMode.FAIL
+]

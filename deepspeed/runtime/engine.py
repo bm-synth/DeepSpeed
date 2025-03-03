@@ -7,10 +7,9 @@ import os
 import re
 import stat
 import torch
+import warnings
 import hashlib
-from collections import defaultdict, OrderedDict, deque
-from shutil import copyfile
-import gc
+import torch.distributed as dist
 
 from torch.nn.modules import Module
 from torch.nn.parameter import Parameter
@@ -362,55 +361,14 @@ class DeepSpeedEngine(Module):
         print("NCCL_SOCKET_IFNAME original value = {}".format(
             os.environ["NCCL_SOCKET_IFNAME"]))
 
-        os.environ["NCCL_SOCKET_IFNAME"] = "^docker0,lo"
-        args.local_rank = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
+    def checkpoint_tag_validation_enabled(self):
+        return self._config.checkpoint_tag_validation_enabled
 
-        if verbose:
-            logger.info(
-                "Discovered AzureML settings of world_rank={}, local_rank={}, world_size={}, master_addr={}, master_port={}"
-                .format(os.environ['RANK'],
-                        args.local_rank,
-                        os.environ['WORLD_SIZE'],
-                        os.environ['MASTER_ADDR'],
-                        os.environ['MASTER_PORT']))
+    def checkpoint_tag_validation_fail(self):
+        return self._config.checkpoint_tag_validation_fail
 
-    def _mpi_check(self, args, dist_init_required):
-        from mpi4py import MPI
-        import subprocess
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
-        world_size = comm.Get_size()
-
-        master_addr = None
-        if rank == 0:
-            hostname_cmd = ["hostname -I"]
-            result = subprocess.check_output(hostname_cmd, shell=True)
-            master_addr = result.decode('utf-8').split()[0]
-        master_addr = comm.bcast(master_addr, root=0)
-
-        # Determine local rank by assuming hostnames are unique
-        proc_name = MPI.Get_processor_name()
-        all_procs = comm.allgather(proc_name)
-        local_rank = sum([i == proc_name for i in all_procs[:rank]])
-
-        os.environ['RANK'] = str(rank)
-        os.environ['WORLD_SIZE'] = str(world_size)
-        args.local_rank = local_rank
-        os.environ['MASTER_ADDR'] = master_addr
-        os.environ['MASTER_PORT'] = TORCH_DISTRIBUTED_DEFAULT_PORT
-
-        logger.info(
-            "Discovered MPI settings of world_rank={}, local_rank={}, world_size={}, master_addr={}, master_port={}"
-            .format(os.environ['RANK'],
-                    args.local_rank,
-                    os.environ['WORLD_SIZE'],
-                    os.environ['MASTER_ADDR'],
-                    os.environ['MASTER_PORT']))
-
-        if not dist_init_required and dist.is_initialized():
-            assert dist.get_rank() == rank, "MPI rank {} does not match torch rank {}".format(rank, dist.get_rank())
-            assert dist.get_world_size() == world_size, "MPI world size {} does not match torch world size {}".format(
-                world_size, dist.get_world_size())
+    def elasticity_enabled(self):
+        return self._config.elasticity_enabled
 
     def pld_enabled(self):
         return self._config.pld_enabled
@@ -2922,12 +2880,30 @@ class DeepSpeedEngine(Module):
         logger.info(f"successfully read {len(zero_optimizer_sd)} ZeRO state_dicts for rank {self.global_rank}")
         return zero_optimizer_sd
 
+    def _checkpoint_tag_validation(self, tag):
+        if self.checkpoint_tag_validation_enabled():
+            s_hash = hashlib.sha1(tag.encode())
+            bhash = torch.ByteTensor([s_hash.digest()]).flatten().to(self.device)
+            max_bhash = bhash.clone()
+            min_bhash = bhash.clone()
+            dist.all_reduce(max_bhash, op=torch.distributed.ReduceOp.MAX)
+            dist.all_reduce(min_bhash, op=torch.distributed.ReduceOp.MIN)
+            valid = all(min_bhash == bhash) and all(max_bhash == bhash)
+            msg = f"[rank={dist.get_rank()}] The checkpoint tag name '{tag}' is not consistent across " \
+                "all ranks. Including rank unique information in checkpoint tag could cause issues when " \
+                "restoring with different world sizes."
+            if self.checkpoint_tag_validation_fail():
+                assert valid, msg
+            elif not valid:
+                logger.warning(msg)
+
     def save_checkpoint(self, save_dir, tag=None, client_state={}, save_latest=True):
         r"""Save training checkpoint
 
         Arguments:
             save_dir: Required. Directory for saving the checkpoint
-            tag: Optional. Checkpoint tag used as a unique identifier for the checkpoint, global step is used if not provided.
+            tag: Optional. Checkpoint tag used as a unique identifier for the checkpoint, global step is
+                used if not provided. Tag name must be the same across all ranks.
             client_state: Optional. State dictionary used for saving required training states in the client code.
             save_latest: Optional. Save a file 'latest' pointing to the latest saved checkpoint.
         """
@@ -2945,6 +2921,9 @@ class DeepSpeedEngine(Module):
 
         if tag is None:
             tag = f"global_step{self.global_steps}"
+
+        # Ensure checkpoint tag is consistent across ranks
+        self._checkpoint_tag_validation(tag)
 
         if self.save_non_zero_checkpoint:
             self._create_checkpoint_file(save_dir, tag, False)

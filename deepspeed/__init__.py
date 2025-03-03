@@ -2,9 +2,28 @@
 Copyright 2020 The Microsoft DeepSpeed Team
 '''
 
-from deepspeed.pt.deepspeed_light import DeepSpeedLight
-from deepspeed.pt.deepspeed_light import ADAM_OPTIMIZER, LAMB_OPTIMIZER
-from deepspeed.pt.deepspeed_lr_schedules import add_tuning_arguments
+from . import ops
+
+from .runtime.engine import DeepSpeedEngine
+from .runtime.engine import ADAM_OPTIMIZER, LAMB_OPTIMIZER
+from .runtime.pipe.engine import PipelineEngine
+from .runtime.lr_schedules import add_tuning_arguments
+from .runtime.config import DeepSpeedConfig, DeepSpeedConfigError
+from .runtime.activation_checkpointing import checkpointing
+from .ops.transformer import DeepSpeedTransformerLayer, DeepSpeedTransformerConfig
+from .utils import log_dist
+from .utils.distributed import init_distributed
+
+from .pipe import PipelineModule
+
+from .git_version_info import version, git_hash, git_branch
+
+
+def _parse_version(version_str):
+    '''Parse a version string and extract the major, minor, and patch versions.'''
+    import re
+    matched = re.search('^(\d+)\.(\d+)\.(\d+)', version_str)
+    return int(matched.group(1)), int(matched.group(2)), int(matched.group(3))
 
 try:
     from deepspeed.git_version_info import git_hash, git_branch
