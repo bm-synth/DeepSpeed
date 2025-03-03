@@ -41,7 +41,7 @@ class TestHybridEngineTextGen(DistributedTest):
         model_config.dropout = 0.0
         model = AutoModelForCausalLM.from_pretrained(model_name, config=model_config)
         model = model.half()
-        model = model.to(f'cuda:{local_rank}')
+        model = model.to(f'{get_accelerator().device_name()}:{local_rank}')
         return model
 
     def get_tokenizer(self, model_name):
