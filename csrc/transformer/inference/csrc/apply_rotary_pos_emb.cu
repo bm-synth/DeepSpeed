@@ -4,7 +4,7 @@
 // DeepSpeed Team
 
 #include "conversion_utils.h"
-#ifdef __HIP_PLATFORM_HCC__
+#ifdef __HIP_PLATFORM_AMD__
 #include "hip/hip_cooperative_groups.h"
 #else
 #include "cooperative_groups.h"
@@ -109,36 +109,20 @@ __global__ void apply_rotary_pos_half(T* mixed_query,
                                                                                   rope_theta,  \
                                                                                   max_out_tokens);
 
-    int id = threadIdx.x;
-    int gid = id >> 5;
-    int lane = id & 0x1f;
-
-    unsigned head_id = blockIdx.x * MAX_WARP_NUM + gid;
-    unsigned offset = head_id * head_size;
-
-    unsigned seq_id = (head_id / num_heads) % seq_len + seq_offset;
-    unsigned seq_index = head_id % seq_len;
-    unsigned k_offset = (seq_index + (head_id / seq_len) * max_out_tokens) * head_size;
-
-    if (head_id < total_count) {
-        while (lane < rotary_dim) {
-            float inv_freq = (float)((lane / 2) * 2) / (float)rotary_dim;
-            inv_freq = 1.0 / powf(10000.0, inv_freq) * (float)seq_id;
-            float q = mixed_query[offset + lane];
-            float k = key_layer[k_offset + lane];
-            float rotary_sign = (lane % 2 == 1 ? -1.0 : 1.0);
-            float q_rot = (q * rotary_sign);
-            float k_rot = (k * rotary_sign);
-            q_rot = g.shfl_xor(q_rot, 1);
-            k_rot = g.shfl_xor(k_rot, 1);
-            q = q * cosf(inv_freq) + q_rot * sinf(inv_freq);
-            k = k * cosf(inv_freq) + k_rot * sinf(inv_freq);
-
-            mixed_query[offset + lane] = q;
-            key_layer[k_offset + lane] = k;
-
-            lane += WARP_SIZE;
-        }
+#ifdef __HIP_PLATFORM_AMD__
+#define LAUNCH_FOR_ALIGNMENT(ALIGNMENT)         \
+    if (threads_per_head == 4) {                \
+        LAUNCH_ROT_POS_EMB_HALF(4, ALIGNMENT);  \
+    } else if (threads_per_head == 8) {         \
+        LAUNCH_ROT_POS_EMB_HALF(8, ALIGNMENT);  \
+    } else if (threads_per_head == 16) {        \
+        LAUNCH_ROT_POS_EMB_HALF(16, ALIGNMENT); \
+    } else if (threads_per_head == 32) {        \
+        LAUNCH_ROT_POS_EMB_HALF(32, ALIGNMENT); \
+    } else if (threads_per_head == 64) {        \
+        LAUNCH_ROT_POS_EMB_HALF(64, ALIGNMENT); \
+    } else {                                    \
+        assert(false);                          \
     }
 }
 

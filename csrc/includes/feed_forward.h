@@ -48,9 +48,7 @@ public:
                        weights,
                        input_ptr,
                        out,
-// TODO HIP: Remove backward compatibility for torch<=2.0 in future
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
+#ifdef __HIP_PLATFORM_AMD__
                        rocblas_gemm_algo(config_.gemm_algos[0]));
 #else
                        cublasGemmAlgo_t(config_.gemm_algos[0]));
@@ -79,8 +77,7 @@ public:
                        input_ptr,
                        out_grad,
                        weights_grad,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
+#ifdef __HIP_PLATFORM_AMD__
                        rocblas_gemm_algo(config_.gemm_algos[1]));
 #else
                        cublasGemmAlgo_t(config_.gemm_algos[1]));
@@ -97,8 +94,7 @@ public:
                        weights,
                        out_grad,
                        inp_grad_out,
-#if defined(__HIP_PLATFORM_AMD__) && \
-    ((TORCH_VERSION_MAJOR < 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR == 0))
+#ifdef __HIP_PLATFORM_AMD__
                        rocblas_gemm_algo(config_.gemm_algos[2]));
 #else
                        cublasGemmAlgo_t(config_.gemm_algos[2]));
