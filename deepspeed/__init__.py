@@ -15,6 +15,7 @@ from . import ops
 
 from .runtime.engine import DeepSpeedEngine, DeepSpeedOptimizerCallable, DeepSpeedSchedulerCallable
 from .runtime.engine import ADAM_OPTIMIZER, LAMB_OPTIMIZER
+from .runtime.hybrid_engine import DeepSpeedHybridEngine
 from .runtime.pipe.engine import PipelineEngine
 from .inference.engine import InferenceEngine
 from .inference.config import DeepSpeedInferenceConfig
@@ -22,8 +23,10 @@ from .runtime.lr_schedules import add_tuning_arguments
 from .runtime.config import DeepSpeedConfig, DeepSpeedConfigError
 from .runtime.activation_checkpointing import checkpointing
 from .ops.transformer import DeepSpeedTransformerLayer, DeepSpeedTransformerConfig
-from .utils import log_dist
-from .utils.distributed import init_distributed
+from .module_inject import replace_transformer_layer, revert_transformer_layer
+
+from .utils import log_dist, OnDevice, logger
+from .comm.comm import init_distributed
 
 from .runtime import zero
 from .runtime import DeepSpeedOptimizer, ZeROOptimizer
@@ -120,29 +123,66 @@ def initialize(args=None,
              ranks=[0])
     assert model is not None, "deepspeed.initialize requires a model"
 
+    # Set config using config_params for backwards compat
+    if config is None and config_params is not None:
+        config = config_params
+
+    # Check for deepscale_config for backwards compat
+    if hasattr(args, "deepscale_config") and args.deepscale_config is not None:
+        logger.warning("************ --deepscale_config is deprecated, please use --deepspeed_config ************")
+        if hasattr(args, "deepspeed_config"):
+            assert (args.deepspeed_config is
+                    None), "Not sure how to proceed, we were given both a deepscale_config and deepspeed_config"
+        args.deepspeed_config = args.deepscale_config
+        args.deepscale_config = None
+
+    # Check that we have only one config passed
+    if hasattr(args, "deepspeed_config") and args.deepspeed_config is not None:
+        assert config is None, "Not sure how to proceed, we were given deepspeed configs in the deepspeed arguments and deepspeed.initialize() function call"
+        config = args.deepspeed_config
+    assert config != None, "DeepSpeed requires --deepspeed_config to specify configuration file"
+
     if not isinstance(model, PipelineModule):
-        engine = DeepSpeedEngine(args=args,
-                                 model=model,
-                                 optimizer=optimizer,
-                                 model_parameters=model_parameters,
-                                 training_data=training_data,
-                                 lr_scheduler=lr_scheduler,
-                                 mpu=mpu,
-                                 dist_init_required=dist_init_required,
-                                 collate_fn=collate_fn,
-                                 config_params=config_params)
+        config_class = DeepSpeedConfig(config, mpu)
+        if config_class.hybrid_engine.enabled:
+            engine = DeepSpeedHybridEngine(args=args,
+                                           model=model,
+                                           optimizer=optimizer,
+                                           model_parameters=model_parameters,
+                                           training_data=training_data,
+                                           lr_scheduler=lr_scheduler,
+                                           mpu=mpu,
+                                           dist_init_required=dist_init_required,
+                                           collate_fn=collate_fn,
+                                           config=config,
+                                           config_class=config_class)
+        else:
+            engine = DeepSpeedEngine(args=args,
+                                     model=model,
+                                     optimizer=optimizer,
+                                     model_parameters=model_parameters,
+                                     training_data=training_data,
+                                     lr_scheduler=lr_scheduler,
+                                     mpu=mpu,
+                                     dist_init_required=dist_init_required,
+                                     collate_fn=collate_fn,
+                                     config=config,
+                                     config_class=config_class)
     else:
         assert mpu is None, "mpu must be None with pipeline parallelism"
+        mpu = model.mpu()
+        config_class = DeepSpeedConfig(config, mpu)
         engine = PipelineEngine(args=args,
                                 model=model,
                                 optimizer=optimizer,
                                 model_parameters=model_parameters,
                                 training_data=training_data,
                                 lr_scheduler=lr_scheduler,
-                                mpu=model.mpu(),
+                                mpu=mpu,
                                 dist_init_required=dist_init_required,
                                 collate_fn=collate_fn,
-                                config_params=config_params)
+                                config=config,
+                                config_class=config_class)
 
     return_items = [engine, engine.optimizer, engine.training_dataloader, engine.lr_scheduler]
     return tuple(return_items)

@@ -30,18 +30,10 @@ class CUDA_Accelerator(DeepSpeedAccelerator):
         if pynvml is None:
             self._init_pynvml()
 
-    def _init_pynvml(self):
-        global pynvml
-        try:
-            import pynvml
-        except ImportError:
-            return
-        try:
-            pynvml.nvmlInit()
-        except pynvml.NVMLError:
-            pynvml = None
-            return
-
+        # begin initialize for create_op_builder()
+        # put all valid class name <--> class type mapping into class_dict
+        op_builder_dir = self.op_builder_dir()
+        op_builder_module = importlib.import_module(op_builder_dir)
         for _, module_name, _ in pkgutil.iter_modules([os.path.dirname(op_builder_module.__file__)]):
             # avoid self references
             if module_name != 'all_ops' and module_name != 'builder':

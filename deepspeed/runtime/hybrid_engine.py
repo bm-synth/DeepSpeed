@@ -12,19 +12,21 @@ from .utils import TLinear, get_inactive_params
 from deepspeed.runtime.zero import GatheredParameters
 import time
 import gc
-import math
+
 from deepspeed import comm as dist
 from deepspeed.accelerator import get_accelerator
 from torch import nn
 from deepspeed.utils import logger
-from deepspeed.module_inject.layers import LinearLayer, Normalize, EmbeddingLayer, OPTEmbedding
-from ..ops.transformer.inference.op_binding.workspace import WorkspaceOp
 
+from deepspeed.ops.op_builder import InferenceBuilder
+
+from deepspeed.module_inject.layers import LinearLayer, Normalize, EmbeddingLayer, OPTEmbedding
 try:
     import transformers
     OPTLearnedPositionalEmbedding = transformers.models.opt.modeling_opt.OPTLearnedPositionalEmbedding
 except:
     OPTLearnedPositionalEmbedding = None
+inference_cuda_module = None
 
 
 class DeepSpeedHybridEngine(DeepSpeedEngine):
@@ -59,8 +61,12 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
         self._total_batch_size = None
         self._gather_latency = 0
 
+        global inference_cuda_module
+        if inference_cuda_module is None:
+            builder = InferenceBuilder()
+            inference_cuda_module = builder.load()
+
         self.is_lora_fused = False
-        self.workspace = WorkspaceOp()
 
     def convert_to_linear_transposed(self, model):
 
@@ -77,36 +83,18 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
 
     def new_inference_container(self, orig_layer, policy_cls, layer_id):
         policy = policy_cls(orig_layer, inference=True)
-
-        if self._config.fp16_enabled:
-            inference_dtype = torch.float16
-        elif self._config.bfloat16_enabled:
-            inference_dtype = torch.bfloat16
-        else:
-            inference_dtype = torch.float32
-
         _container = policy_to_ds_container(
             policy=policy,
-            config=DeepSpeedInferenceConfig(
-                set_empty_params=True,
-                dtype=inference_dtype,
-                max_out_tokens=self._config.hybrid_engine.max_out_tokens,
-                min_out_tokens=self._config.hybrid_engine.max_out_tokens,
-                transposed_mode=True,
-            ),
+            config=DeepSpeedInferenceConfig(set_empty_params=True,
+                                            max_out_tokens=self._config.hybrid_engine.max_out_tokens,
+                                            min_out_tokens=self._config.hybrid_engine.max_out_tokens,
+                                            transposed_mode=True),
             model_config=self.module.config if hasattr(self.module, 'config') else None,
             layer_id=layer_id,
             child=orig_layer)
+        _container.set_dtype(self._config.fp16_enabled)
 
-        if self.mpu is not None:
-            if hasattr(self.mpu, 'get_model_parallel_world_size'):
-                _container.set_tensor_parallel_config(self.mpu.get_model_parallel_world_size(),
-                                                      self.mpu.get_model_parallel_group())
-            else:
-                _container.set_tensor_parallel_config(self.mpu.get_tensor_model_parallel_world_size(),
-                                                      self.mpu.get_tensor_model_parallel_group())
-        else:
-            _container.set_tensor_parallel_config(self._config.hybrid_engine.inference_tp_size, self.mp_group)
+        _container.set_tensor_parallel_config(self._config.hybrid_engine.inference_tp_size, self.mp_group)
         _container.initialize_tensors(enable_training=True)
         _container.create_ds_model_config()
         _container.create_module()
@@ -129,19 +117,31 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
             OPTLearnedPositionalEmbedding: (OPTEmbedding, )
         })
 
-    def _fuse_lora_layer(self, layer_id):
-        self._inference_containers[layer_id].fuse_lora()
+    def _fuse_lora(self, params, lora_params):
+        maybe_has_lora_params = [p for p in params if len(p.shape) > 1]
+        for lora_param, weight in zip(lora_params, maybe_has_lora_params):
+            if len(lora_params) > 0:
+                lora_right_weight, \
+                lora_left_weight, \
+                lora_scaling = lora_param
+                weight.data += lora_scaling * torch.matmul(lora_left_weight.t(), lora_right_weight.t())
 
     def fuse_lora_weight(self):
         for layer_id in range(len(self.layer_params)):
-            self._fuse_lora_layer(layer_id)
+            self._fuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
 
-    def _unfuse_lora_layer(self, layer_id):
-        self._inference_containers[layer_id].unfuse_lora()
+    def _unfuse_lora(self, params, lora_params):
+        maybe_has_lora_params = [p for p in params if len(p.shape) > 1]
+        for lora_param, weight in zip(lora_params, maybe_has_lora_params):
+            if len(lora_params) > 0:
+                lora_right_weight, \
+                lora_left_weight, \
+                lora_scaling = lora_param
+                weight.data -= lora_scaling * torch.matmul(lora_left_weight.t(), lora_right_weight.t())
 
     def unfuse_lora_weight(self):
         for layer_id in range(len(self.layer_params)):
-            self._unfuse_lora_layer(layer_id)
+            self._unfuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
 
     def unfuse_lora_weight_non_pinned(self):
         for layer_id in range(len(self.layer_params)):
@@ -150,17 +150,17 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
             non_active_params.extend(non_active_lora_params)
 
             with GatheredParameters(non_active_params):
-                self._unfuse_lora_layer(layer_id)
+                self._unfuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
 
     def retake_inference_cache(self):
         if self._config.hybrid_engine.release_inference_cache:
-            retake_success = self.workspace.retake_workspace()
+            retake_success = inference_cuda_module.retake_workspace()
 
             if not retake_success:
-                logger.warning("Unable to acquire workspace on first attempt, emptying cache and retrying.")
+                logger.warning("Unable to acquire workspace on first attempt, emtpying cache and retrying.")
                 gc.collect()
                 get_accelerator().empty_cache()
-                retake_success = self.workspace.retake_workspace()
+                retake_success = inference_cuda_module.retake_workspace()
 
                 if not retake_success:
                     raise RuntimeError("Unable to retake inference workspace.")
@@ -181,7 +181,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
 
                 partition_size = self._config.hybrid_engine.tp_gather_partition_size
 
-                layer_groups = math.ceil(len(self.layer_params) / partition_size)
+                layer_groups = len(self.layer_params) // partition_size
                 for lg in range(layer_groups):
                     non_active_params = []
                     non_active_lora_params = []
@@ -194,11 +194,9 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                         for layer_id in range(lg * partition_size,
                                               min(len(self.layer_params), (lg + 1) * partition_size), 1):
                             if len(self.all_lora_params) > 0:
-                                self._fuse_lora_layer(layer_id)
-
-                            if self.mpu is not None:
-                                self._inference_containers[layer_id].apply_tensor_parallelism(self.mp_replace,
-                                                                                              reversed_dim=True)
+                                self._fuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
+                            self._inference_containers[layer_id].apply_tensor_parallelism(
+                                mp_group=self.mp_group, tp_size=self._config.hybrid_engine.inference_tp_size)
 
                 # TODO(cmikeh2) Evaluate if this can be deferred when release_inference_cache
                 # is enabled.
@@ -217,7 +215,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                 dist.all_gather_into_tensor(output, input_cont, group=self.mp_group)
 
                 if len(inputs) > 0:
-                    inputs = (output, *inputs[1:])
+                    inputs = (output, )
                 else:
                     kwargs['input_ids'] = output
 
@@ -263,7 +261,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                 self.is_lora_fused = False
 
         if self._config.hybrid_engine.release_inference_cache:
-            self.workspace.release_workspace()
+            inference_cuda_module.release_workspace()
             gc.collect()
             get_accelerator().empty_cache()
 
@@ -290,13 +288,8 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
 
                     layer_id += 1
                 else:
-                    if self.inference_policies[child.__class__][0] == LinearLayer:
-                        self._other_layers.append(self.inference_policies[child.__class__][0](module=child,
-                                                                                              mp_group=None,
-                                                                                              skip_partition=True))
-                    else:
-                        self._other_layers.append(self.inference_policies[child.__class__][0](
-                            weight=child.weight, bias=child.bias if hasattr(child, 'bias') else None))
+                    self._other_layers.append(self.inference_policies[child.__class__][0](
+                        weight=child.weight, bias=child.bias if hasattr(child, 'bias') else None))
                     self._orig_modules_others.append(child)
                     self._orig_fwds_others.append(child.forward)
             else:
@@ -313,49 +306,27 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
         self._orig_fwds_others = []
 
         if self._config.hybrid_engine.inference_tp_size > 1:
-            if self.mpu is None:
-                global_rank = dist.get_rank()
-                world_size = dist.get_world_size()
-                mp_group_id = global_rank // self._config.hybrid_engine.inference_tp_size
-                num_mp_groups = world_size // self._config.hybrid_engine.inference_tp_size
-                for mp_group_id in range(num_mp_groups):
-                    ranks = list(
-                        range(mp_group_id * self._config.hybrid_engine.inference_tp_size, \
-                            (mp_group_id + 1) * self._config.hybrid_engine.inference_tp_size, \
-                            1)
-                    )
-                    mp_group = dist.new_group(ranks)
-                    if global_rank in ranks:
-                        # mp_group is used for broader collective
-                        self.mp_group = mp_group
-
-                        # mp_replace is used for container tensor slicing
-                        from deepspeed.module_inject import ReplaceWithTensorSlicing
-                        self.mp_replace = ReplaceWithTensorSlicing(
-                            mp_group=self.mp_group,
-                            mp_size=self._config.hybrid_engine.inference_tp_size,
-                            out_dim=0,
-                            in_dim=1)
-
-            else:
-                self.mp_group = self.mpu.get_model_parallel_group() if hasattr(self.mpu, 'get_model_parallel_group') else \
-                    self.mpu.get_tensor_model_parallel_group()
-
-                from deepspeed.module_inject import ReplaceWithTensorSlicing
-                self.mp_replace = ReplaceWithTensorSlicing(mp_group=self.mp_group,
-                                                           mp_size=self._config.hybrid_engine.inference_tp_size,
-                                                           out_dim=0,
-                                                           in_dim=1)
+            global_rank = dist.get_rank()
+            world_size = dist.get_world_size()
+            mp_group_id = global_rank // self._config.hybrid_engine.inference_tp_size
+            num_mp_groups = world_size // self._config.hybrid_engine.inference_tp_size
+            for mp_group_id in range(num_mp_groups):
+                ranks = list(
+                    range(mp_group_id * self._config.hybrid_engine.inference_tp_size, \
+                          (mp_group_id + 1) * self._config.hybrid_engine.inference_tp_size, \
+                          1)
+                )
+                mp_group = dist.new_group(ranks)
+                if global_rank in ranks:
+                    self.mp_group = mp_group
         else:
             self.mp_group = None
-            self.mp_replace = None
         self.populate_all_inference_policies()
         self.all_layers_params = list(self.module.parameters())
         self.create_inference_containers(self.module)
 
-        if len(self._inference_containers) > 0:
-            self._generate = self.module.generate
-            self.module.generate = self.generate
+        self._generate = self.module.generate
+        self.module.generate = self.generate
 
         self._t0 = time.time()
 
@@ -370,7 +341,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                 if len(self.all_lora_params) > 0:
                     # Use the is_lora_fused flag to prevent multiple fusion in Z3 with non-pinned memory
                     if not self.is_lora_fused:
-                        self._fuse_lora_layer(layer_id)
+                        self._fuse_lora(self.layer_params[layer_id], self.lora_params[layer_id])
                     # Set the is_lora_fused to true when reaching the last layer
                     if layer_id == len(self.layer_params) - 1:
                         self.is_lora_fused = True
@@ -384,20 +355,14 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
             self._total_latency = self._total_latency + latency
             self._iters = self._iters + 1
             if not dist.is_initialized() or dist.get_rank() == 0:
-                if self._total_batch_size is not None:
-                    cur_samples_p_sec = f'|CurSamplesPerSec={(1 / latency * self._total_batch_size):.2f} '
-                    avg_samples_p_sec = f'|AvgSamplesPerSec={(1 / (self._total_latency / self._iters) * self._total_batch_size):.2f}'
-                else:
-                    cur_samples_p_sec = ''
-                    avg_samples_p_sec = ''
                 others = latency - (self._generate_latency + self._training_latency)
                 print(f'|E2E latency={(latency):.2f}s ' + \
                       f'|Gather latency={self._gather_latency:.2f}s ({(self._gather_latency / latency * 100):.2f}%) '
                       f'|Generate time={(self._generate_latency):.2f}s ({(self._generate_latency / latency * 100):.2f}%) ' + \
                       f'|Training time={(self._training_latency):.2f}s ({(self._training_latency / latency * 100):.2f}%) ' + \
-                      f'|Others={others:.2f} ({(others / latency * 100):.2f}%)' + \
-                      cur_samples_p_sec + \
-                      avg_samples_p_sec)
+                      f'|Others={others:.2f} ({(others / latency * 100):.2f}%)'
+                      f'|CurSamplesPerSec={(1 / latency * self._total_batch_size):.2f} ' + \
+                      f'|AvgSamplesPerSec={(1 / (self._total_latency / self._iters) * self._total_batch_size):.2f}')
             self._t_start = time.time()
         self._training_latency = 0
         super().eval()
@@ -408,8 +373,6 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                     orig_module.forward = self._zero3_forward(i)
                 else:
                     orig_module.forward = inference_container.module.forward
-
-                inference_container.transform_for_inference()
 
             if not self.Z3_enabled or self.gather_all_layers:
                 for orig_module, inference_layer in zip(self._orig_modules_others, self._other_layers):
@@ -422,9 +385,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
 
     def train(self, mode=True):
         if mode and len(self._orig_modules) > 0:
-            for inference_container, orig_module, orig_fwd in zip(self._inference_containers, self._orig_modules,
-                                                                  self._orig_fwds):
-                inference_container.transform_for_training()
+            for orig_module, orig_fwd in zip(self._orig_modules, self._orig_fwds):
                 orig_module.forward = orig_fwd
             for orig_module, orig_fwd in zip(self._orig_modules_others, self._orig_fwds_others):
                 orig_module.forward = orig_fwd
@@ -434,12 +395,10 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
 
     def step(self, lr_kwargs=None):
         super().step(lr_kwargs=lr_kwargs)
-
-        if len(self._inference_containers) > 0:
-            if not self.Z3_enabled:
-                for inference_container in self._inference_containers:
-                    inference_container.reset_params()
-
+        if(self._inference_containers[0].module.attention.attn_qkvw is not None and \
+            self._inference_containers[0].q_k_v is not None):
+            for inference_container in self._inference_containers:
+                inference_container.reset_qkv()
         if self._training_start_time is not None:
             self._training_latency += (time.time() - self._training_start_time)
             self._training_start_time = time.time()
