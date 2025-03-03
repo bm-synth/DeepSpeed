@@ -2857,9 +2857,15 @@ class DeepSpeedEngine(Module):
             checkpoint['module'] = get_fp32_state_dict_from_zero_checkpoint(load_dir)
             fetch_z3_params = True
 
-        if is_pipe_parallel:
-            # Pipeline parallelism uses this to load its own checkpoint files.
-            self._curr_ckpt_path = os.path.join(load_dir, tag)
+        self.load_module_state_dict(state_dict=checkpoint['module'],
+                                    strict=load_module_strict)
+        if not self.zero_optimization():
+            if self.fp16_enabled():
+                self.optimizer.load_state_dict(
+                    checkpoint['optimizer'],
+                    load_optimizer_states=load_optimizer_states)
+            elif load_optimizer_states:
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
 
         if self.has_moe_layers:
             # print(checkpoint.keys())
