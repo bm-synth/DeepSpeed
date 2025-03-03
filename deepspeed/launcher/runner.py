@@ -400,24 +400,21 @@ def parse_num_nodes(str_num_nodes: str, elastic_training: bool):
 def main(args=None):
     args = parse_args(args)
 
-    if args.elastic_training:
-        assert args.master_addr != "", "Master Addr is required when elastic training is enabled"
-
     resource_pool = fetch_hostfile(args.hostfile)
 
-    # respect VISIBLE_DEVICES for a single node and no explicit resource filters
-    visible_devices_env = get_accelerator().visible_devices_envs()[0]
-    visible_devices = os.environ.get(visible_devices_env, "")
-    if not resource_pool and len(visible_devices):
-        detected_str = f"Detected VISIBLE_DEVICES={visible_devices}"
-        if len(args.include) or len(args.exclude) or args.num_nodes > 1 or args.num_gpus > 0:
+    # respect CUDA_VISIBLE_DEVICES for a single node and no explicit resource filters
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if not resource_pool and len(cuda_visible_devices):
+        detected_str = f"Detected CUDA_VISIBLE_DEVICES={cuda_visible_devices}"
+        if len(args.include) or len(
+                args.exclude) or args.num_nodes > 1 or args.num_gpus > 0:
             print(
                 f"{detected_str} but ignoring it because one or several of --include/--exclude/--num_gpus/--num_nodes cl args were used. If you want to use CUDA_VISIBLE_DEVICES don't pass any of these arguments to deepspeed."
             )
         else:
-            args.include = f"localhost:{visible_devices}"
+            args.include = f"localhost:{cuda_visible_devices}"
             print(f"{detected_str}: setting --include={args.include}")
-        del os.environ[visible_devices_env]
+        del os.environ["CUDA_VISIBLE_DEVICES"]
 
     if args.num_nodes >= 0 or args.num_gpus >= 0:
         if args.include != "" or args.exclude != "":
