@@ -67,7 +67,7 @@ class SymQuantizer(torch.autograd.Function):
                 The input which needs to be quantized
             num_bits (int, >=4)
                 Number of bits to use for quantization
-            min_value/max_vlue (torch.FloatTensor)
+            min_value/max_value (torch.FloatTensor)
                 Used for static activation quantization
             num_groups (int)
                 How many groups to partition the quantization into
@@ -109,7 +109,7 @@ class AsymQuantizer(torch.autograd.Function):
                 The input which needs to be quantized
             num_bits (int, >=4)
                 Number of bits to use for quantization
-            min_value/max_vlue (torch.FloatTensor)
+            min_value/max_value (torch.FloatTensor)
                 Used for static activation quantization
             num_groups (int)
                 How many groups to partition the quantization into
@@ -153,7 +153,7 @@ class TernaryQuantizer(torch.autograd.Function):
                 The input which needs to be quantized
             num_bits (int)
                 Dummy variable
-            min_value/max_vlue (torch.FloatTensor)
+            min_value/max_value (torch.FloatTensor)
                 Used for static activation quantization; for now they are dummy variable
             num_groups (int)
                 How many groups to partition the quantization into
@@ -194,7 +194,7 @@ class BinaryQuantizer(torch.autograd.Function):
                 The input which needs to be quantized
             num_bits (int)
                 Dummy variable
-            min_value/max_vlue (torch.FloatTensor)
+            min_value/max_value (torch.FloatTensor)
                 Used for static activation quantization; for now they are dummy variable
             num_groups (int)
                 How many groups to partition the quantization into
