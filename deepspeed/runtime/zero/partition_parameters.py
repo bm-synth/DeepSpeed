@@ -351,7 +351,7 @@ class InsertPostInitMethodToModuleSubClasses(object):
 
         if self.mem_efficient_linear:
             print_rank_0(
-                f"Your linear layers are being patched with more memory efficient version. This will persit unless manually reset.",
+                "nn.functional.linear has been overridden with a more memory efficient version. This will persist unless manually reset.",
                 force=True)
             self.linear_bk = torch.nn.functional.linear
             torch.nn.functional.linear = LinearFunctionForZeroStage3.apply
@@ -1115,13 +1115,6 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
                 assert ds_config.zero_config.offload_param.nvme_path is not None, \
                 f'"nvme_path" in DeepSpeed Config cannot be None if remote device is {OffloadDeviceEnum.nvme}'
-
-        if mem_efficient_linear:
-            print_rank_0(
-                f"Your linear layers are being patched with more memory efficient version. This will persit unless manually turned reset.",
-                force=True)
-            self.linear_bk = torch.nn.functional.linear
-            torch.nn.functional.linear = LinearFunctionForZeroStage3.apply
 
     def _post_init_method(self, module):
         #see_memory_usage(f"Before converting params in {module.__class__.__name__}", force=False)
