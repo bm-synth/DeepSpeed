@@ -11,6 +11,10 @@ class CPUAdamBuilder(TorchCPUOpBuilder):
     def __init__(self):
         super().__init__(name=self.NAME)
 
+    def is_compatible(self, verbose=True):
+        # Disable on Windows.
+        return sys.platform != "win32"
+
     def absolute_name(self):
         return f'deepspeed.ops.adam.{self.NAME}_op'
 

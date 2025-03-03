@@ -8,9 +8,9 @@ import torch
 import deepspeed
 import subprocess
 import argparse
-from .ops.op_builder.all_ops import ALL_OPS
-from .git_version_info import installed_ops, torch_info, accelerator_name
-from deepspeed.accelerator import get_accelerator
+from .ops.op_builder import ALL_OPS
+from .git_version_info import installed_ops, torch_info
+from .ops import __compatible_ops__ as compatible_ops
 
 GREEN = '\033[92m'
 RED = '\033[91m'
@@ -51,9 +51,9 @@ def op_report(verbose=True):
     for op_name, builder in ALL_OPS.items():
         dots = "." * (max_dots - len(op_name))
         is_compatible = OKAY if builder.is_compatible(verbose) else no
-        is_installed = installed if installed_ops.get(op_name,
-                                                      False) and accelerator_name == get_accelerator()._name else no
-        dots2 = '.' * ((len(h[1]) + (max_dots2 - len(h[1]))) - (len(is_installed) - color_len))
+        is_installed = installed if installed_ops[op_name] else no
+        dots2 = '.' * ((len(h[1]) + (max_dots2 - len(h[1]))) -
+                       (len(is_installed) - color_len))
         print(op_name, dots, is_installed, dots2, is_compatible)
     print("-" * (max_dots + max_dots2 + len(h[0]) + len(h[1])))
 
@@ -172,10 +172,15 @@ def debug_report():
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--hide_operator_status',
+    parser.add_argument(
+        '--hide_operator_status',
+        action='store_true',
+        help=
+        'Suppress display of installation and compatiblity statuses of DeepSpeed operators. '
+    )
+    parser.add_argument('--hide_errors_and_warnings',
                         action='store_true',
-                        help='Suppress display of installation and compatibility statuses of DeepSpeed operators. ')
-    parser.add_argument('--hide_errors_and_warnings', action='store_true', help='Suppress warning and error messages.')
+                        help='Suppress warning and error messages.')
     args = parser.parse_args()
     return args
 
@@ -188,7 +193,8 @@ def main(hide_operator_status=False, hide_errors_and_warnings=False):
 
 def cli_main():
     args = parse_arguments()
-    main(hide_operator_status=args.hide_operator_status, hide_errors_and_warnings=args.hide_errors_and_warnings)
+    main(hide_operator_status=args.hide_operator_status,
+         hide_errors_and_warnings=args.hide_errors_and_warnings)
 
 
 if __name__ == "__main__":
