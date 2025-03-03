@@ -171,8 +171,8 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         # - assume all params requires grad
         # - flat by groups, not keeping state. TODO: remove state explicitly?
         # - master grad and unflat master weight never exist. TODO: a way to save out unflat master?
-        if not get_accelerator().is_available():
-            raise SystemError("Accelerator is not detected, cannot perform low precision training (e.g., fp16, bf16).")
+        if not torch.cuda.is_available():
+            raise SystemError("Cannot use fp16 without CUDA.")
         self.optimizer = init_optimizer
 
         # Use torch (un)flatten ops
