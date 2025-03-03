@@ -647,12 +647,8 @@ class OpBuilder(ABC):
             extra_link_args=self.strip_empty_entries(self.extra_ldflags()))
 
     def load(self, verbose=True):
-        if self.name in __class__._loaded_ops:
-            return __class__._loaded_ops[self.name]
-
-        from deepspeed.git_version_info import installed_ops, torch_info, accelerator_name
-        from deepspeed.accelerator import get_accelerator
-        if installed_ops.get(self.name, False) and accelerator_name == get_accelerator()._name:
+        from deepspeed.git_version_info import installed_ops, torch_info
+        if installed_ops[self.name]:
             # Ensure the op we're about to load was compiled with the same
             # torch/cuda versions we are currently using at runtime.
             self.validate_torch_version(torch_info)
