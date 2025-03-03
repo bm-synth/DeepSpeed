@@ -64,7 +64,8 @@ class TestPipeModuleSequential(DistributedTest):
     non_daemonic_procs = True
 
     @pytest.mark.parametrize("activation_checkpoints", [False, True])
-    def test(self, sequential_model, simple_config, batch_input, activation_checkpoints):
+    @pytest.mark.parametrize("use_compile", [False, True])
+    def test(self, sequential_model, simple_config, batch_input, activation_checkpoints, use_compile):
         base_model = copy.deepcopy(sequential_model)
         base_input = batch_input.clone().detach()
         base_output = base_model(base_input)
