@@ -71,18 +71,10 @@ class DeepSpeedInferenceConfig(TransformerConfig):
                  training_mp_size=1,
                  bigscience_bloom=False,
                  max_out_tokens=1024,
-                 min_out_tokens=1,
                  enable_qkv_quantization=False,
                  use_mup=False,
                  scale_attn_by_inverse_layer_idx=False,
-                 return_single_tuple=False,
-                 set_empty_params=False,
-                 transposed_mode=False,
-                 use_triton=False,
-                 triton_autotune=False,
-                 num_kv=-1,
-                 rope_theta=10000,
-                 invert_mask=True):
+                 return_single_tuple=False):
         super(DeepSpeedInferenceConfig,
               self).__init__(hidden_size, (intermediate_size if intermediate_size > 0 else 4 * hidden_size), heads,
                              num_hidden_layers)
@@ -111,13 +103,6 @@ class DeepSpeedInferenceConfig(TransformerConfig):
         self.enable_qkv_quantization = enable_qkv_quantization
         self.use_mup = use_mup
         self.return_single_tuple = return_single_tuple
-        self.set_empty_params = set_empty_params
-        self.transposed_mode = transposed_mode
-        self.use_triton = use_triton
-        self.triton_autotune = triton_autotune
-        self.num_kv = num_kv
-        self.rope_theta = rope_theta
-        self.invert_mask = invert_mask
 
     @classmethod
     def from_dict(cls, json_object):
