@@ -162,7 +162,7 @@ def command_exists(cmd):
         result = subprocess.Popen(safe_cmd, stdout=subprocess.PIPE)
         return result.wait() == 1
     else:
-        safe_cmd = shlex.split(f"bash -c type {cmd}")
+        safe_cmd = ["bash", "-c", f"type {cmd}"]
         result = subprocess.Popen(safe_cmd, stdout=subprocess.PIPE)
         return result.wait() == 0
 
