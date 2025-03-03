@@ -108,6 +108,6 @@ class AsyncIOBuilder(TorchCPUOpBuilder):
             self.check_for_libaio_pkg()
 
             self.warning(
-                "If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found."
+                f"{self.NAME} requires the libraries: {aio_libraries} but are missing. Can be fixed by: `apt install libaio-dev`."
             )
-        return super().is_compatible(verbose) and aio_compatible
+        return super().is_compatible() and aio_compatible
