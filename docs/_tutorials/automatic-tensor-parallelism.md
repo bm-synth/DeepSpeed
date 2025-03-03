@@ -167,6 +167,7 @@ The following model families have been successfully tested with automatic tensor
 - xlm_roberta
 - yoso
 - bloom
+- mpt
 
 # Unsupported Models
 
