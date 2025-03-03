@@ -907,16 +907,6 @@ std::vector<torch::Tensor> ds_transformer_backward(unsigned layer_id,
                                                          layer->IsTrainingMode(),
                                                          layer->GeluCheckpoint())},
                                   options);
-    TrainingContext::Instance().SetWorkSpace((T*)workspace.data_ptr());
-
-    auto workspace = torch::empty({get_workspace_size<T>(bsz,
-                                                         seq_len,
-                                                         layer->GetHiddenSize(),
-                                                         layer->GetIntermediateSize(),
-                                                         layer->GetNumHeads(),
-                                                         layer->IsTrainingMode(),
-                                                         layer->GeluCheckpoint())},
-                                  grad_output.options());
     Context::Instance().SetWorkSpace((T*)workspace.data_ptr());
 
     auto grad_input = torch::empty_like(input);
