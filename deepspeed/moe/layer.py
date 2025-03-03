@@ -14,43 +14,38 @@ from .experts import Experts
 from .sharded_moe import MOELayer, TopKGate
 
 
-class MoE(nn.Module):
-    """Initialize an MoE layer.
-
-    Arguments:
-        hidden_size (int): the hidden dimension of the model, importantly this is also the input and output dimension.
-        expert (nn.Module): the torch module that defines the expert (e.g., MLP, torch.linear).
-        num_experts (int, optional): default=1, the total number of experts per layer.
-        ep_size (int, optional): default=1, number of ranks in the expert parallel world or group.
-        k (int, optional): default=1, top-k gating value, only supports k=1 or k=2.
-        capacity_factor (float, optional): default=1.0, the capacity of the expert at training time.
-        eval_capacity_factor (float, optional): default=1.0, the capacity of the expert at eval time.
-        min_capacity (int, optional): default=4, the minimum capacity per expert regardless of the capacity_factor.
-        use_residual (bool, optional): default=False, make this MoE layer a Residual MoE (https://arxiv.org/abs/2201.05596) layer.
-        noisy_gate_policy (str, optional): default=None, noisy gate policy, valid options are 'Jitter', 'RSample' or 'None'.
-        drop_tokens (bool, optional): default=True, whether to drop tokens - (setting to False is equivalent to infinite capacity).
-        use_rts (bool, optional): default=True, whether to use Random Token Selection.
-        use_tutel (bool, optional): default=False, whether to use Tutel optimizations (if installed).
-        enable_expert_tensor_parallelism (bool, optional): default=False, whether to use tensor parallelism for experts
-        top2_2nd_expert_sampling (bool, optional): default=True, whether to perform sampling for 2nd expert
-    """
-
+class MoE(torch.nn.Module):
     def __init__(self,
-                 hidden_size: int,
-                 expert: nn.Module,
-                 num_experts: int = 1,
-                 ep_size: int = 1,
-                 k: int = 1,
-                 capacity_factor: float = 1.0,
-                 eval_capacity_factor: float = 1.0,
-                 min_capacity: int = 4,
-                 use_residual: bool = False,
-                 noisy_gate_policy: Optional[str] = None,
-                 drop_tokens: bool = True,
-                 use_rts: bool = True,
-                 use_tutel: bool = False,
-                 enable_expert_tensor_parallelism: bool = False,
-                 top2_2nd_expert_sampling: bool = True) -> None:
+                 hidden_size,
+                 expert,
+                 num_experts=1,
+                 k=1,
+                 output_dropout_prob=0.0,
+                 capacity_factor=1.,
+                 eval_capacity_factor=1.,
+                 min_capacity=4,
+                 noisy_gate_policy: typing.Optional[str] = None):
+        """Initialize an MoE layer.
+
+        Arguments:
+            hidden_size (int): the hidden dimension of the model, importantly this is also the input and output dimension.
+
+            expert (torch.nn.Module): the torch module that defines the expert (e.g., MLP, torch.linear).
+
+            num_experts (int, optional): default=1, the total number of experts per layer.
+
+            k (int, optional): default=1, top-k gating value, only supports k=1 or k=2.
+
+            output_dropout_prob (float, optional): default=0.0, output dropout probability.
+
+            capacity_factor (float, optional): default=1.0, the capacity of the expert at training time.
+
+            eval_capacity_factor (float, optional): default=1.0, the capacity of the expert at eval time.
+
+            min_capacity (int, optional): default=4, the minimum capacity per expert regardless of the capacity_factor.
+
+            noisy_gate_policy (str, optional): default=None, noisy gate policy, valid options are 'Jitter', 'RSample' or 'None'.
+        """
 
         super(MoE, self).__init__()
 
@@ -107,6 +102,9 @@ class MoE(nn.Module):
                 used_token: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """ MoE forward
 
+    def forward(self, hidden_states, used_token=None):
+        """ MoE forward
+
         Arguments:
             hidden_states (Tensor): input to the layer
             used_token (Tensor, optional): default: None, mask only used tokens
@@ -118,7 +116,7 @@ class MoE(nn.Module):
 
             * l_aux (Tensor): gate loss value
 
-            * exp_counts (Tensor): expert count
+            * exp_counts (int): expert count
         """
         output = self.deepspeed_moe(hidden_states, used_token)
         if self.use_residual:
