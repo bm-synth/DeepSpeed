@@ -335,6 +335,7 @@ class InsertPostInitMethodToModuleSubClasses(object):
             torch.half, torch.bfloat16, torch.float
         ], f"Invalid data type {self.dtype}, allowed values are [torch.half, torch.bfloat16, torch.float]"
         self.wrapped_cls = set()
+        self.skip_init_depth = 0
 
         self.quantized_initialization = None
         if ds_config is not None and ds_config.weight_quantization_config and ds_config.weight_quantization_config.quantized_initialization:
@@ -490,13 +491,11 @@ class InsertPostInitMethodToModuleSubClasses(object):
                 return wrapper
 
             def _enable_class_apply(cls):
-                if '_apply' in cls.__dict__:
-                    cls._old_apply_of_skip_init_hook = cls._apply
-                    cls._apply = partition_after_empty_init(cls._apply)
+                cls._old_apply_of_skip_init_hook = cls._apply
+                cls._apply = partition_after_empty_init(cls._apply)
 
             def _disable_class_apply(cls):
-                if hasattr(cls, '_old_apply_of_skip_init_hook'):
-                    cls._apply = cls._old_apply_of_skip_init_hook
+                cls._apply = cls._old_apply_of_skip_init_hook
 
             # add hooks for to_empty: apply_(empty_like)
             for subclass in get_all_subclasses(torch.nn.modules.module.Module):
@@ -539,9 +538,12 @@ class InsertPostInitMethodToModuleSubClasses(object):
                     delattr(module, "_ds_child_entered")
 
                     print_rank_0(f'Running post_init for {module.__class__.__name__}', force=False)
-                    self._post_init_method(module)
+                    if self.skip_init_depth == 0:
+                        self._post_init_method(module)
 
                 print_rank_0(f'After initializing followed by post init for {module.__class__.__name__}', force=False)
+                if init_on_meta:
+                    self.skip_init_depth -= 1
 
             return wrapper
 
@@ -589,7 +591,6 @@ class InsertPostInitMethodToModuleSubClasses(object):
         self.patched = True
 
     def unpatch_init_and_builtins(self):
-
         if self.patched:
 
             def _disable_class(cls):
