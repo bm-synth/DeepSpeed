@@ -1837,8 +1837,10 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
         partition_size = sum([param.ds_tensor.ds_numel for param in param_list])
 
-        tensor_size = partition_size * self.num_partitions
-        flat_tensor = torch.empty(tensor_size, dtype=param_list[0].ds_tensor.dtype, device=self.local_device)
+        tensor_size = partition_size * self.world_size
+        flat_tensor = torch.empty(tensor_size,
+                                  dtype=param_list[0].dtype,
+                                  device=self.local_device)
         flat_tensor.requires_grad = False
         partitions = []
         for i in range(self.num_partitions):
