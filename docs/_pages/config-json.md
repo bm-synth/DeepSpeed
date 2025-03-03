@@ -639,6 +639,120 @@ Configuring the asynchronous I/O module for offloading parameter and optimizer s
 | -------------------------------------------------------------------- | ------- |
 | Print out state information of DeepSpeed object after initialization | `false` |
 
+
+### Autotuning
+
+```json
+{
+  "autotuning": {
+    "enabled": false,
+    "results_dir": "autotuning_results",
+    "exps_dir": "autotuning_exps",
+    "overwrite": false,
+    "metric": "throughput",
+    "start_profile_step": 3,
+    "end_profile_step": 5,
+    "fast": true,
+    "max_train_batch_size": null,
+    "mp_size": 1,
+    "num_tuning_micro_batch_sizes": 3,
+    "tuner_type": "model_based",
+    "tuner_early_stopping": 5,
+    "tuner_num_trials": 50,
+    "arg_mappings": null
+  }
+}
+```
+<i>**enabled**</i>: [boolean]
+
+| Description            | Default |
+| ---------------------- | ------- |
+| Enables the autotuner. | `false` |
+
+
+<i>**results_dir**</i>: [string]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| Path to the autotuning experiment results directory.  The default appears in the working directory from which Deepspeed was launched. | "autotuning_results"  |
+
+<i>**exps_dir**</i>: [string]
+
+| Description                                                                                                                              | Default |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| Path to the auotuning experiment descriptions directory. The default appears in the working directory from which Deepspeed was launched. | "autotuning_exps"  |
+
+<i>**overwrite**</i>: [boolean]
+
+| Description                                                                                                               | Default |
+|---------------------------------------------------------------------------------------------------------------------------| ------- |
+| Whether to run autotuing experiments whose results already exist. Setting it to true would overwrite the existing result. | `false` |
+
+
+<i>**metric**</i>: [string]
+
+| Description                                                                                                                                                                                                                                                            | Default      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| The performance metric to use for ranking autotuning experiments. `latency`, `throughput`, and `FLOPS` are currently supported, referring to training step latency, training samples per second, and floating-point operations per second achieved per GPU respectively. | `throughput` |
+
+<i>**start_profile_step**</i>: [integer]
+
+| Description                                                                                                                                         | Default |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| The global training step at which to start profiling in an autotuning experiment. Note that warm-up is needed for accurate performance measurement. | `3`     |
+
+<i>**end_profile_step**</i>: [integer]
+
+| Description                                                                                                               | Default |
+| ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| The global training step at which to end profiling in an autotuning experiment. Must not be less than start_profile_step. | `5`     |
+
+
+<i>**fast**</i>: [boolean]
+
+| Description                                                                                  | Default |
+| -------------------------------------------------------------------------------------------- | ------- |
+| Enables fast-model autotuning where only Zero stages and micro-batch sizes per GPU are tuned. | `true` |
+
+<i>**max_train_batch_size**</i>: [int]
+
+| Description                                                                       | Default |
+| --------------------------------------------------------------------------------- | ------- |
+| The maximum train batch size (global effective batch size) for the model training. | `null`  |
+
+<i>**mp_size**</i>: [int]
+
+| Description              | Default |
+| ------------------------ | ------- |
+| Model parallelism degree. | `1`     |
+
+
+<i>**num_tuning_micro_batch_sizes**</i>: [integer]
+
+| Description                                     | Default |
+| ----------------------------------------------- | ------- |
+| The number of micro-batch sizes to explore. | `3`     |
+
+<i>**tuner_type**</i>: [string]
+
+| Description                                                                              | Default       |
+| ---------------------------------------------------------------------------------------- | ------------- |
+| The algorithm defines the order of autotuning space exploration within a ZeRO stage. | `model_based` |
+
+
+<i>**tuner_early_stopping**</i>: [integer]
+
+| Description                                                                                                                                                | Default |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| The number of experiments to run beyond the current best experiment. If no better experiment is found within that number, the Autotuner stops the exploration. | `5`     |
+
+<i>**tuner_num_trials**</i>: [integer]
+
+| Description                                                                           | Default |
+| ------------------------------------------------------------------------------------- | ------- |
+| The maximum number of experiments to explore in the tuning space within a ZeRO stage. | `50`    |
+
+
 ### Flops Profiler
 ```json
 {

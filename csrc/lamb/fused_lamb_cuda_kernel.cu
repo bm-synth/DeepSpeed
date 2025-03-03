@@ -11,13 +11,13 @@
 #include "ATen/TensorUtils.h"
 #include "ATen/cuda/CUDAContext.h"
 #include "ATen/cuda/detail/IndexUtils.cuh"
-//#include "ATen/Type.h"
+// #include "ATen/Type.h"
 #include "ATen/AccumulateType.h"
 
 #include <iostream>
 
 // #include <helper_functions.h>
-#if defined(__HIP_PLATFORM_AMD__) && HIP_VERSION > 305
+#if defined(__HIP_PLATFORM_HCC__) && HIP_VERSION > 305
 #include <hip/hip_cooperative_groups.h>
 #else
 #include <cooperative_groups.h>
