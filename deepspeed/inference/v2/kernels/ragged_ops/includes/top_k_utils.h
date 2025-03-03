@@ -14,8 +14,5 @@
         } else if (4 == N_TOP_K) {         \
             constexpr int CONST_TOP_K = 4; \
             __VA_ARGS__();                 \
-        } else if (8 == N_TOP_K) {         \
-            constexpr int CONST_TOP_K = 8; \
-            __VA_ARGS__();                 \
         }                                  \
     }()
