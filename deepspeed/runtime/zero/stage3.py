@@ -159,7 +159,6 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         zero_quantized_weights=False,
         zero_quantized_nontrainable_weights=False,
         zero_module_granularity_threshold=0,
-        zeropp_loco_param=None,
     ):
         see_memory_usage("Stage 3 initialize beginning", force=True)
 

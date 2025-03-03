@@ -157,6 +157,13 @@ class DeepSpeedZeRoOffload(object):
             zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights,
         )
 
+        if zero_module_granularity_threshold > 0:
+            self.min_granularity_value = sys.maxsize
+            self.min_granularity_layer = None
+            self.granularity_info = set()
+            self.z3_leaf_layers = []
+            self._set_z3_leaf_modules_by_threshold(module, zero_module_granularity_threshold)
+
         self.forward_hooks = []
         self.backward_hooks = []
 
