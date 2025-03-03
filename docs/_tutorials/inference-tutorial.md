@@ -30,10 +30,10 @@ import deepspeed
 
 # Initialize the DeepSpeed-Inference engine
 ds_engine = deepspeed.init_inference(model,
-                                 tensor_parallel={"tp_size": 2},
-                                 dtype=torch.half,
-                                 checkpoint=None if args.pre_load_checkpoint else args.checkpoint_json,
-                                 replace_with_kernel_inject=True)
+                                     tensor_parallel={"tp_size": world_size},
+                                     dtype=torch.half,
+                                     checkpoint=None if args.pre_load_checkpoint else args.checkpoint_json,
+                                     replace_with_kernel_inject=True)
 model = ds_engine.module
 pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
 output = pipe('Input String')
