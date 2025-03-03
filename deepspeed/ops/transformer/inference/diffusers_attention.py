@@ -59,9 +59,41 @@ class DeepSpeedDiffusersAttentionFunction(Function):
             head_size = input.shape[-1] // config.heads
             do_flash_attn = (head_size <= 128)
             scale = (1 / norm_factor) * (1 / norm_factor)
-            if do_flash_attn and context is None:
-                qkv_out = linear_func(input, attn_qkvw, attn_qkvb if attn_qkvb is not None else attn_qkvw, attn_qkvb
-                                      is not None, do_flash_attn, config.heads, False, rope_theta)
+            if do_flash_attn and context == None:
+                qkv_out = linear_func(input,
+                                      attn_qkvw,
+                                      attn_qkvb if attn_qkvb is not None else attn_qkvw,
+                                      attn_qkvb is not None,
+                                      do_flash_attn,
+                                      config.heads)
+
+                context_layer = triton_flash_attn_kernel(qkv_out[0],
+                                                         qkv_out[1],
+                                                         qkv_out[2],
+                                                         scale,
+                                                         input.shape[-2] % 128 == 0)
+                context_layer = _transpose_for_context(context_layer[:,:,:,:head_size])
+
+            else:
+                do_flash_attn = False
+                if context is not None:
+                    query = torch.matmul(input, attn_qw)
+                    key = torch.matmul(context, attn_kw)
+                    value = torch.matmul(context, attn_vw)
+                else:
+                    qkv = torch.matmul(input, attn_qkvw)
+                    query, key, value = qkv.chunk(3, dim=-1)
+                    query = query.contiguous()
+                    key = key.contiguous()
+                    value = value.contiguous()
+                query, key, value = inference_cuda_module.pad_transform_fp16(query, key, value, config.heads, do_flash_attn)
+                attention_scores = (torch.matmul(query,
+                                                 key.transpose(-1,
+                                                               -2)) *
+                                    scale).softmax(dim=-1)
+                context_layer = _transpose_for_context(
+                    torch.matmul(attention_scores,
+                                 value))
 
                 context_layer = triton_flash_attn_kernel(qkv_out[0], qkv_out[1], qkv_out[2], scale,
                                                          input.shape[-2] % 128 == 0)
