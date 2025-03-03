@@ -3356,6 +3356,9 @@ class DeepSpeedEngine(Module):
                         global_expert_id,
                         tag,
                         self.mpu)
+                    if self.random_ltd_enabled():
+                        expert_state_dict = remove_random_ltd_state_dict(
+                            expert_state_dict)
                     self.checkpoint_engine.save(expert_state_dict, moe_save_path)
                 moe_layer_id += 1
 
@@ -3392,12 +3395,15 @@ class DeepSpeedEngine(Module):
                 'module':
                 model_state_dict,
                 'lr_scheduler':
-                self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None,
+                self.lr_scheduler.state_dict()
+                if self.lr_scheduler is not None else None,
                 'data_sampler':
                 self.training_dataloader.data_sampler.state_dict() if
-                (self.training_dataloader is not None and self.curriculum_learning_enabled()) else None,
+                (self.training_dataloader is not None
+                 and self.curriculum_learning_enabled()) else None,
                 'random_ltd':
-                self.random_ltd_scheduler.state_dict() if self.random_ltd_enabled() else None,
+                self.random_ltd_scheduler.state_dict()
+                if self.random_ltd_enabled() else None,
                 'sparse_tensor_module_names':
                 self.sparse_tensor_module_names,
                 'skipped_steps':
