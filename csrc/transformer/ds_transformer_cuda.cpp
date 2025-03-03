@@ -143,7 +143,6 @@ BertTransformerLayer<T>::~BertTransformerLayer()
 template <typename T>
 void BertTransformerLayer<T>::Initialize()
 {
-#ifndef __HIP_PLATFORM_AMD__
     if (std::is_same<T, __half>::value) cublasSetMathMode(_cublasHandle, CUBLAS_TENSOR_OP_MATH);
 #endif
 }
@@ -580,7 +579,7 @@ void BertTransformerLayer<T>::SetIntermediateBuffers(uint8_t* attn_prob_dropout_
 }
 
 template <typename T>
-void BertTransformerLayer<T>::SetSeqLength(unsigned seq_len)
+void BertTransformerLayer<T>::SetSeqLength(int seq_len)
 {
     _seq_length = seq_len;
 
@@ -724,7 +723,7 @@ std::vector<torch::Tensor> ds_transformer_forward(unsigned layer_id,
                                                          layer->IsTrainingMode(),
                                                          layer->GeluCheckpoint())},
                                   options);
-    TrainingContext::Instance().SetWorkSpace((T*)workspace.data_ptr());
+    Context::Instance().SetWorkSpace((T*)workspace.data_ptr());
 
     auto inp_norm = ((prelayernorm || !normalize_invertible) ? torch::empty_like(input) : output);
     auto add_res = (normalize_invertible ? inp_norm : torch::empty_like(input));
@@ -909,6 +908,16 @@ std::vector<torch::Tensor> ds_transformer_backward(unsigned layer_id,
                                                          layer->GeluCheckpoint())},
                                   options);
     TrainingContext::Instance().SetWorkSpace((T*)workspace.data_ptr());
+
+    auto workspace = torch::empty({get_workspace_size<T>(bsz,
+                                                         seq_len,
+                                                         layer->GetHiddenSize(),
+                                                         layer->GetIntermediateSize(),
+                                                         layer->GetNumHeads(),
+                                                         layer->IsTrainingMode(),
+                                                         layer->GeluCheckpoint())},
+                                  grad_output.options());
+    Context::Instance().SetWorkSpace((T*)workspace.data_ptr());
 
     auto grad_input = torch::empty_like(input);
     auto grad_attn_qkvw = torch::empty_like(attn_qkvw);
