@@ -16,10 +16,7 @@ class SimpleModel(torch.nn.Module):
 
     def forward(self, x, y):
         hidden_dim = x
-        if self.rank == 0 and self.empty_grad:
-            hidden_dim = self.linear(hidden_dim) + self.linear2(hidden_dim)
-        else:
-            hidden_dim = self.linear(hidden_dim)
+        hidden_dim = self.linear(hidden_dim)
         return self.cross_entropy_loss(hidden_dim, y)
 
 
