@@ -167,19 +167,34 @@ class DeepSpeedEngine(Module):
         self.loaded_checkpoint_mp_world_size = None
         self.loaded_checkpoint_dp_world_size = None
         self.enable_backward_allreduce = True
+        self.progressive_layer_drop = None
+        self.dist_backend = "nccl"
 
         self._is_gradient_accumulation_boundary = None
         self.scale_wrt_gas = None
         self.losses = None
         self.mesh_device = mesh_device
 
-        if self._in_aml():
-            self._set_environment_variables_for_nccl_backend(args)
-        else:
-            self._mpi_check(args, dist_init_required)
+        if dist_init_required is False:
+            assert (dist.is_initialized()==True), "Torch distributed not initialized. Please set dist_init_required to True or initialize before calling deepspeed.initialize()"
 
-        if self.mesh_device:
-            groups.mesh_device = self.mesh_device
+        # DeepSpeed will initialize torch distributed only if the user has not already intialized it.
+        if dist_init_required and not dist.is_initialized():
+            # discover using mpi4py if user specifies the flag
+            if hasattr(args, 'deepspeed_mpi') and args.deepspeed_mpi:
+                # if in Azure ML environment and user specified this flag, notify the user to remove the flag.
+                if self._in_aml():
+                    logger.warning(
+                        "Please remove the --deepspeed_mpi flag if running on AzureML.")
+                self._mpi_check(args, dist_init_required)
+            else:
+                # detect if we are in Azure ML environment
+                if self._in_aml():
+                    self._set_environment_variables_for_nccl_backend(args)
+
+            logger.info("Initializing torch distributed with backend: {}".format(
+                self.dist_backend))
+            dist.init_process_group(backend=self.dist_backend)
 
         self._do_args_sanity_check(args)
         self._configure_with_arguments(args, mpu)
@@ -312,7 +327,7 @@ class DeepSpeedEngine(Module):
         self.unflatten = _unflatten_dense_tensors
 
     def _in_aml(self):
-        # read and environment variable to detect if we are using an Azure ML environment
+        # read AzureML environment variable to detect if we are using an Azure ML environment
         if 'AZUREML_EXPERIMENT_ID' in os.environ:
             return True
         else:
@@ -355,238 +370,42 @@ class DeepSpeedEngine(Module):
                         os.environ['MASTER_PORT']))
 
     def _mpi_check(self, args, dist_init_required):
-        if hasattr(args, 'deepspeed_mpi') and args.deepspeed_mpi:
-            from mpi4py import MPI
-            import subprocess
-            comm = MPI.COMM_WORLD
-            rank = comm.Get_rank()
-            world_size = comm.Get_size()
+        from mpi4py import MPI
+        import subprocess
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        world_size = comm.Get_size()
 
-    def _optimized_linear_offload_setup(self):
-        self.optimized_linear_base_weight_sharding = False
-        self.optimized_linear_lora_enabled = False
-        offload_ratio = None
-        for _, module in self.module.named_modules():
-            if isinstance(module, LoRAOptimizedLinear):
-                self.optimized_linear_lora_enabled = True
-                offload_ratio = None
-                if offload_ratio is not None:
-                    assert offload_ratio == module.lora_config.offload_ratio, \
-                        "all lora_config offload ratios should be the same across the model"
-                offload_ratio = module.lora_config.offload_ratio
-                if module.zero_shards > 1:
-                    # set attr so checkpoint saving can handle BWS properly
-                    self.optimized_linear_base_weight_sharding = True
+        master_addr = None
+        if rank == 0:
+            hostname_cmd = ["hostname -I"]
+            result = subprocess.check_output(hostname_cmd, shell=True)
+            master_addr = result.decode('utf-8').split()[0]
+        master_addr = comm.bcast(master_addr, root=0)
 
-        if offload_ratio is None:
-            # Nothing enabled, do nothing
-            return
+        # Determine local rank by assuming hostnames are unique
+        proc_name = MPI.Get_processor_name()
+        all_procs = comm.allgather(proc_name)
+        local_rank = sum([i == proc_name for i in all_procs[:rank]])
 
-        total_params = 0
-        for _, p in self.module.named_parameters():
-            if hasattr(p, 'ds_optim_param'):
-                total_params += p.numel()
+        os.environ['RANK'] = str(rank)
+        os.environ['WORLD_SIZE'] = str(world_size)
+        args.local_rank = local_rank
+        os.environ['MASTER_ADDR'] = master_addr
+        os.environ['MASTER_PORT'] = TORCH_DISTRIBUTED_DEFAULT_PORT
 
-        offload_limit = total_params * offload_ratio
-        logger.info(f'offloading {offload_ratio*100}% of eligible params, specifically {offload_limit} params')
-        total_offloaded = 0
-        for _, p in self.module.named_parameters():
-            if hasattr(p, 'ds_optim_param'):
-                if total_offloaded < offload_limit:
-                    total_offloaded += p.numel()
-                    p.ds_offload = True
-                    p.offload()
-                else:
-                    p.ds_offload = False
+        logger.info(
+            "Discovered MPI settings of world_rank={}, local_rank={}, world_size={}, master_addr={}, master_port={}"
+            .format(os.environ['RANK'],
+                    args.local_rank,
+                    os.environ['WORLD_SIZE'],
+                    os.environ['MASTER_ADDR'],
+                    os.environ['MASTER_PORT']))
 
-    def _configure_tensor_parallel_states(self, model):
-        """
-        Configures the tensor parallel states for the model.
-        This includes setting up the tensor parallel groups, initializing the TP mesh,
-        and registering a pre-hook to ensure that the Dataloader inputs are consistent across ranks.
-        """
-        self._set_client_model(model)
-
-        # sanity check
-        # currently, the compatibility between 'autotp' and 'zero > 1' has not been validated
-        assert self.zero_optimization_stage(
-        ) <= 2, "Currently, the compatibility between 'autotp' and 'zero_stage = 3' has not been validated"
-
-        self.mpu = groups
-        self.mpu._init_tp_mesh_device(tensor_model_parallel_size=self.autotp_size())
-
-        self.first_dataloader_check = None
-
-        def check_dataloader_inputs_same_across_ranks(module, args, kwargs):
-
-            def broadcast_and_check(args, bcast_rank, bcast_group):
-                if isinstance(args, tuple):
-                    args = list(args)
-                if len(args) > 0:
-                    if self.mpu.get_tensor_model_parallel_rank() == 0:
-                        _src_args = [args]
-                        dist.broadcast_object_list(object_list=_src_args,
-                                                   src=bcast_rank,
-                                                   group=bcast_group,
-                                                   device=get_accelerator().current_device())
-                        # Rank 0 does not need to compare with itself
-                        is_equal = True
-                    else:
-                        _src_args = [None]
-                        dist.broadcast_object_list(object_list=_src_args,
-                                                   src=bcast_rank,
-                                                   group=bcast_group,
-                                                   device=get_accelerator().current_device())
-
-                        is_equal = compare_tensors_in_structures(args, _src_args[0])
-
-                    equal_tensor = torch.tensor(is_equal,
-                                                dtype=self.communication_data_type,
-                                                device=get_accelerator().current_device())
-                    dist.all_reduce(equal_tensor, group=bcast_group)
-                    assert torch.equal(
-                        equal_tensor,
-                        torch.tensor(groups.get_tensor_model_parallel_world_size(),
-                                     dtype=self.communication_data_type,
-                                     device=get_accelerator().current_device())
-                    ), "Data inconsistency within the TP group. Please check the Dataloader implementation to ensure consistency."
-
-            bcast_rank = self.mpu.get_tensor_model_parallel_src_rank()
-            bcast_group = self.mpu.get_tensor_model_parallel_group()
-
-            broadcast_and_check(args, bcast_rank, bcast_group)
-            broadcast_and_check(kwargs, bcast_rank, bcast_group)
-
-            logger.info(f":The Dataloader has passed the TP group consistency check.")
-            self.first_dataloader_check.remove()
-
-        self.first_dataloader_check = self.module.register_forward_pre_hook(check_dataloader_inputs_same_across_ranks,
-                                                                            prepend=True,
-                                                                            with_kwargs=True)
-
-    def destroy(self):
-        if self.optimizer is not None and hasattr(self.optimizer, 'destroy'):
-            self.optimizer.destroy()
-        debug_clear_module_and_param_names()
-
-    def _get_model_parameters(self):
-        if self.autotuning_profile_model_info():
-            self.autotuning_model_info = {}
-            num_params = 0
-            trainable_num_params = 0
-
-            for p in self.module.parameters():
-                # since user code might call deepspeed.zero.Init() before deepspeed.initialize(), need to check the attribute to check if the parameter is partitioned in zero 3 already or not
-                n = 0
-                if hasattr(p, "ds_tensor"):  # if the parameter is partitioned in zero 3
-                    n += p.ds_numel
-                else:  # if the parameter is not partitioned in zero 3 yet
-                    n += p.numel()
-                num_params += n
-                if p.requires_grad:
-                    trainable_num_params += n
-            if self.global_rank == 0:
-                self.autotuning_model_info["num_params"] = num_params * self.mp_world_size
-                self.autotuning_model_info["trainable_num_params"] = trainable_num_params * self.mp_world_size
-
-            logger.info(f"model parameter = {num_params}")
-
-    def get_batch_info(self):
-        """Get all training batch related settings.
-        Returns:
-            train_batch_size (int): The effective training batch size. This is the amount of data
-                samples that leads to one step of model update.
-            train_micro_batch_size_per_gpu (int): Batch size to be processed by one GPU in one
-                step (without gradient accumulation).
-            gradient_accumulation_steps (int): Number of training steps to accumulate gradients
-                before averaging and applying them.
-        """
-        return (
-            self.train_batch_size,
-            self.train_micro_batch_size_per_gpu,
-            self.gradient_accumulation_steps,
-        )
-
-    def set_train_batch_size(self, train_batch_size):
-        """Adjust the global batch size by increasing or decreasing the number of
-        micro-batches (i.e., gradient accumulation steps). The size of each micro-batch
-        (i.e., ``train_micro_batch_size_per_gpu``) is not changed.
-        Args:
-            train_batch_size (int): The new global batch size for training.
-        Raises:
-            ValueError: if ``train_batch_size`` is not divisible by the
-                configured micro-batch size and data parallelism.
-        """
-        if train_batch_size % (self.train_micro_batch_size_per_gpu() * self.dp_world_size) != 0:
-            #print(f'{train_batch_size=} {self.train_micro_batch_size_per_gpu()=} {self.dp_world_size=}')
-            raise ValueError(f'Train batch size must be divisible by micro-batch data parallelism')
-        new_gas = train_batch_size // (self.train_micro_batch_size_per_gpu() * self.dp_world_size)
-        # overwrite config
-        self._config.train_batch_size = train_batch_size
-        self._config.gradient_accumulation_steps = new_gas
-
-    def set_train_micro_batch_size(self, micro_batch_size):
-        """Adjust the micro batch size(i.e., the micro batch size in every data parallel group),
-        while keep the gradient accumulation steps the same.
-        Args:
-            micro_batch_size (int): The new micro batch size for training.
-        """
-        # overwrite config
-        new_global_batch_size = micro_batch_size * self._config.gradient_accumulation_steps * self.dp_world_size
-        self._config.train_batch_size = new_global_batch_size
-        self._config.train_micro_batch_size_per_gpu = micro_batch_size
-
-    def set_data_post_process_func(self, post_process_func):
-        if self.training_dataloader is not None:
-            self.training_dataloader.post_process_func = post_process_func
-
-    def set_custom_curriculum_learning_schedule(self, schedule_func_dict):
-        if self.training_dataloader is not None and self.curriculum_learning_enabled():
-            self.training_dataloader.data_sampler.set_custom_curriculum_learning_schedule(schedule_func_dict)
-
-    def get_global_grad_norm(self) -> float:
-        """Return the 2-norm of all gradients. If there is model parallelism,
-        the norm will be global.
-        The computed norm will be cached and reused until the next step() pass.
-        .. note::
-            In the presence of model parallelism, this is a collective call
-            and acts as a barrier among ``mpu.get_model_parallel_group()``.
-        Returns:
-            float: norm
-        """
-        return self._global_grad_norm
-
-    def __getattr__(self, name):
-        """
-        Pass through attributes defined in the model if they are not overridden by ds-engine.
-        """
-
-        _module = {}
-        if "module" in self.__dict__:
-            _module = self.__dict__['module']
-        if name in dir(self):
-            return getattr(self, name)
-        elif name in dir(_module):
-            return getattr(_module, name)
-        else:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-    def checkpoint_tag_validation_enabled(self):
-        return self._config.checkpoint_tag_validation_enabled
-
-    def checkpoint_tag_validation_fail(self):
-        return self._config.checkpoint_tag_validation_fail
-
-    def elasticity_enabled(self):
-        return self._config.elasticity_enabled
-
-    def is_elastic_model_parallel_supported(self):
-        if self.elasticity_enabled():
-            # Add code for finding number of GPUs per node automatically
-            if self._config.num_gpus_per_node % self._config.elastic_model_parallel_size == 0:
-                return True
-            else:
-                return False
+        if not dist_init_required and dist.is_initialized():
+            assert dist.get_rank() == rank, "MPI rank {} does not match torch rank {}".format(rank, dist.get_rank())
+            assert dist.get_world_size() == world_size, "MPI world size {} does not match torch world size {}".format(
+                world_size, dist.get_world_size())
 
     def pld_enabled(self):
         return self._config.pld_enabled
