@@ -10,7 +10,6 @@ from itertools import chain
 import argparse
 import glob
 import itertools
-import math
 from concurrent.futures import ProcessPoolExecutor
 import os
 import re
@@ -332,32 +331,18 @@ def merge_tp_slices(ds_checkpoint, dir, slice_dir, tp_degree, name_and_shape):
     return unmatched_patterns
 
 
-def merge_zero3_slices(dp_degree, dir, slice_dir, name):
-    slice_base_path = os.path.join(slice_dir, name)
-    param_base_path = os.path.join(dir, name)
-
-    for state in ("fp32", "exp_avg", "exp_avg_sq"):
-        slices = _merge_zero_shards(slice_base_path, state, 1)
-        final_path = os.path.join(param_base_path, f"{state}.pt")
-        _save_checkpoint(final_path, slices[0])
-
-
 def _do_parallel_work(do_work, work_chunks, num_workers):
+    results = []
     if num_workers > 1:
-        pool = multiprocessing.Pool(num_workers)
-        results = []
-        for batch in tqdm.tqdm(work_chunks):
-            res = pool.map(do_work, batch)
-            results.extend(res)
-        pool.close()
-        pool.join()
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            future_list = [executor.submit(do_work, work) for work in work_chunks]
+            for f in tqdm.tqdm(future_list):
+                results.append(f.result())
     else:
         # No parallel pass for unit testing
         # We can't create child processes in tests
-        results = []
-        for batch in tqdm.tqdm(work_chunks):
-            res = [do_work(x) for x in batch]
-            results.extend(res)
+        for work in tqdm.tqdm(work_chunks):
+            results.append(do_work(work))
     return results
 
 
@@ -369,11 +354,6 @@ def _extract_zero_shard_files(args, ds_checkpoint, temp_dir):
 
     do_work = partial(extract_zero_shards, temp_dir, ds_checkpoint)
     _do_parallel_work(do_work, _3d_range_list, args.num_extract_workers)
-
-
-def _extract_zero_shard_files_stage3(args, optim_files, param_shapes, dp_degree, temp_dir):
-    do_work = partial(extract_zero_shards_stage3, optim_files, param_shapes, dp_degree, temp_dir)
-    _do_parallel_work(do_work, list(range(dp_degree)), args.num_extract_workers)
 
 
 def _merge_tp_slice_files(args, ds_checkpoint, slice_shapes, temp_dir):
