@@ -7,6 +7,8 @@ from torch.multiprocessing import Process
 
 import pytest
 
+from pathlib import Path
+
 # Worker timeout *after* the first worker has completed.
 DEEPSPEED_UNIT_WORKER_TIMEOUT = 10
 
@@ -42,6 +44,11 @@ def distributed_test(world_size=2, backend='nccl'):
                 torch.cuda.set_device(local_rank)
 
             run_func(*func_args, **func_kwargs)
+
+            # make sure all ranks finish at the same time
+            torch.distributed.barrier()
+            # tear down after test completes
+            torch.distributed.destroy_process_group()
 
         def dist_launcher(num_procs, *func_args, **func_kwargs):
             """Launch processes and gracefully handle failures. """
@@ -98,3 +105,8 @@ def distributed_test(world_size=2, backend='nccl'):
         return run_func_decorator
 
     return dist_wrap
+
+
+def get_test_path(src):
+    curr_path = Path(__file__).parent
+    return str(curr_path.joinpath(src))

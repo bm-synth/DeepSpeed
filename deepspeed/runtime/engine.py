@@ -2625,6 +2625,9 @@ class DeepSpeedEngine(Module):
             # Pipeline parallelism uses this to load its own checkpoint files.
             self._curr_ckpt_path = os.path.join(load_dir, tag)
 
+        if self.has_moe_layers:
+            self.load_moe_state_dict(load_dir, tag, state_dict=checkpoint['module'])
+
         self.load_module_state_dict(state_dict=checkpoint['module'],
                                     strict=load_module_strict)
         if self.optimizer is not None and not self.zero_optimization():
@@ -2662,13 +2665,20 @@ class DeepSpeedEngine(Module):
             if self.optimizer is not None:
                 self.optimizer.refresh_fp32_params()
         else:
-            has_zero_optimizer_state = self.zero_optimization() or self.bfloat16_enabled()
-            if load_optimizer_states and self.optimizer is not None and not has_zero_optimizer_state:
-                if self.has_moe_layers:
-                    largest_group_name = groups._get_max_expert_size_name()
-                    expp_rank = groups._get_expert_parallel_rank(largest_group_name)
-                    optim_load_path = self._get_optimizer_ckpt_name(load_dir, tag, expp_rank)
-                    optim_checkpoint = self.checkpoint_engine.load(optim_load_path, map_location=torch.device('cpu'))
+            if self.has_moe_layers:
+                expp_rank = groups.get_expert_parallel_rank()
+                optim_load_path = self._get_optimizer_ckpt_name(load_dir, tag, expp_rank)
+                optim_checkpoint = torch.load(optim_load_path,
+                                              map_location=torch.device('cpu'))
+            else:
+                optim_checkpoint = checkpoint
+
+            if load_optimizer_states and self.optimizer is not None and not self.zero_optimization(
+            ):
+                if self.fp16_enabled():
+                    self.optimizer.load_state_dict(
+                        optim_checkpoint['optimizer'],
+                        load_optimizer_states=load_optimizer_states)
                 else:
                     optim_checkpoint = checkpoint
 
@@ -2683,45 +2693,14 @@ class DeepSpeedEngine(Module):
             if load_lr_scheduler_states and self.lr_scheduler is not None:
                 self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
-            if self.random_ltd_enabled() and self.random_ltd_scheduler is not None and 'random_ltd' in checkpoint:
-                self.random_ltd_scheduler.load_state_dict(checkpoint['random_ltd'])
-
-            if self.training_dataloader is not None and self.curriculum_learning_enabled(
-            ) and 'data_sampler' in checkpoint:
-                self.training_dataloader.data_sampler.load_state_dict(checkpoint['data_sampler'])
-
-            def get_sparse_tensor_module_names(original_set, loaded_set, original_parameters, loaded_parameters):
-                result = set()
-
-                for name in original_set:
-                    if name in loaded_parameters and name not in loaded_set:
-                        continue  # parameter existed in previous model and was not sparse
-                    result.add(name)
-
-                for name in loaded_set:
-                    if name in original_parameters:
-                        result.add(name)  # parameter exists in both configs and it was sparse
-
-                return result
-
-            if 'sparse_tensor_module_names' in checkpoint:
-                sparse_tensor_module_names = checkpoint['sparse_tensor_module_names']
-            elif 'csr_tensor_module_names' in checkpoint:
-                sparse_tensor_module_names = checkpoint['csr_tensor_module_names']
-            else:
-                sparse_tensor_module_names = None
-            if sparse_tensor_module_names is not None:
-                if load_module_strict:
-                    self.sparse_tensor_module_names = sparse_tensor_module_names
-                else:
-                    self.sparse_tensor_module_names = get_sparse_tensor_module_names(
-                        self.sparse_tensor_module_names, sparse_tensor_module_names,
-                        dict(self.module.named_parameters()), checkpoint["module"])
-
+            self.csr_tensor_module_names = checkpoint['csr_tensor_module_names']
             self.global_steps = checkpoint['global_steps']
-            self.global_samples = checkpoint.get('global_samples', self.global_steps * self.train_batch_size())
+            self.global_samples = checkpoint.get(
+                'global_samples',
+                self.global_steps * self.train_batch_size())
             self.skipped_steps = checkpoint['skipped_steps']
             self.loaded_checkpoint_mp_world_size = checkpoint['mp_world_size']
+            self.loaded_checkpoint_dp_world_size = checkpoint['dp_world_size']
             deepspeed_states = [
                 'module', 'sparse_tensor_module_names', 'skipped_steps', 'global_steps', 'dp_world_size',
                 'mp_world_size', 'data_sampler', 'random_ltd'
@@ -2733,7 +2712,11 @@ class DeepSpeedEngine(Module):
         if load_optimizer_states:
             deepspeed_states.append('optimizer')
 
-        client_state = {key: value for key, value in checkpoint.items() if not key in deepspeed_states}
+        client_state = {
+            key: value
+            for key,
+            value in checkpoint.items() if not key in deepspeed_states
+        }
 
         if optim_checkpoint is not None:
             client_state['optimizer'] = optim_checkpoint['optimizer']

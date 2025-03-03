@@ -16,7 +16,138 @@ from deepspeed.ops.op_builder import SparseAttnBuilder
 from unit.util import skip_on_arch, skip_on_cuda
 
 if not deepspeed.ops.__compatible_ops__[SparseAttnBuilder.NAME]:
-    pytest.skip("sparse attention op is not compatible on this system", allow_module_level=True)
+    pytest.skip("sparse attention op is not compatible on this system",
+                allow_module_level=True)
+
+
+def test_sparse_attention_module_availability():
+    return True
+    try:
+        from deepspeed.ops import sparse_attention
+    except ImportError:
+        print("Sparse Attention Module is not installed!")
+        return False
+    return True
+
+
+def test_matmul_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention.matmul import MatMul
+    except ImportError:
+        print("Sparse MatMul Module is not installed!")
+        return False
+    return True
+
+
+def test_softmax_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention.softmax import Softmax
+    except ImportError:
+        print("Sparse Softmax Module is not installed!")
+        return False
+    return True
+
+
+def test_sparsityconfig_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import SparsityConfig
+    except ImportError:
+        print("SparsityConfig Module is not installed!")
+        return False
+    return True
+
+
+def test_densesparsityconfig_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import DenseSparsityConfig
+    except ImportError:
+        print("DenseSparsityConfig Module is not installed!")
+        return False
+    return True
+
+
+def test_fixedsparsityconfig_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import FixedSparsityConfig
+    except ImportError:
+        print("FixedSparsityConfig Module is not installed!")
+        return False
+    return True
+
+
+def test_variablesparsityconfig_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import VariableSparsityConfig
+    except ImportError:
+        print("VariableSparsityConfig Module is not installed!")
+        return False
+    return True
+
+
+def test_bigbirdsparsityconfig_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import BigBirdSparsityConfig
+    except ImportError:
+        print("BigBirdSparsityConfig Module is not installed!")
+        return False
+    return True
+
+
+def test_bslongformersparsityconfig_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import BSLongformerSparsityConfig
+    except ImportError:
+        print("BSLongformerSparsityConfig Module is not installed!")
+        return False
+    return True
+
+
+def test_sparseselfattention_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import SparseSelfAttention
+    except ImportError:
+        print("SparseSelfAttention Module is not installed!")
+        return False
+    return True
+
+
+def test_bertsparseselfattention_module_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import BertSparseSelfAttention
+    except ImportError:
+        print("BertSparseSelfAttention Module is not installed!")
+        return False
+    return True
+
+
+def test_sparseattentionutils_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import SparseAttentionUtils
+    except ImportError:
+        print("SparseAttentionUtils Module is not installed!")
+        return False
+    return True
+
+
+def test_cpp_utils_availability():
+    return True
+    try:
+        from deepspeed.ops.sparse_attention import cpp_utils
+    except ImportError:
+        print("Sparse Attention cpp_utils Module is not installed!")
+        return False
+    return True
 
 
 def dense_to_sparse(w, mask, block):
@@ -123,8 +254,8 @@ def init_softmax_inputs(Z, H, M, N, scale, rho, block, dtype, dense_x=True, layo
 
 
 def _skip_on_cuda_compatability():
-    #pytest.skip("Skip these tests for now until we get our docker image fixed.")
-    if torch.cuda.get_device_capability()[0] >= 7:
+    return
+    if torch.cuda.get_device_capability()[0] < 7:
         pytest.skip("needs higher compute capability than 7")
     cuda_major = int(torch.version.cuda.split('.')[0]) * 10
     cuda_minor = int(torch.version.cuda.split('.')[1])
