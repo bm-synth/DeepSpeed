@@ -24,17 +24,22 @@ deepspeed --hostfile=<hostfile> \
 ```
 The script `<client_entry.py>` will execute on the resources specified in `<hostfile>`.
 
+## Pipeline Parallelism
+DeepSpeed provides [pipeline parallelism](/tutorials/pipeline/) for memory-
+and communication- efficient training. DeepSpeed supports a hybrid
+combination of data, model, and pipeline parallelism and has scaled to over
+[one trillion parameters using 3D parallelism]({{ site.press_release_v3 }}).
+Pipeline parallelism can also improve communication efficiency and has
+accelerated training by up to 7x on low-banwdith clusters.
+
 
 ## Model Parallelism
-
 ### Support for Custom Model Parallelism
-DeepSpeed supports all forms of model parallelism including tensor slicing based
-approaches such as the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), or
-pipelined parallelism approaches such as
-[PipeDream](https://github.com/msr-fiddle/pipedream) and
-[GPipe](https://github.com/kakaobrain/torchgpipe). It does so by only requiring the model
-parallelism framework to provide a *model parallelism unit* (`mpu`) that implements a few
-bookkeeping functionalities:
+DeepSpeed supports all forms of model parallelism including tensor slicing
+based approaches such as the
+[Megatron-LM](https://github.com/NVIDIA/Megatron-LM). It does so by only
+requiring the model parallelism framework to provide a *model parallelism
+unit* (`mpu`) that implements a few bookkeeping functionalities:
 
 ```python
 mpu.get_model_parallel_rank()
@@ -52,14 +57,14 @@ Please see the [Megatron-LM tutorial](/tutorials/megatron/) for details.
 
 
 
-## Memory and Bandwidth Optimizations
 
-### The Zero Redundancy Optimizer (ZeRO)
-[ZeRO](https://arxiv.org/abs/1910.02054) is at the heart of DeepSpeed and
-enables large model training at a scale that is simply not possible with model
-parallelism alone. When enabled, ZeRO allows training models with
-over 6 billion parameters without any model parallelism, and up to 100 billion
-parameter models with model parallelism on current generation hardware.
+## The Zero Redundancy Optimizer
+The Zero Redundancy Optimizer ([ZeRO](https://arxiv.org/abs/1910.02054)) is at
+the heart of DeepSpeed and enables large model training at a scale that is
+simply not possible with model parallelism alone. When enabled, ZeRO allows
+training models with over 13 billion parameters without any model parallelism,
+and up to 200 billion parameter models with model parallelism on current
+generation hardware.
 
 For more details see the [ZeRO paper](https://arxiv.org/abs/1910.02054), [GPT
 tutorial](/tutorials/megatron/) on integration with

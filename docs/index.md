@@ -25,14 +25,11 @@ initiative to enable next-generation AI capabilities at scale, where you can fin
 information [here](https://innovation.microsoft.com/en-us/exploring-ai-at-scale).
 
 # What's New?
-{% assign news = site.posts | where: "sneak_preview", "false" %}
-{% for post in news limit:5 %}
-  {% if post.link %}
-  * [{{ post.date | date: "%Y/%m/%d"  }}] [{{ post.title }}]({{ post.link }}) {% if post.new_post %} <span style="color:dodgerblue">**NEW!**</span> {% endif %}
-  {% else %}
-  * [{{ post.date | date: "%Y/%m/%d"}}] [{{ post.title }}]({{ post.url }}) {% if post.new_post %} <span style="color:dodgerblue">**NEW!**</span> {% endif %}
-  {% endif %}
-{% endfor %}
+* [2020/09/10] [DeepSpeed: Extreme-scale model training for everyone]({{ site.press_release_v3 }})
+  * [Powering 10x longer sequences and 6x faster execution through DeepSpeed Sparse Attention](https://www.deepspeed.ai/news/2020/09/08/sparse-attention-news.html)
+  * [Training a trillion parameters with pipeline parallelism](https://www.deepspeed.ai/news/2020/09/08/pipeline-parallelism.html)
+  * [Up to 5x less communication and 3.4x faster training through 1-bit Adam](https://www.deepspeed.ai/news/2020/09/08/onebit-adam-news.html)
+  * [10x bigger model training on a single GPU with ZeRO-Offload](https://www.deepspeed.ai/news/2020/09/08/ZeRO-Offload.html)
 
 
  </ul>
@@ -91,39 +88,49 @@ In line with Microsoft's mission to solve humanity's most pressing challenges, t
 Below we provide a brief feature list, see our detailed [feature
 overview](/features/) for descriptions and usage.
 
-* [Distributed Training with Mixed Precision](/features/#distributed-training-with-mixed-precision)
-    * 16-bit mixed precision
-    * Single-GPU/Multi-GPU/Multi-Node
-* [Model Parallelism](/features/#model-parallelism)
-    * Support for Custom Model Parallelism
-    * Integration with Megatron-LM
-* [The Zero Redundancy Optimizer (ZeRO)](/features/#the-zero-redundancy-optimizer)
-    * Optimizer State and Gradient Partitioning
-    * Activation Partitioning
-    * Constant Buffer Optimization
-    * Contiguous Memory Optimization
-* [ZeRO-Offload](/features/#zero-offload)
-    * Leverage both CPU/GPU memory for model training
-    * Support 10B model training on a single GPU
-* [Additional Memory and Bandwidth Optimizations](/features/#additional-memory-and-bandwidth-optimizations)
-    * Smart Gradient Accumulation
-    * Communication/Computation Overlap
-* [Training Features](/features/#training-features)
-    * Simplified training API
-    * Activation Checkpointing API
-    * Gradient Clipping
-    * Automatic loss scaling with mixed precision
-* [Training Optimizers](/features/#training-optimizers)
-    * Fused Adam optimizer and arbitrary `torch.optim.Optimizer`
-    * Memory bandwidth optimized FP16 Optimizer
-    * Large Batch Training with LAMB Optimizer
-    * Memory efficient Training with ZeRO Optimizer
-* [Training Agnostic Checkpointing](/features/#training-agnostic-checkpointing)
-* [Advanced Parameter Search](/features/#advanced-parameter-search)
-    * Learning Rate Range Test
-    * 1Cycle Learning Rate Schedule
-* [Simplified Data Loader](/features/#simplified-data-loader)
-* [Performance Analysis and Debugging](/features/#performance-analysis-and-debugging)
+* [Distributed Training with Mixed Precision](https://www.deepspeed.ai/features/#distributed-training-with-mixed-precision)
+  * 16-bit mixed precision
+  * Single-GPU/Multi-GPU/Multi-Node
+* [Model Parallelism](https://www.deepspeed.ai/features/#model-parallelism)
+  * Support for Custom Model Parallelism
+  * Integration with Megatron-LM
+* [Pipeline Parallelism](https://www.deepspeed.ai/tutorials/pipeline/)
+  * 3D Parallelism
+* [The Zero Redundancy Optimizer (ZeRO)](https://www.deepspeed.ai/tutorials/zero/)
+  * Optimizer State and Gradient Partitioning
+  * Activation Partitioning
+  * Constant Buffer Optimization
+  * Contiguous Memory Optimization
+* [ZeRO-Offload](https://www.deepspeed.ai/tutorials/zero-offload/)
+  * Leverage both CPU/GPU memory for model training
+  * Support 10B model training on a single GPU
+* [Ultra-fast dense transformer kernels](https://www.deepspeed.ai/news/2020/05/18/bert-record.html)
+* [Sparse attention](https://www.deepspeed.ai/news/2020/09/08/sparse-attention.html)
+  * Memory- and compute-efficient sparse kernels
+  * Support 10x long sequences than dense
+  * Flexible support to different sparse structures
+* [1-bit Adam](https://www.deepspeed.ai/news/2020/09/08/onebit-adam-blog-post.html)
+  * Custom communication collective
+  * Up to 5x communication volume saving
+* [Additional Memory and Bandwidth Optimizations](https://www.deepspeed.ai/features/#additional-memory-and-bandwidth-optimizations)
+  * Smart Gradient Accumulation
+  * Communication/Computation Overlap
+* [Training Features](https://www.deepspeed.ai/features/#training-features)
+  * Simplified training API
+  * Gradient Clipping
+  * Automatic loss scaling with mixed precision
+* [Training Optimizers](https://www.deepspeed.ai/features/#training-optimizers)
+  * Fused Adam optimizer and arbitrary `torch.optim.Optimizer`
+  * Memory bandwidth optimized FP16 Optimizer
+  * Large Batch Training with LAMB Optimizer
+  * Memory efficient Training with ZeRO Optimizer
+  * CPU-Adam
+* [Training Agnostic Checkpointing](https://www.deepspeed.ai/features/#training-agnostic-checkpointing)
+* [Advanced Parameter Search](https://www.deepspeed.ai/features/#advanced-parameter-search)
+  * Learning Rate Range Test
+  * 1Cycle Learning Rate Schedule
+* [Simplified Data Loader](https://www.deepspeed.ai/features/#simplified-data-loader)
+* [Performance Analysis and Debugging](https://www.deepspeed.ai/features/#performance-analysis-and-debugging)
 
 ## DeepSpeed on Azure
 
