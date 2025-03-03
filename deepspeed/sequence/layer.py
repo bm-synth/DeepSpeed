@@ -340,18 +340,7 @@ class DistributedAttention(torch.nn.Module):
             self.sp_overlap_comm = True
             self.dafult_stream = get_accelerator().default_stream()
 
-    def layer_sync(self, layer):
-        if self.sp_overlap_comm and hasattr(layer, 'done_event'):
-            self.dafult_stream.wait_event(layer.done_event)
-
-    def forward(self,
-                query: Tensor,
-                key: Tensor,
-                value: Tensor,
-                batch_dim_idx: int,
-                rotary_pos_emb=None,
-                *args: Any,
-                **kwargs) -> Tensor:
+    def forward(self, query: Tensor, key: Tensor, value: Tensor, *args: Any, **kwargs) -> Tensor:
         """ forward
 
         Arguments:
@@ -406,10 +395,7 @@ class DistributedAttention(torch.nn.Module):
             grad_fn_k.register_prehook(bwd_hook(layer_type='k'))
 
         #out shape : e.g., [s:h/p:]
-        if rotary_pos_emb is not None:
-            pos_emb_cos, pos_emb_sin = rotary_pos_emb[0].permute(1, 0, 2, 3), rotary_pos_emb[1].permute(1, 0, 2, 3)
-            query_layer = apply_rotary_pos_emb(query_layer, pos_emb_cos, pos_emb_sin)
-            key_layer = apply_rotary_pos_emb(key_layer, pos_emb_cos, pos_emb_sin)
+        context_layer = self.local_attn(query_layer, key_layer, value_layer, *args, **kwargs)
 
         context_layer = self.local_attn(query_layer, key_layer, value_layer, *args, **kwargs)
 
