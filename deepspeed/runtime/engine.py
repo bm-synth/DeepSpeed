@@ -58,8 +58,11 @@ from deepspeed.compression.constants import \
 from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, FROZEN_PARAM_FRAGMENTS
 from deepspeed.runtime.sparse_tensor import SparseTensor
 
-from deepspeed.utils import logger
-from deepspeed.utils.timer import ThroughputTimer, SynchronizedWallClockTimer
+from .pipe.module import PipelineModule
+from .utils import ensure_directory_exists
+from ..ops.op_builder import UtilsBuilder
+from ..ops.adam import DeepSpeedCPUAdam
+from ..ops.adam import FusedAdam
 
 MEMORY_OPT_ALLREDUCE_SIZE = 500000000
 
@@ -2728,6 +2731,10 @@ class DeepSpeedEngine(Module):
             checkpoint['module'] = get_fp32_state_dict_from_zero_checkpoint(load_dir)
             fetch_z3_params = True
 
+        if isinstance(self.module, PipelineModule):
+            # Pipeline parallelism uses this to load its own checkpoint files.
+            self._curr_ckpt_path = os.path.join(load_dir, tag)
+
         self.load_module_state_dict(state_dict=checkpoint['module'],
                                     strict=load_module_strict)
         if not self.zero_optimization():
@@ -3140,11 +3147,8 @@ class DeepSpeedEngine(Module):
 
         # A hack to save the checkpointing directory. Pipeline parallelism overrides
         # module_state_dict() and uses this path to save the model. module_state_dict()
-        # then instead just returns None.  The module_state_dict() implementation in
-        # PipelineEngine expects the save path to be set in self._curr_ckpt_path.
+        # then instead just returns None.
         self._curr_ckpt_path = os.path.join(save_dir, tag)
-        module = self.module_state_dict(exclude_frozen_parameters=exclude_frozen_parameters)
-        self._curr_ckpt_path = None
 
         state = dict(module=module,
                      buffer_names=self._get_buffer_names(),

@@ -74,24 +74,8 @@ class PipelineEngine(DeepSpeedEngine):
         super().__init__(*super_args, **super_kwargs)
         assert isinstance(self.module, PipelineModule), "model must base PipelineModule"
 
-        assert self.zero_optimization_stage(
-        ) < ZeroStageEnum.gradients, "ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism"
-
         # We schedule the all-reduces, so disable it in super().backward()
         self.enable_backward_allreduce = False
-        self.has_bool_tensors = has_bool_tensors
-        self.eval_return_logits = False
-        self.outputs = None
-        # BF16 Optimizer is hardcoded for fp32 gradient accumulation
-        self.using_bf16_optimizer = type(self.optimizer) == BF16_Optimizer
-
-        # used to disable the pipeline all-reduce when used with 1-bit Adam/1-bit LAMB
-        self.pipeline_enable_backward_allreduce = True
-
-        if self.elasticity_enabled():
-            if not self.is_elastic_model_parallel_supported():
-                assert not self.elasticity_enabled(), "Elasticity is not currently supported" \
-                " with pipeline parallelism."
 
         # pipeline step for logging
         self.log_batch_step_id = -1
@@ -1359,9 +1343,7 @@ class PipelineEngine(DeepSpeedEngine):
         assert self._curr_ckpt_path is not None, \
             "PipelineEngine expects module_state_dict() to be called from save_checkpoint()"
 
-        self.module.save_state_dict(self._curr_ckpt_path,
-                                    checkpoint_engine=self.checkpoint_engine,
-                                    exclude_frozen_params=exclude_frozen_parameters)
+        self.module.save_state_dict(self._curr_ckpt_path)
         return None
 
     def load_module_state_dict(self, checkpoint, strict=True, custom_load_fn=None, fetch_z3_params=False):
@@ -1375,15 +1357,11 @@ class PipelineEngine(DeepSpeedEngine):
             state_dict (str, None): unused
             strict (bool, optional): Strict state loading. Defaults to True.
         """
-        assert custom_load_fn is None, "custom_load_fn not supported w. pipeline parallelism"
-        state_dict = checkpoint if self.has_moe_layers else checkpoint['module']
         if (state_dict is not None) and (not isinstance(state_dict, str)):
             super().load_module_state_dict(state_dict, strict)
             return
 
-        self.module.load_state_dir(load_dir=self._curr_ckpt_path,
-                                   strict=strict,
-                                   checkpoint_engine=self.checkpoint_engine)
+        self.module.load_state_dir(load_dir=self._curr_ckpt_path, strict=strict)
 
     # A map of PipeInstruction types to methods. Each method will be executed with the
     # kwargs provided to the PipeInstruction from the scheduler.
