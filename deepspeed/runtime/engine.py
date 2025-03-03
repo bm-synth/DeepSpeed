@@ -1333,6 +1333,9 @@ class DeepSpeedEngine(Module):
 
     def _configure_zero_optimizer(self, optimizer):
         zero_stage = self.zero_optimization_stage()
+        log_dist('Creating fp16 ZeRO stage {} optimizer'.format(zero_stage), ranks=[0])
+        assert not self.allreduce_always_fp32(), "ZeRO does not support 'fp32_allreduce': true"
+        timers = self.timers if self.wall_clock_breakdown() else None
 
         mics_shard_size = self.mics_shard_size()
         model_dtype, gradient_accumulation_dtype = self.get_data_types()
@@ -1367,7 +1370,21 @@ class DeepSpeedEngine(Module):
                 dynamic_loss_scale=self.dynamic_loss_scale(),
                 dynamic_loss_args=self.dynamic_loss_scale_args(),
                 clip_grad=self.gradient_clipping(),
-                contiguous_gradients=contiguous_gradients,
+                all_gather_partitions=self.zero_allgather_partitions(),
+                allgather_size=self.zero_allgather_bucket_size(),
+                max_elements_per_comm=self.zero_reduce_bucket_size(),
+                dp_process_group=self.data_parallel_group,
+                elastic_checkpoint=self.zero_elastic_checkpoint(),
+                mpu=self.mpu)
+        elif zero_stage == ZERO_OPTIMIZATION_GRADIENTS:
+            optimizer = FP16_DeepSpeedZeroOptimizer(
+                optimizer,
+                timers=timers,
+                static_loss_scale=self.loss_scale(),
+                dynamic_loss_scale=self.dynamic_loss_scale(),
+                dynamic_loss_args=self.dynamic_loss_scale_args(),
+                clip_grad=self.gradient_clipping(),
+                contiguous_gradients=self.zero_contiguous_gradients(),
                 reduce_bucket_size=self.zero_reduce_bucket_size(),
                 use_multi_rank_bucket_allreduce=self.zero_multi_rank_bucket_allreduce(),
                 allgather_bucket_size=self.zero_allgather_bucket_size(),
@@ -1380,91 +1397,35 @@ class DeepSpeedEngine(Module):
                 mpu=self.mpu,
                 postscale_gradients=self.postscale_gradients(),
                 gradient_predivide_factor=self.gradient_predivide_factor(),
-                gradient_accumulation_steps=self.gradient_accumulation_steps(),
-                ignore_unused_parameters=self.zero_ignore_unused_parameters(),
-                partition_grads=zero_stage == ZeroStageEnum.gradients,
-                round_robin_gradients=round_robin_gradients,
-                has_moe_layers=self.has_moe_layers,
-                fp16_master_weights_and_gradients=self.fp16_master_weights_and_gradients(),
-                gradient_accumulation_dtype=gradient_accumulation_dtype,
-                communication_data_type=self.communication_data_type,
-                elastic_checkpoint=self.zero_elastic_checkpoint())
-
-        elif zero_stage == ZeroStageEnum.weights:
-            assert not self.has_moe_layers, "MoE not supported with Stage 3"
-            if isinstance(optimizer, DummyOptim):
-                log_dist("Creating ZeRO Offload", ranks=[0])
-                zero_param_parallel_group = groups._get_zero_param_intra_parallel_group()
-                if self.zero_hpz_partition_size() > 1 and zero_param_parallel_group is None:
-                    self._set_zero_group_parallelism()
-                    zero_param_parallel_group = groups._get_zero_param_intra_parallel_group()
-                optimizer = DeepSpeedZeRoOffload(
-                    self.module,
-                    timers=timers,
-                    ds_config=self.config,
-                    overlap_comm=self.zero_overlap_comm(),
-                    prefetch_bucket_size=self.zero_prefetch_bucket_size(),
-                    max_reuse_distance=self.zero_max_reuse_distance(),
-                    max_live_parameters=self.zero_max_live_parameters(),
-                    param_persistence_threshold=self.zero_param_persistence_threshold(),
-                    model_persistence_threshold=self.zero_model_persistence_threshold(),
-                    offload_param_config=self.zero_offload_param(),
-                    mpu=self.mpu,
-                    zero_param_parallel_group=zero_param_parallel_group,
-                    zero_quantized_weights=self.zero_quantized_weights(),
-                    zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights(),
-                    zero_module_granularity_threshold=self.zero_module_granularity_threshold(),
-                    log_trace_cache_warnings=self.zero_log_trace_cache_warnings(),
-                )
-            else:
-                log_dist(
-                    f'Creating fp16 ZeRO stage {zero_stage} optimizer,'
-                    f' MiCS is enabled {mics_shard_size>0},'
-                    f' Hierarchical params gather {self._config.mics_hierarchial_params_gather}',
-                    ranks=[0])
-                if mics_shard_size > 0:
-                    return self._return_mics_optimizer(optimizer, timers)
-
-                log_dist(f'Creating {model_dtype} ZeRO stage {zero_stage} optimizer', ranks=[0])
-                from deepspeed.runtime.zero.stage3 import DeepSpeedZeroOptimizer_Stage3
-                optimizer = DeepSpeedZeroOptimizer_Stage3(
-                    self.module,
-                    optimizer,
-                    timers=timers,
-                    ds_config=self.config,
-                    static_loss_scale=self.loss_scale(),
-                    dynamic_loss_scale=self.dynamic_loss_scale(),
-                    dynamic_loss_args=self.dynamic_loss_scale_args(),
-                    clip_grad=self.gradient_clipping(),
-                    contiguous_gradients=self.zero_contiguous_gradients(),
-                    reduce_bucket_size=self.zero_reduce_bucket_size(),
-                    prefetch_bucket_size=self.zero_prefetch_bucket_size(),
-                    max_reuse_distance=self.zero_max_reuse_distance(),
-                    max_live_parameters=self.zero_max_live_parameters(),
-                    param_persistence_threshold=self.zero_param_persistence_threshold(),
-                    model_persistence_threshold=self.zero_model_persistence_threshold(),
-                    dp_process_group=self.seq_data_parallel_group,
-                    all2all_process_group=self.local_all_to_all_group,
-                    reduce_scatter=self.zero_reduce_scatter(),
-                    overlap_comm=self.zero_overlap_comm(),
-                    offload_optimizer_config=self.zero_offload_optimizer(),
-                    offload_param_config=self.zero_offload_param(),
-                    sub_group_size=self.zero_sub_group_size(),
-                    offload_ratio=self.zero_partial_offload(),
-                    mpu=self.mpu,
-                    postscale_gradients=self.postscale_gradients(),
-                    gradient_predivide_factor=self.gradient_predivide_factor(),
-                    gradient_accumulation_steps=self.gradient_accumulation_steps(),
-                    aio_config=self.aio_config(),
-                    gradient_accumulation_dtype=gradient_accumulation_dtype,
-                    communication_data_type=self.communication_data_type,
-                    zero_hpz_partition_size=self.zero_hpz_partition_size(),
-                    zero_quantized_weights=self.zero_quantized_weights(),
-                    zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights(),
-                    zero_module_granularity_threshold=self.zero_module_granularity_threshold(),
-                    zeropp_loco_param=self.zeropp_loco_param(),
-                    log_trace_cache_warnings=self.zero_log_trace_cache_warnings(),
-                )
+                gradient_accumulation_steps=self.gradient_accumulation_steps())
+        elif zero_stage == ZERO_OPTIMIZATION_WEIGHTS:
+            print("Initializing ZeRO Stage 3") if dist.get_rank() == 0 else None
+            from deepspeed.runtime.zero.stage3 import FP16_DeepSpeedZeroOptimizer_Stage3
+            optimizer = FP16_DeepSpeedZeroOptimizer_Stage3(
+                self.module,
+                optimizer,
+                timers=timers,
+                static_loss_scale=self.loss_scale(),
+                dynamic_loss_scale=self.dynamic_loss_scale(),
+                dynamic_loss_args=self.dynamic_loss_scale_args(),
+                clip_grad=self.gradient_clipping(),
+                contiguous_gradients=self.zero_contiguous_gradients(),
+                reduce_bucket_size=self.zero_reduce_bucket_size(),
+                prefetch_bucket_size=self.zero_prefetch_bucket_size(),
+                max_reuse_distance=self.zero_max_reuse_distance(),
+                max_live_parameters=self.zero_max_live_parameters(),
+                param_persistence_threshold=self.zero_param_persistence_threshold(),
+                dp_process_group=self.data_parallel_group,
+                reduce_scatter=self.zero_reduce_scatter(),
+                overlap_comm=self.zero_overlap_comm(),
+                cpu_offload_optimizer_state=self.zero_cpu_offload(),
+                cpu_offload_params=self.zero_cpu_offload_params(),
+                cpu_offload_use_pin_memory=self.zero_cpu_offload_use_pin_memory(),
+                sub_group_size=self.zero_sub_group_size(),
+                mpu=self.mpu,
+                postscale_gradients=self.postscale_gradients(),
+                gradient_predivide_factor=self.gradient_predivide_factor(),
+                gradient_accumulation_steps=self.gradient_accumulation_steps())
 
         else:
             raise NotImplementedError("ZeRO stage {} not implemented".format(zero_stage))
