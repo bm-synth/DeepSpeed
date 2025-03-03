@@ -77,6 +77,20 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
                             amsgrad=amsgrad)
         super(DeepSpeedCPUAdam, self).__init__(model_params, default_args)
 
+        cpu_info = get_cpu_info()
+        self.cpu_vendor = cpu_info["vendor_id_raw"].lower(
+        ) if "vendor_id_raw" in cpu_info else "unknown"
+        if "amd" in self.cpu_vendor:
+            for group_id, group in enumerate(self.param_groups):
+                for param_id, p in enumerate(group['params']):
+                    if p.dtype == torch.half:
+                        logger.warning(
+                            "FP16 params for CPUAdam may not work on AMD CPUs")
+                        break
+                else:
+                    continue
+                break
+
         self.opt_id = DeepSpeedCPUAdam.optimizer_id
         DeepSpeedCPUAdam.optimizer_id = DeepSpeedCPUAdam.optimizer_id + 1
         self.adam_w_mode = adamw_mode
