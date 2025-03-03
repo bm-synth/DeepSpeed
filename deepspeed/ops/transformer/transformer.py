@@ -159,13 +159,42 @@ class DeepSpeedTransformerFunction(Function):
             input_mask = torch.cat((input_mask, torch.ones((inp_size[0], input_mask.shape[1], input_mask.shape[2], \
                                             (16 - (inp_size[1] % 16))), device=input_mask.device, dtype=input_mask.dtype) * -10000), 3)
 
-        (output, inp_norm, qkv_tf, soft_inp, ctx_bufB, attn_o_inp, add_res, ff1_inp, gelu_inp, ff2_inp,
-         attn_prob_dropout_mask, attn_output_dropout_mask, layer_output_dropout_mask, attn_layer_norm_var,
-         attn_layer_norm_mean, layer_norm_var, layer_norm_mean) = forward_func(
-             config.layer_id, input, input_mask, attn_qkvw, attn_qkvb, attn_ow, attn_ob, attn_nw, attn_nb, inter_w,
-             inter_b, output_w, output_b, norm_w, norm_b, config.training and config.is_grad_enabled,
-             config.pre_layer_norm, config.attn_dropout_checkpoint, config.normalize_invertible,
-             config.gelu_checkpoint)
+        (output,
+         inp_norm,
+         qkv_tf,
+         soft_inp,
+         ctx_bufB,
+         attn_o_inp,
+         add_res,
+         ff1_inp,
+         gelu_inp,
+         ff2_inp,
+         attn_prob_dropout_mask,
+         attn_output_dropout_mask,
+         layer_output_dropout_mask,
+         attn_layer_norm_var,
+         attn_layer_norm_mean,
+         layer_norm_var,
+         layer_norm_mean) = forward_func(config.layer_id,
+                                         input,
+                                         input_mask,
+                                         attn_qkvw,
+                                         attn_qkvb,
+                                         attn_ow,
+                                         attn_ob,
+                                         attn_nw,
+                                         attn_nb,
+                                         inter_w,
+                                         inter_b,
+                                         output_w,
+                                         output_b,
+                                         norm_w,
+                                         norm_b,
+                                         config.training and config.is_grad_enabled,
+                                         config.pre_layer_norm,
+                                         config.attn_dropout_checkpoint,
+                                         config.normalize_invertible,
+                                         config.gelu_checkpoint)
 
         # For testing only.
         if grads is not None:
