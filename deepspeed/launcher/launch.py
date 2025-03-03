@@ -201,7 +201,11 @@ def main():
                     current_env[key] = val
 
     processes = []
-    cmd = []
+    for local_rank in range(0, num_local_procs):
+        # each process's rank
+        dist_rank = global_rank_mapping[local_node][local_rank]
+        current_env["RANK"] = str(dist_rank)
+        current_env["LOCAL_RANK"] = str(local_rank)
 
     if not args.enable_elastic_training:
         if args.enable_each_rank_log != "None":
