@@ -13,6 +13,8 @@ from deepspeed.runtime.zero.config import DeepSpeedZeroConfig
 from deepspeed.runtime.activation_checkpointing.config import DeepSpeedActivationCheckpointingConfig
 from deepspeed.utils import logger
 
+from ..profiling.config import DeepSpeedFlopsProfilerConfig
+
 TENSOR_CORE_ALIGN_SIZE = 8
 ONEBIT_ADAM_OPTIMIZER = 'onebitadam'
 ADAM_OPTIMIZER = 'adam'
@@ -525,6 +527,7 @@ class DeepSpeedConfig(object):
         self.scheduler_params = get_scheduler_params(param_dict)
 
         self.wall_clock_breakdown = get_wall_clock_breakdown(param_dict)
+        self.flops_profiler_config = DeepSpeedFlopsProfilerConfig(param_dict)
         self.memory_breakdown = get_memory_breakdown(param_dict)
         self.tensorboard_enabled = get_tensorboard_enabled(param_dict)
         self.tensorboard_output_path = get_tensorboard_output_path(param_dict)

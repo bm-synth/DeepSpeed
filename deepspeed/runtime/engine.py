@@ -64,6 +64,8 @@ from ..ops.op_builder import UtilsBuilder
 from ..ops.adam import DeepSpeedCPUAdam
 from ..ops.adam import FusedAdam
 
+from deepspeed.profiling.flops_profiler.profiler import FlopsProfiler
+
 MEMORY_OPT_ALLREDUCE_SIZE = 500000000
 
 try:
@@ -524,30 +526,19 @@ class DeepSpeedEngine(Module):
         return self._config.wall_clock_breakdown
 
     def flops_profiler_enabled(self):
-        return self._config.flops_profiler_config.enabled or self.autotuning_enabled()
+        return self._config.flops_profiler_config.enabled
 
-    def flops_profiler_recompute_fwd_factor(self):
-        return self._config.flops_profiler_config.recompute_fwd_factor
+    def flops_profiler_start_step(self):
+        return self._config.flops_profiler_config.start_step
 
-    def flops_profiler_profile_step(self):
-        step = self._config.flops_profiler_config.profile_step
-        if self._config.autotuning_config.enabled:
-            step = self.autotuning_start_profile_step()
-        return step
+    def flops_profiler_end_step(self):
+        return self._config.flops_profiler_config.end_step
 
     def flops_profiler_module_depth(self):
         return self._config.flops_profiler_config.module_depth
 
     def flops_profiler_top_modules(self):
         return self._config.flops_profiler_config.top_modules
-
-    def flops_profiler_detailed(self):
-        if self._config.autotuning_config.enabled:
-            return False
-        return self._config.flops_profiler_config.detailed
-
-    def flops_profiler_output_file(self):
-        return self._config.flops_profiler_config.output_file
 
     def memory_breakdown(self):
         return self._config.memory_breakdown
@@ -1694,6 +1685,30 @@ class DeepSpeedEngine(Module):
             *inputs: Variable length input list
             **kwargs: variable length keyword arguments
         """
+        if self.flops_profiler_enabled(
+        ) and self.global_steps == self.flops_profiler_start_step(
+        ) and self.global_rank == 0:
+            self.flops_profiler = FlopsProfiler(self.module)
+            self.flops_profiler.start_profile(ignore_list=None)
+
+        if self.flops_profiler_enabled(
+        ) and self.global_steps == self.flops_profiler_end_step(
+        ) and self.global_rank == 0:
+            print('{:<30}  {:<8}'.format(
+                'Number of multiply-adds: ',
+                self.flops_profiler.get_total_flops(in_str=False)))
+            print('{:<30}  {:<8}'.format(
+                'Number of parameters: ',
+                self.flops_profiler.get_total_params(in_str=False)))
+            print('{:<30}  {:<8}'.format('Number of steps profiled: ',
+                                         self.flops_profiler.get_total_steps()))
+            self.flops_profiler.print_model_profile()
+            self.flops_profiler.print_model_aggregated_profile(
+                module_depth=self.flops_profiler_module_depth(),
+                top_modules=self.flops_profiler_top_modules())
+            self.flops_profiler.flops = self.flops_profiler.get_total_flops()
+            self.flops_profiler.params = self.flops_profiler.get_total_params()
+            self.flops_profiler.end_profile()
 
         if self.autotuning_profile_model_info():
             ma = get_ma_status()
