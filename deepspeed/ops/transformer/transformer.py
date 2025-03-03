@@ -344,6 +344,7 @@ class DeepSpeedTransformerLayer(nn.Module):
             #self.attn_qkvw[i * self.config.hidden_size:(i + 1) * self.config.hidden_size] = \
             #    initial_weights[i].clone()
             #torch.empty_like(initial_weights[i]).data.copy_(initial_weights[i].data)
+
             self.attn_qkvb = nn.Parameter(torch.Tensor(self.config.hidden_size * 3))
             self.attn_qkvb.data.zero_()
             self.attn_ow = initial_weights[3]
