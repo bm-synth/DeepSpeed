@@ -20,7 +20,7 @@ from deepspeed.git_version_info import torch_info
 from unit.common import DistributedTest
 from packaging import version as pkg_version
 from deepspeed.ops.op_builder import OpBuilder
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from transformers import pipeline
 from huggingface_hub import HfApi
 from packaging import version as pkg_version
 from torch import nn
@@ -256,10 +256,10 @@ def query(model_w_task):
 def inf_kwargs(model_w_task):
     model, task = model_w_task
     if task == "text-generation":
-        if model == "EleutherAI/gpt-j-6b":
+        if model == "EleutherAI/gpt-j-6B":
             # This model on V100 is hitting memory problems that limit the number of output tokens
-            return {"do_sample": False, "temperature": 1.0, "max_length": 12}
-        return {"do_sample": False, "temperature": 1.0, "max_length": 20}
+            return {"do_sample": False, "max_length": 12}
+        return {"do_sample": False, "max_length": 20}
     else:
         return {}
 
@@ -404,12 +404,12 @@ class TestModelTask(DistributedTest):
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
 
         # Load the model on CPU first to avoid OOM for large models @fp32
-        pipe = pipeline(task, model=model, device=torch.device("cpu"), framework="pt")
+        pipe = pipeline(task, model=model, device=-1, framework="pt")
         if dtype == torch.half:
             pipe.model.half()
 
         # Switch device to GPU after converting to half
-        device = torch.device(get_accelerator().device_name(local_rank))
+        device = torch.device(f"cuda:{local_rank}")
         pipe.device = device
         pipe.model.to(device)
 
