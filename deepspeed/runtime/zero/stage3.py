@@ -911,6 +911,7 @@ class FP16_DeepSpeedZeroOptimizer_Stage3(object):
     def _create_fp16_partitions_with_defragmentation(self):
         dist.barrier()
         partition_id = dist.get_rank(group=self.dp_process_group)
+        create_fp16_flat_reuse_buffer = False
 
         if self.cpu_offload_params:
             self.param_groups_fp16_flat_cpu_memory = []
@@ -982,6 +983,70 @@ class FP16_DeepSpeedZeroOptimizer_Stage3(object):
                                           self.fp16_partitioned_groups_flat[i])
 
                 see_memory_usage(f"After Flattening param group {i}", force=False)
+
+                #create a pinned memory to be used for swapping out params to NVME after optimizer step
+                if self.fp16_partitioned_groups_flat[-1] is None:
+                    create_fp16_flat_reuse_buffer = True
+
+                see_memory_usage(f"After Flattening param subgroup {i}", force=False)
+
+        if create_fp16_flat_reuse_buffer:
+            assert self.param_group_fp16_flat_reuse_buffer is None, \
+            f'Unexpected that pinned memory for swapping params out to NVMe is already created'
+
+            self.param_group_fp16_flat_reuse_buffer = torch.empty(max(
+                self.fp16_partitioned_groups_flat_numel),
+                                                                  dtype=self.dtype,
+                                                                  device='cpu',
+                                                                  pin_memory=True)
+
+    def _swap_in_sub_group_to_flat_buffer(self, flat_buffer, sub_group_id):
+        offset = 0
+        elements_in_sub_group = sum(
+            [t.ds_numel for t in self.fp16_partitioned_groups[sub_group_id]])
+        assert (flat_buffer.numel() == elements_in_sub_group)
+        for param, partitioned_param in zip(self.fp16_groups[sub_group_id], self.fp16_partitioned_groups[sub_group_id]):
+            dest = flat_buffer.narrow(0, offset, partitioned_param.ds_numel)
+            if partitioned_param.status == PartitionedParamStatus.NOT_AVAILABLE:
+                print_rank_0(
+                    f"Swapping in {param.ds_id} with elements {param.ds_numel} and partition {param.ds_tensor.ds_numel}"
+                )
+                param.nvme_swapper.swap_in([param], async_op=False)
+                dest.data.copy_(partitioned_param.data)
+                param.nvme_swapper.remove_partition_and_release_buffers([param])
+                print_rank_0(f"Swapping in {param.ds_id} done")
+            else:
+                dest.data.copy_(partitioned_param.data)
+            offset += partitioned_param.ds_numel
+
+    def _create_next_swappable_fp32_groups(self):
+        reverse_order_indices = [
+            i for i in range(len(self.fp32_partitioned_groups_flat))
+        ]
+        reverse_order_indices.reverse()
+
+        next_group = None
+        for i in reverse_order_indices:
+            self.next_swappable_fp32_partitioned_groups.append(next_group)
+            if self._swappable_optimizer_subgroup(i):
+                next_group = self.fp32_partitioned_groups_flat[i]
+
+        self.next_swappable_fp32_partitioned_groups.reverse()
+
+    def _get_sub_group_partitions(self, sub_group_id):
+        sub_group_partitions = []
+        for param, partitioned_param in zip(self.fp16_groups[sub_group_id], self.fp16_partitioned_groups[sub_group_id]):
+            if partitioned_param.status == PartitionedParamStatus.NOT_AVAILABLE:
+                swap_path = param.nvme_swapper.get_path(param, True)
+                sub_group_partitions.append((partitioned_param,
+                                             param.ds_tensor.ds_numel,
+                                             swap_path))
+            else:
+                sub_group_partitions.append((partitioned_param,
+                                             partitioned_param.ds_numel,
+                                             None))
+
+        return sub_group_partitions
 
     def _create_fp32_partitions(self):
         for i, tensor in enumerate(self.fp16_partitioned_groups_flat):
