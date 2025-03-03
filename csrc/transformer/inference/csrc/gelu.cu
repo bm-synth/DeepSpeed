@@ -553,15 +553,24 @@ void launch_gptj_residual_add(T* residual,
         residual, hidden_state, attn, bias, attn_bias, total_count, hidden_dim / 4, 1.0 / mp_size);
 }
 
-#define INSTANTIATE_GPT_RES_ADD(T) \
-    template void launch_gptj_residual_add<T>(T*, T*, T*, T*, T*, int, int, int, cudaStream_t);
-
-INSTANTIATE_GPT_RES_ADD(float);
-INSTANTIATE_GPT_RES_ADD(__half);
-#ifdef BF16_AVAILABLE
-INSTANTIATE_GPT_RES_ADD(__nv_bfloat16);
-#endif
-
+template void launch_gptj_residual_add<float>(float*,
+                                              float*,
+                                              float*,
+                                              float*,
+                                              float*,
+                                              int,
+                                              int,
+                                              int,
+                                              cudaStream_t);
+template void launch_gptj_residual_add<__half>(__half*,
+                                               __half*,
+                                               __half*,
+                                               __half*,
+                                               __half*,
+                                               int,
+                                               int,
+                                               int,
+                                               cudaStream_t);
 template <typename T>
 __global__ void moe_res_matmul(T* residual, T* coef, T* mlp_out, int seq_len, int hidden_dim)
 {
@@ -583,40 +592,13 @@ __global__ void moe_res_matmul(T* residual, T* coef, T* mlp_out, int seq_len, in
         mem_access::load_global<granularity>(coef1, coef + tid);
         mem_access::load_global<granularity>(coef2, coef + tid + hidden_dim);
 
-__global__ void moe_res_matmul(__half* residual,
-                               __half* coef,
-                               __half* mlp_out,
-                               int seq_len,
-                               int hidden_dim)
-{
-#ifdef HALF_PRECISION_AVAILABLE
-    unsigned tid = threadIdx.x;
-    float2* residual_cast = reinterpret_cast<float2*>(residual);
-    float2* mlp_out_cast = reinterpret_cast<float2*>(mlp_out);
-    float2* coef_cast = reinterpret_cast<float2*>(coef);
-    float2* coef_cast2 = coef_cast + hidden_dim;
+#pragma unroll
+        for (int idx = 0; idx < vals_per_access; idx++) {
+            mlp[idx] = mlp[idx] * coef2[idx] + res[idx] * coef1[idx];
+        }
 
-    residual_cast += blockIdx.x * hidden_dim;
-    mlp_out_cast += blockIdx.x * hidden_dim;
-
-    while (tid < hidden_dim) {
-        float2 res = residual_cast[tid];
-        float2 coef1 = coef_cast[tid];
-        float2 coef2 = coef_cast2[tid];
-        float2 data = mlp_out_cast[tid];
-        __half* data_h = reinterpret_cast<__half*>(&data);
-        __half* coef1_h = reinterpret_cast<__half*>(&coef1);
-        __half* coef2_h = reinterpret_cast<__half*>(&coef2);
-        __half* res_h = reinterpret_cast<__half*>(&res);
-        data_h[0] = res_h[0] * coef1_h[0] + data_h[0] * coef2_h[0];
-        data_h[1] = res_h[1] * coef1_h[1] + data_h[1] * coef2_h[1];
-        data_h[2] = res_h[2] * coef1_h[2] + data_h[2] * coef2_h[2];
-        data_h[3] = res_h[3] * coef1_h[3] + data_h[3] * coef2_h[3];
-
-        mlp_out_cast[tid] = data;
-        tid += blockDim.x;
+        mem_access::store_global<granularity>(mlp_out_seq + tid, mlp);
     }
-#endif
 }
 
 template <typename T>
