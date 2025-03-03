@@ -8,7 +8,6 @@ import subprocess
 import time
 import datetime
 import math
-import hjson
 
 from ..runtime.config_utils import dict_raise_error_on_duplicate_keys
 from ..runtime.constants import *
@@ -38,6 +37,11 @@ OFFLOAD_OPTIMIZER = "offload_optimizer"
 OFFLOAD_PARAM = "offload_param"
 ZERO_OPTIMIZATION_STAGE_DEFAULT = ZeroStageEnum.disabled
 
+try:
+    from tabulate import tabulate
+except ImportError:
+    tabulate = None
+
 
 class Autotuner:
     """The DeepSpeed Autotuner automatically discovers the optimal DeepSpeed configuration that delivers good training speed. The Autotuner uses model information, system information, and heuristics to efficiently tune system knobs that affect compute and memory efficiencies, such as ZeRO optimization stages, micro-batch sizes, and many other ZeRO optimization configurations. It not only reduces the time and resources user spend on tuning, but also can discover configurations better than hand-tuned methods.
@@ -50,7 +54,7 @@ class Autotuner:
 
         assert tabulate is not None, "Missing required package `tabulate`, please install with `pip install deepspeed[autotuning]`."
 
-        logger.debug(f"autotuning args={args}")
+        logger.debug(f"autotunning args={args}")
 
         self.user_config = self._get_user_config(args.user_args)
         assert self.user_config is not None, "DeepSpeed configuration is not provided"
