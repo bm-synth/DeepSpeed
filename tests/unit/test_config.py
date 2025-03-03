@@ -113,6 +113,30 @@ def test_temp_config_json(tmpdir):
     assert 'train_batch_size' in config_json
 
 
+@pytest.mark.parametrize("gather_weights_key",
+                         [
+                             "stage3_gather_16bit_weights_on_model_save",
+                             "stage3_gather_fp16_weights_on_model_save"
+                         ])
+def test_gather_16bit_params_on_model_save(gather_weights_key):
+    config_dict = {
+        gather_weights_key: True,
+    }
+    config = DeepSpeedZeroConfig(**config_dict)
+
+    assert config.gather_16bit_weights_on_model_save == True
+
+
+@pytest.mark.parametrize("bf16_key", ["bf16", "bfloat16"])
+def test_get_bfloat16_enabled(bf16_key):
+    cfg = {
+        bf16_key: {
+            "enabled": True,
+        },
+    }
+    assert get_bfloat16_enabled(cfg) == True
+
+
 def test_deprecated_deepscale_config(tmpdir):
     config_dict = {
         "train_batch_size": 1,

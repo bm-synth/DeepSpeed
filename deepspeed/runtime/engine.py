@@ -45,7 +45,7 @@ from deepspeed.runtime.dataloader import DeepSpeedDataLoader
 from deepspeed.runtime.constants import \
     ROUTE_TRAIN, ROUTE_PREDICT, ROUTE_EVAL, \
     PLD_THETA, PLD_GAMMA, BFLOAT16, FP16
-
+from deepspeed.runtime.zero.config import ZeroStageEnum
 from deepspeed.compression import compression_scheduler
 from deepspeed.compression.constants import \
     SHARED_PARAMETERS, \
@@ -59,18 +59,13 @@ from deepspeed.compression.constants import \
     WEIGHT_QUANTIZE_TYPE, \
     WEIGHT_QUANTIZE_ROUNDING, \
     WEIGHT_QUANTIZE_VERBOSE, \
-    WEIGHT_QUANTIZE_KERNEL, \
-    ACTIVATION_QUANTIZATION, \
-    SPARSE_PRUNING, \
-    ROW_PRUNING, \
-    HEAD_PRUNING, \
-    CHANNEL_PRUNING
+    WEIGHT_QUANTIZE_KERNEL
+from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT
+from deepspeed.runtime.sparse_tensor import SparseTensor
 
-from deepspeed.runtime.zero.constants import \
-    ZERO_OPTIMIZATION_OPTIMIZER_STATES, ZERO_OPTIMIZATION_GRADIENTS, ZERO_OPTIMIZATION_WEIGHTS
-from deepspeed.runtime.csr_tensor import CSRTensor
-import deepspeed.runtime.lr_schedules as lr_schedules
-from deepspeed.utils import logger, log_dist, init_distributed
+from deepspeed.runtime import lr_schedules
+from deepspeed.utils import groups
+from deepspeed.utils import logger, log_dist, instrument_w_nvtx
 from deepspeed.utils.timer import ThroughputTimer, SynchronizedWallClockTimer
 from deepspeed.utils.debug import debug_extract_module_and_param_names
 from deepspeed.monitor.monitor import MonitorMaster
@@ -621,13 +616,6 @@ class DeepSpeedEngine(Module):
 
     def zero_optimization_partition_weights(self):
         return self.zero_optimization_stage() >= ZeroStageEnum.weights
-
-    def is_first_weights_partition_group(self):
-        ret = True if self.mics_shard_size() < 0 \
-            and self.zero_optimization_partition_weights() else False
-        if self.mics_shard_size() > 0 and self.global_rank < self.mics_shard_size():
-            ret = True
-        return ret
 
     def zero_contiguous_gradients(self):
         return self._config.zero_config.contiguous_gradients
@@ -1445,39 +1433,10 @@ class DeepSpeedEngine(Module):
             overlap_comm = self.zero_overlap_comm()
             contiguous_gradients = self.zero_contiguous_gradients()
             round_robin_gradients = self.zero_round_robin_gradients()
-            assert not isinstance(optimizer, DummyOptim), "zero stage {} requires an optimizer".format(zero_stage)
-
-            log_dist(f'Creating {model_dtype} ZeRO stage {zero_stage} optimizer', ranks=[0])
-
-            if isinstance(self.module, PipelineModule):
-                if overlap_comm:
-                    logger.warning("Pipeline parallelism does not support overlapped communication, will be disabled.")
-                    overlap_comm = False
-            optimizer = DeepSpeedZeroOptimizer(
-                optimizer,
-                self.param_names,
-                timers=timers,
-                static_loss_scale=self.loss_scale(),
-                dynamic_loss_scale=self.dynamic_loss_scale(),
-                dynamic_loss_args=self.dynamic_loss_scale_args(),
-                clip_grad=self.gradient_clipping(),
-                all_gather_partitions=self.zero_allgather_partitions(),
-                allgather_size=self.zero_allgather_bucket_size(),
-                max_elements_per_comm=self.zero_reduce_bucket_size(),
-                dp_process_group=self.data_parallel_group,
-                elastic_checkpoint=self.zero_elastic_checkpoint(),
-                mpu=self.mpu,
-                postscale_gradients=self.postscale_gradients(),
-                gradient_predivide_factor=self.gradient_predivide_factor(),
-                gradient_predivide=self.gradient_predivide)
-        elif zero_stage <= ZERO_OPTIMIZATION_GRADIENTS:
-            overlap_comm = self.zero_overlap_comm()
-            contiguous_gradients = self.zero_contiguous_gradients()
-            round_robin_gradients = self.zero_round_robin_gradients()
             assert not isinstance(optimizer, DummyOptim), "zero stage 2 requires an optimizer"
 
             # Overlap and contiguous grads are meaningless in stage 1 and are ignored
-            if zero_stage == ZERO_OPTIMIZATION_OPTIMIZER_STATES:
+            if zero_stage == ZeroStageEnum.optimizer_states:
                 overlap_comm = False
                 contiguous_gradients = False
 
@@ -1509,14 +1468,14 @@ class DeepSpeedEngine(Module):
                 gradient_predivide_factor=self.gradient_predivide_factor(),
                 gradient_accumulation_steps=self.gradient_accumulation_steps(),
                 ignore_unused_parameters=self.zero_ignore_unused_parameters(),
-                partition_grads=zero_stage == ZERO_OPTIMIZATION_GRADIENTS,
+                partition_grads=zero_stage == ZeroStageEnum.gradients,
                 round_robin_gradients=round_robin_gradients,
                 has_moe_layers=self.has_moe_layers,
                 fp16_master_weights_and_gradients=self.fp16_master_weights_and_gradients(
                 ),
                 communication_data_type=self.communication_data_type)
 
-        elif zero_stage == ZERO_OPTIMIZATION_WEIGHTS:
+        elif zero_stage == ZeroStageEnum.weights:
             assert not self.has_moe_layers, "MoE not supported with Stage 3"
             logger.info("Initializing ZeRO Stage 3") if dist.get_rank() == 0 else None
             from deepspeed.runtime.zero.stage3 import DeepSpeedZeroOptimizer_Stage3
@@ -1861,9 +1820,9 @@ class DeepSpeedEngine(Module):
 
         # Communicate only at gradient accumulation boundaries
         elif self.is_gradient_accumulation_boundary():
-            if self.zero_optimization_stage() == ZeroStageEnum.optimizer_states and hasattr(
-                    self.optimizer, 'reduce_gradients'):
-                self.optimizer.reduce_gradients(pipeline_parallel=self.pipeline_parallelism)
+            if self.zero_optimization_stage() == ZeroStageEnum.optimizer_states:
+                self.optimizer.reduce_gradients(
+                    pipeline_parallel=self.pipeline_parallelism)
             else:
                 grads = None
                 self.buffered_allreduce_fallback(grads=grads, elements_per_buffer=bucket_size)

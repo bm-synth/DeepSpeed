@@ -12,7 +12,7 @@ import math
 from ..runtime.config_utils import dict_raise_error_on_duplicate_keys
 from ..runtime.constants import *
 
-from ..runtime.zero.config import ZERO_OPTIMIZATION, ZeroStageEnum
+from ..runtime.zero.config import DeepSpeedZeroConfig, ZERO_OPTIMIZATION, ZeroStageEnum
 from ..utils import logger
 from .config import DeepSpeedAutotuningConfig
 from .constants import *
@@ -328,8 +328,8 @@ class Autotuner:
         exps = []
 
         # each zero stage uses a different template configuration file
-        config_zero = tuning_space.get(ZERO_OPTIMIZATION, {})
-        stage = config_zero.get(ZERO_OPTIMIZATION_STAGE, ZERO_OPTIMIZATION_STAGE_DEFAULT)
+        config_zero = tuning_space.zero_optimization
+        stage = config_zero.stage
         template_config = {}
         if stage == 0:
             template_path = DEFAULT_TEMPLATE_PATH_ZERO_0
@@ -353,8 +353,10 @@ class Autotuner:
             if model_info and "hidden_size" in model_info:
                 hs = model_info["hidden_size"]
                 template_config[ZERO_OPTIMIZATION]['reduce_bucket_size'] = hs * hs
-                template_config[ZERO_OPTIMIZATION]['stage3_prefetch_bucket_size'] = 0.9 * hs * hs
-                template_config[ZERO_OPTIMIZATION]['stage3_param_persistence_threshold'] = 10 * hs
+                template_config[ZERO_OPTIMIZATION][
+                    'stage3_prefetch_bucket_size'] = 0.9 * hs * hs
+                template_config[ZERO_OPTIMIZATION][
+                    'stage3_param_persistence_threshold'] = 10 * hs
             prefix = "z3_"
         else:
             return exps
@@ -384,10 +386,13 @@ class Autotuner:
             # if the config does not use offloading, remove the offloading section
             config_zero = config.get(ZERO_OPTIMIZATION, None)
             if config_zero:
-                if OFFLOAD_OPTIMIZER not in config_zero and OFFLOAD_OPTIMIZER in exp_config[ZERO_OPTIMIZATION]:
-                    del exp_config[ZERO_OPTIMIZATION][OFFLOAD_OPTIMIZER]
-                if OFFLOAD_PARAM not in config_zero and OFFLOAD_PARAM in exp_config[ZERO_OPTIMIZATION]:
-                    del exp_config[ZERO_OPTIMIZATION][OFFLOAD_PARAM]
+                if not config_zero.offload_optimizer and 'offload_optimizer' in exp_config[
+                        ZERO_OPTIMIZATION]:
+                    del exp_config[ZERO_OPTIMIZATION]['offload_optimizer']
+                if not config_zero.offload_param and 'offload_param' in exp_config[
+                        ZERO_OPTIMIZATION]:
+                    del exp_config[ZERO_OPTIMIZATION]['offload_param']
+
             # set gradient accumulation steps according to max_train_batch_size_per_gpu
             mbs = exp_config[TRAIN_MICRO_BATCH_SIZE_PER_GPU]
             gas = max_train_batch_size_per_gpu // mbs
@@ -433,8 +438,7 @@ class Autotuner:
             f"The model requires at least {memory_to_string(self.activation_mem, postfix='B')} activation memory for micro batch size 1."
         )
 
-        stage = self.user_config.get(ZERO_OPTIMIZATION, {}).get(ZERO_OPTIMIZATION_STAGE, 0)
-
+        stage = self.user_config.zero_optimization.stage if 'stage' in self.user_config.zero_optimization.__fields_set__ else "all"
         user_zero_stages = [stage] if not isinstance(stage, list) else stage
         logger.info(f"User-defined zero stages are {stage}.")
 
@@ -442,7 +446,8 @@ class Autotuner:
         max_mbs = 0
         metric_val = 0
 
-        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(ZeroStageEnum.disabled) + self.activation_mem
+        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(
+            ZeroStageEnum.disabled) + self.activation_mem
         if self.gpu_mem > required_gpu_mem:
             if "all" in user_zero_stages or ZeroStageEnum.disabled in user_zero_stages:
                 logger.info(
@@ -504,7 +509,8 @@ class Autotuner:
                 f"The model is not runable with ZERO stage {ZeroStageEnum.gradients} (which requires at least {memory_to_string(required_gpu_mem, postfix='B')} memory with mbs = 1)"
             )
 
-        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(ZeroStageEnum.weights) + self.activation_mem
+        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(
+            ZeroStageEnum.weights) + self.activation_mem
         if self.gpu_mem > required_gpu_mem:
             if "all" in user_zero_stages or ZeroStageEnum.weights in user_zero_stages:
                 logger.info(
@@ -526,7 +532,7 @@ class Autotuner:
 
     def tune_space(self, tuning_space, prev_max_mbs=0, prev_best_mbs=0, prev_best_metric_val=0):
         config_zero = tuning_space.get(ZERO_OPTIMIZATION, {})
-        stage = config_zero.get(ZERO_OPTIMIZATION_STAGE, None)
+        stage = config_zero.stage
         tuning_space_name = TUNING_MICRO_BATCH_SIZE_PREFIX + str(stage)
         tuning_micro_batch_sizes = []
         max_train_batch_size_per_gpu = 0
@@ -750,7 +756,7 @@ class Autotuner:
         max_micro_batch_size_metric_val = 0
 
         ds_config = get_first_config(self.user_config)
-        ds_config[ZERO_OPTIMIZATION] = {ZERO_OPTIMIZATION_STAGE: stage}
+        ds_config[ZERO_OPTIMIZATION] = DeepSpeedZeroConfig(stage=stage)
         tuning_space_name = TUNING_MICRO_BATCH_SIZE_PREFIX + str(stage)
 
         exp_paths = []
@@ -861,7 +867,7 @@ class Autotuner:
         tuning_space_name = TUNING_MICRO_BATCH_SIZE_PREFIX + str(stage)
 
         ds_config = get_first_config(self.user_config)
-        ds_config[ZERO_OPTIMIZATION] = {ZERO_OPTIMIZATION_STAGE: stage}
+        ds_config[ZERO_OPTIMIZATION] = DeepSpeedZeroConfig(stage=stage)
         gas = self.get_gas_from_user_config()
         ds_config[GRADIENT_ACCUMULATION_STEPS] = gas
 
