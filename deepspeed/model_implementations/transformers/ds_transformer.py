@@ -162,7 +162,9 @@ class DeepSpeedTransformerInference(nn.Module):
 
         if (self.config.dtype in [torch.float16, torch.bfloat16, torch.int8]) \
             and input.dtype == torch.float:
-            input = input.half()
+            target_dtype = torch.half if self.config.dtype == torch.int8 else self.config.dtype
+            input = input.to(target_dtype)
+
         with torch.no_grad():
             attention_output, key, value, context_outputtn_ctx, inp_norm = \
                                      self.attention(input,
