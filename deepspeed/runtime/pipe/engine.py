@@ -5,8 +5,6 @@
 
 from types import MethodType
 from collections import OrderedDict
-from functools import reduce
-from operator import mul
 
 import torch
 from deepspeed import comm as dist
@@ -292,10 +290,7 @@ class PipelineEngine(DeepSpeedEngine):
         self._force_grad_boundary = False
 
     def _bf16_reduce_grads(self):
-        # Make our own list of gradients from the optimizer's FP32 grads
-        grads = []
-        self.buffered_allreduce_fallback(grads=self.optimizer.get_grads_for_reduction(),
-                                         elements_per_buffer=MEMORY_OPT_ALLREDUCE_SIZE)
+        self.buffered_allreduce_fallback(grads=None, elements_per_buffer=MEMORY_OPT_ALLREDUCE_SIZE)
 
     def _reserve_pipe_buffers(self, num_buffers):
         """Ensure that each pipeline buffer has at least ``num_buffers`` slots.
@@ -371,6 +366,8 @@ class PipelineEngine(DeepSpeedEngine):
 
         self.module.train()
         self.total_loss = None
+        self.total_additional_losses = None
+        self._compute_loss = True
 
         # Do the work
         self.timers(TRAIN_BATCH_TIMER).start()
@@ -378,6 +375,9 @@ class PipelineEngine(DeepSpeedEngine):
                                        stages=self.num_stages,
                                        stage_id=self.stage_id)
         self._exec_schedule(sched)
+
+        with torch.no_grad():
+            self.agg_train_loss = self._aggregate_total_loss()
 
         self.timers(TRAIN_BATCH_TIMER).stop()
 
@@ -388,10 +388,12 @@ class PipelineEngine(DeepSpeedEngine):
                 elapsed = self.timers(TRAIN_BATCH_TIMER).elapsed(reset=True) / 1000.0
                 iter_time = elapsed / self.steps_per_print()
                 tput = self.train_batch_size() / iter_time
-                print(f'steps: {self.global_steps} '
-                      f'loss: {self.agg_train_loss:0.4f} '
-                      f'iter time (s): {iter_time:0.3f} '
-                      f'samples/sec: {tput:0.3f}')
+                log_str = f'steps: {self.global_steps} loss: {self.agg_train_loss:0.4f} '
+                if self.agg_additional_losses is not None:
+                    for loss_name, loss_value in self.agg_additional_losses.items():
+                        log_str += f'{loss_name}: {loss_value.item():0.4f} '
+                log_str += f'iter time (s): {iter_time:0.3f} samples/sec: {tput:0.3f}'
+                print(log_str)
             else:
                 self.timers(TRAIN_BATCH_TIMER).elapsed(reset=True)
 
@@ -611,22 +613,28 @@ class PipelineEngine(DeepSpeedEngine):
                          for name in self.agg_additional_losses.keys()})
 
             assert self.global_rank in self.grid.pp_group
-            losses = torch.stack([self.dp_group_loss, agg_loss]).float()
+            losses = [self.dp_group_loss, agg_loss]
+            if self.agg_additional_losses is not None:
+                losses += list(self.agg_additional_losses.values())
+            losses = torch.stack(losses).float()
             if self.is_pipe_parallel:
                 dist.broadcast(tensor=losses, src=self.global_rank, group=self.mpu.get_pipe_parallel_group())
         else:
             # Get loss from last stage
             src_rank = self.grid.stage_to_global(self.num_stages - 1)
             assert src_rank in self.grid.pp_group
-            losses = torch.Tensor([0., 0.]).to(self.device)
+            # losses to reduce are: dp_group_loss, agg_loss, model additional losses
+            # therefore: 2 + n_additional_losses
+            additional_losses = self.module.get_additional_losses()
+            n_additional_losses = 0 if additional_losses is None else len(additional_losses)
+            losses = torch.Tensor([0.] * (2 + n_additional_losses)).to(self.device)
             dist.broadcast(tensor=losses, src=src_rank, group=self.grid.get_pipe_parallel_group())
             self.dp_group_loss = losses[0].clone().detach()
             agg_loss = losses[1].clone().detach()
             if additional_losses is not None:
-                self.agg_additional_losses = OrderedDict({
-                    name: losses[2 + i].clone().detach()
-                    for i, name in enumerate(additional_losses.keys())
-                })
+                self.agg_additional_losses = OrderedDict(
+                    {name: losses[2 + i].clone().detach()
+                     for i, name in enumerate(additional_losses.keys())})
         return agg_loss
 
     def set_dataloader(self, loader):
@@ -1381,7 +1389,7 @@ class PipelineEngine(DeepSpeedEngine):
             strict (bool, optional): Strict state loading. Defaults to True.
         """
         assert custom_load_fn is None, "custom_load_fn not supported w. pipeline parallelism"
-        state_dict = checkpoint['module']
+        state_dict = checkpoint if self.has_moe_layers else checkpoint['module']
         if (state_dict is not None) and (not isinstance(state_dict, str)):
             super().load_module_state_dict(state_dict, strict)
             return
@@ -1421,10 +1429,5 @@ class PipelineEngine(DeepSpeedEngine):
                 self._exec_instr = MethodType(self._INSTRUCTION_MAP[type(cmd)], self)
                 self._exec_instr(**cmd.kwargs)
 
-    def set_batch_fn(self, fn):
-        """Execute a post-processing function on input data.
-
-        Args:
-            fn (function): The function to run.
-        """
-        self.batch_fn = fn
+    def get_additional_losses(self):
+        return self.agg_additional_losses
