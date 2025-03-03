@@ -9,11 +9,15 @@ title: "Latest News"
 
 * [2024/12] [DeepSpeed Domino: Communication-Free LLM Training Engine](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/deepspeed-domino/README.md)
 
-* [2024/08] [DeepSpeed on Windows](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/windows/08-2024/README.md)[[日本語](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/windows/08-2024/japanese/README.md)] [[中文](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/windows/08-2024/chinese/README.md)]
-
-* [2024/08] [DeepNVMe: Improving DL Applications through I/O Optimizations](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/deepspeed-gds/README.md)[[日本語](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/deepspeed-gds/japanese/README.md)] [[中文](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/deepspeed-gds/chinese/README.md)]
-* [2024/07] [DeepSpeed Universal Checkpointing: Efficient and Flexible Checkpointing for Large Scale Distributed Training](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-ucp/README.md)[[日本語](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-ucp/japanese/README.md)]
-* [2024/03] [DeepSpeed-FP6: The Power of FP6-Centric Serving for Large Language Models](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md) [[English](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)] [[中文](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README-Chinese.md)]
+<p align="center"><i><b>10x Larger Models</b></i></p>
+<p align="center"><i><b>10x Faster Training</b></i></p>
+<p align="center"><i><b>Minimal Code Change</b></i></p>
+DeepSpeed can train DL models with over a hundred billion parameters on current
+generation of GPU clusters, while achieving over 10x in system performance
+compared to the state-of-art. Early adopters of DeepSpeed have already produced
+a language model (LM) with over 17B parameters called
+[Turing-NLG](https://www.microsoft.com/en-us/research/blog/turing-nlg-a-17-billion-parameter-language-model-by-microsoft),
+establishing a new SOTA in the LM category.
 
 DeepSpeed is an important part of Microsoft’s new
 [AI at Scale](https://www.microsoft.com/en-us/research/project/ai-at-scale/)
@@ -98,6 +102,9 @@ overview](/features/) for descriptions and usage.
     * Activation Partitioning
     * Constant Buffer Optimization
     * Contiguous Memory Optimization
+* [ZeRO-Offload](/features/#zero-offload)
+    * Leverage both CPU/GPU memory for model training
+    * Support 10B model training on a single GPU
 * [Additional Memory and Bandwidth Optimizations](/features/#additional-memory-and-bandwidth-optimizations)
     * Smart Gradient Accumulation
     * Communication/Computation Overlap
