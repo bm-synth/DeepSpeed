@@ -20,6 +20,23 @@ class SimpleModel(torch.nn.Module):
         return self.cross_entropy_loss(hidden_dim, y)
 
 
+class Curriculum_SimpleModel(SimpleModel):
+    def __init__(self, hidden_dim, empty_grad=False):
+        super(Curriculum_SimpleModel, self).__init__(hidden_dim, empty_grad)
+
+    def forward(self, x, y, **kwargs):
+        seqlen = kwargs.get('curriculum_seqlen', None)
+        loss = super(Curriculum_SimpleModel, self).forward(x, y)
+        return loss, seqlen
+
+
+class UnusedParametersModel(SimpleModel):
+    def __init__(self, hidden_dim, empty_grad=False):
+        super().__init__(hidden_dim, empty_grad)
+
+        self.unused_linear = torch.nn.Linear(hidden_dim, hidden_dim)
+
+
 class LinearStack(torch.nn.Module):
     def __init__(self, input_dim=128, hidden_dim=128, output_dim=128, num_layers=4):
         super().__init__()

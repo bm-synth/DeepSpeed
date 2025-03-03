@@ -48,6 +48,7 @@ from deepspeed.utils.timer import ThroughputTimer, SynchronizedWallClockTimer
 from deepspeed.utils.debug import debug_extract_module_and_param_names
 from deepspeed.runtime.progressive_layer_drop import ProgressiveLayerDrop
 from deepspeed.runtime.eigenvalue import Eigenvalue
+from deepspeed.runtime.data_pipeline.curriculum_scheduler import CurriculumScheduler
 
 from .pipe.module import PipelineModule
 from .utils import ensure_directory_exists
@@ -263,20 +264,8 @@ class DeepSpeedEngine(Module):
         if self.pld_enabled():
             self.progressive_layer_drop = self._configure_progressive_layer_drop()
 
-        if self.curriculum_enabled_legacy():
-            self.curriculum_scheduler_legacy = self._configure_curriculum_scheduler_legacy()
-
-        if self.random_ltd_enabled():
-            random_ltd_config = self.random_ltd_config()
-            random_ltd_config[RANDOM_LTD_GLOBAL_BATCH_SIZE] = self.train_batch_size()
-            random_ltd_config[RANDOM_LTD_MICRO_BATCH_SIZE] = self.train_micro_batch_size_per_gpu()
-            self.random_ltd_scheduler = self._configure_random_ltd_scheduler(random_ltd_config)
-
-        # Engine timers
-
-        self.engine_timers = EngineTimers(enable_micro_timers=self.wall_clock_breakdown(),
-                                          enable_global_timers=self.wall_clock_breakdown()
-                                          or self.flops_profiler_enabled())
+        if self.curriculum_enabled():
+            self.curriculum_scheduler = self._configure_curriculum_scheduler()
 
         if self.global_rank == 0:
             self._config.print("DeepSpeedEngine configuration")
@@ -347,6 +336,36 @@ class DeepSpeedEngine(Module):
 
     def eigenvalue_max_iter(self):
         return self._config.eigenvalue_max_iter
+
+    def eigenvalue_tol(self):
+        return self._config.eigenvalue_tol
+
+    def eigenvalue_stability(self):
+        return self._config.eigenvalue_stability
+
+    def eigenvalue_gas_boundary_resolution(self):
+        return self._config.eigenvalue_gas_boundary_resolution
+
+    def eigenvalue_layer_name(self):
+        return self._config.eigenvalue_layer_name
+
+    def eigenvalue_layer_num(self):
+        return self._config.eigenvalue_layer_num
+
+    def curriculum_enabled(self):
+        return self._config.curriculum_enabled
+
+    def curriculum_params(self):
+        return self._config.curriculum_params
+
+    def tensorboard_enabled(self):
+        return self._config.tensorboard_enabled
+
+    def tensorboard_output_path(self):
+        return self._config.tensorboard_output_path
+
+    def tensorboard_job_name(self):
+        return self._config.tensorboard_job_name
 
     def get_summary_writer(self,
                            name="DeepSpeedJobName",
@@ -1515,6 +1534,10 @@ class DeepSpeedEngine(Module):
 
         return pld
 
+    def _configure_curriculum_scheduler(self):
+        scheduler = CurriculumScheduler(self.curriculum_params())
+        return scheduler
+
     @staticmethod
     def is_map_style_dataset(obj):
         return hasattr(obj, "__getitem__") and hasattr(obj, "__len__")
@@ -1637,40 +1660,13 @@ class DeepSpeedEngine(Module):
         if self.module.training and self.progressive_layer_drop:
             kwargs.update(self.progressive_layer_drop.get_state())
 
-        flops_profiler_active = (self.flops_profiler_enabled()
-                                 and self.global_steps == self.flops_profiler_profile_step() and self.global_rank == 0)
-
-        # used to check quantization happens at step 0!
-        if self.global_steps == 0 and hasattr(self, "compression_scheduler"):
-            self.compression_scheduler.step(step_zero_check=True)
-            if self.quantizer:
-                tensor_to_quantize = self.optimizer.bit16_groups if self.zero_optimization_stage(
-                ) == 2 else self.optimizer.fp16_groups
-                if self.compression_scheduler.weight_quantization_enabled:
-                    self.quantizer.quantize(
-                        tensor_to_quantize,
-                        (self.optimizer.overflow if self.fp16_enabled() else False),
-                        self.eigenvalue_enabled(),
-                        None,
-                    )
-
-        if flops_profiler_active:
-            self.flops_profiler.start_profile(ignore_list=None)
-
-        if self.module.training:
-            if self.progressive_layer_drop:
-                kwargs.update(self.progressive_layer_drop.get_state())
-
-        if self.__class__.__name__ != "PipelineEngine":
-            # TODO: The above if condition is a HACK since for PipelineEngine
-            # it's difficult to inject argument in forward pass.
-            if self.module.training and self.curriculum_enabled_legacy():
-                self.curriculum_scheduler_legacy.update_difficulty(self.global_steps + 1)
-                if self.curriculum_params_legacy()["curriculum_type"] == "seqlen":
-                    kwargs.update({"curriculum_seqlen": self.curriculum_scheduler_legacy.get_current_difficulty()})
-
-        if self.module.training and self.random_ltd_enabled():
-            self.random_ltd_scheduler.update_seq(self.global_steps)
+        if self.module.training and self.curriculum_enabled():
+            self.curriculum_scheduler.update_difficulty(self.global_steps + 1)
+            if self.curriculum_params()["curriculum_type"] == "seqlen":
+                kwargs.update({
+                    "curriculum_seqlen":
+                    self.curriculum_scheduler.get_current_difficulty()
+                })
 
         if self.zero_optimization_partition_weights():
             # Enable automated discovery of external parameters by indicating that
