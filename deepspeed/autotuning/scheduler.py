@@ -317,8 +317,6 @@ def run_experiment(exp: dict, reservations, user_script, user_args):
     master_port = exp["master_port"]
     hostfile = exp["hostfile"]
     exp["launcher_args"] = [
-        "--hostfile",
-        f"{hostfile}",
         "--include",
         f"{include_str}",
         "--master_port",
