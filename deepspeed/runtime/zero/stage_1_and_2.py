@@ -1412,7 +1412,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                     elif self.contiguous_gradients:
                         self.copy_grads_in_partition(param)
                 else:  # zero stage 1 - partition only optimizer state
-                    if self.contiguous_gradients and self.is_param_in_current_partition[param_id]:
+                    if self.contiguous_gradients:
                         self.copy_grads_in_partition(param)
 
         self.grads_in_ipg_bucket = []
