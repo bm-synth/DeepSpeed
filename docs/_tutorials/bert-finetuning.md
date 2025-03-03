@@ -8,19 +8,17 @@ In this tutorial we will be adding DeepSpeed to the BingBert model for the SQuAD
 
 ## Overview
 
-Please clone the DeepSpeed repository and change to deepspeed directory
+If you don't already have a copy of the DeepSpeed repository, please clone in
+now and checkout the DeepSpeedExamples submodule the contains the BingBertSquad
+example (DeepSpeedExamples/BingBertSquad) we will be going over in the rest of
+this tutorial.
 
-`git clone https://github.com/microsoft/deepspeed`
-
-`cd deepspeed`
-
-The DeepSpeedExamples are submodules so you need to initialize and update them using the following commands
-
-`git submodule init`
-
-`git submodule update`
-
-Go to the `DeepSpeedExamples/BingBertSquad` folder to follow along.
+```shell
+git clone https://github.com/microsoft/DeepSpeed
+cd DeepSpeed
+git submodule update --init --recursive
+cd DeepSpeedExamples/BingBertSquad
+```
 
 ### Pre-requisites
 
@@ -32,8 +30,8 @@ You also need a pre-trained BERT model checkpoint from either DeepSpeed, [Huggin
 
 ### Running BingBertSquad
 
-- **Unmodified (BaseLine):** If you would like to run unmodified BingBertSquad with the pre-processed data, there is a helper script which you can invoke via: `bash run_squad_baseline.sh 8 <PATH_TO_CHECKPOINT>/training_state_checkpoint_162.tar <PATH_TO_DATA_DIR> <PATH_TO_OUTPUT_DIR> ` where the first argument `8` is the number of GPUs, second argument is the path to the pre-training checkpoint, third is the path to training and validation sets (e.g. train-v1.1.json), and fourth is path to an output folder (e.g. ~/output). This bash script sets the parameters and invokes `nvidia_run_squad_baseline.py`.
-- **Modified (DeepSpeed):** This is similar to baseline;  just substitute `run_squad_baseline.sh` with `run_squad_deepspeed.sh` which invokes `nvidia_run_squad_deepspeed.py`.
+- **DeepSpeed-enabled:** We provide a shell script that you can invoke to start training with DeepSpeed, it takes 4 arguments: `bash run_squad_deepspeed.sh <NUM_GPUS> <PATH_TO_CHECKPOINT> <PATH_TO_DATA_DIR> <PATH_TO_OUTPUT_DIR>`. The first argument is the number of GPUs to train with, second argument is the path to the pre-training checkpoint, third is the path to training and validation sets (e.g., train-v1.1.json), and fourth is path to an output folder where the results will be saved. This script will invoke `nvidia_run_squad_deepspeed.py`.
+- **Unmodified baseline** If you would like to run a non-DeepSpeed enabled version of fine-tuning we provide a shell script that takes the same arguments as the DeepSpeed one named `run_squad_baseline.sh`. This script will invoke `nvidia_run_squad_baseline.py`.
 
 ## DeepSpeed Integration
 
@@ -203,7 +201,7 @@ the `--predict_batch_size` should also be 8.
 
 For further details about the transformer kernel, please see our [usage
 tutorial](/tutorials/transformer_kernel/) and [technical deep
-dive](https://www.deepspeed.ai/2020/05/27/fastest-bert-training.html) on
+dive](https://www.deepspeed.ai/news/2020/05/27/fastest-bert-training.html) on
 the fastest BERT training.
 
 
@@ -304,7 +302,7 @@ Table 4. The setting of memory-optimization flags for a range of micro-batch siz
 
 ### FineTuning model pre-trained with DeepSpeed Transformer Kernels
 
-Fine-tuning the model pre-trained using DeepSpeed Transformer and the recipe in [DeepSpeed Fast-Bert Training](https://www.deepspeed.ai/2020/05/27/fastest-bert-training.html) should yield F1 score of 90.5 and is expected to increase if you let the pre-training longer than suggested in the tutorial.
+Fine-tuning the model pre-trained using DeepSpeed Transformer and the recipe in [DeepSpeed Fast-Bert Training](/fast_bert/) should yield F1 score of 90.5 and is expected to increase if you let the pre-training longer than suggested in the tutorial.
 
 To get these results, we do require some tuning of the dropout settings as described below:
 
