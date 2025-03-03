@@ -367,12 +367,13 @@ Enabling and configuring ZeRO memory optimizations
     "stage3_param_persistence_threshold" : 1e6,
     "sub_group_size" : 1e12,
     "elastic_checkpoint" : [true|false],
-    "stage3_gather_fp16_weights_on_model_save": [true|false],
-    "ignore_unused_parameters": [true|false]
-    "round_robin_gradients": [true|false]
-    "zero_hpz_partition_size": 1
-    "zero_quantized_weights": [true|false]
-    "zero_quantized_gradients": [true|false]
+    "stage3_gather_16bit_weights_on_model_save": [true|false],
+    "ignore_unused_parameters": [true|false],
+    "round_robin_gradients": [true|false],
+    "zero_hpz_partition_size": 1,
+    "zero_quantized_weights": [true|false],
+    "zero_quantized_gradients": [true|false],
+    "log_trace_cache_warnings": [true|false],
     }
 ```
 
@@ -508,6 +509,12 @@ Enabling and configuring ZeRO memory optimizations
 | Description                                                                                                                         | Default |
 | ----------------------------------------------------------------------------------------------------------------------------------- | ------- |
 |Boolean indicating whether to enable communication efficient quantized gradients of ZeRO++. | `False`   |
+
+<i>**log_trace_cache_warnings**</i>: [boolean]
+
+| Description                                                                                                         | Default |
+| ------------------------------------------------------------------------------------------------------------------- | ------- |
+| Log warnings from trace cache optimization of parameter sharding, such as cache invalidation events. | `False`  |
 
 ***cpu_offload***: [boolean]
 
