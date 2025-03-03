@@ -679,6 +679,9 @@ class DeepSpeedEngine(Module):
     def gradient_accumulation_steps(self):
         return self._config.gradient_accumulation_steps
 
+    def use_node_local_storage(self):
+        return self._config.use_node_local_storage
+
     def load_universal_checkpoint(self):
         return self._config.load_universal_checkpoint
 
@@ -795,11 +798,13 @@ class DeepSpeedEngine(Module):
 
         rank = self.local_rank if self.use_node_local_storage() else dp_rank
 
+        rank = self.local_rank if self.use_node_local_storage() else dp_rank
+
         # only the first data parallel process needs to store the model checkpoint
         # if you want to use node local storage this must be done by rank 0 on each
         # node
-        self.save_non_zero_checkpoint = (rank == 0) or (self.zero_optimization_partition_weights()
-                                                        and self.is_first_weights_partition_group())
+        self.save_non_zero_checkpoint = (
+            rank == 0) or self.zero_optimization_partition_weights()
 
         if self.zero_optimization() or self.bfloat16_enabled():
             param_rank = torch.distributed.get_rank(
@@ -2912,7 +2917,6 @@ class DeepSpeedEngine(Module):
             mp_rank=mp_rank,
             dp_world_size=self.loaded_checkpoint_dp_world_size,
             bf16_mode=bf16_mode)
-        invalid_zero_ckpt_paths = []
         for i, ckpt_name in enumerate(zero_ckpt_names):
             if not os.path.exists(ckpt_name):
                 # transparently handle the old file pattern for optim_states
@@ -2922,13 +2926,6 @@ class DeepSpeedEngine(Module):
                     if os.path.exists(ckpt_name_try):
                         zero_ckpt_names[i] = ckpt_name_try
                         continue
-                invalid_zero_ckpt_paths.append(ckpt_name)
-
-        if len(invalid_zero_ckpt_paths) > 0:
-            logger.warn(
-                f"The following zero checkpoints paths are missing: {invalid_zero_ckpt_paths}"
-            )
-            return None
 
         return zero_ckpt_names
 
@@ -2939,7 +2936,7 @@ class DeepSpeedEngine(Module):
             if ckpt_name is None:
                 _state = {OPTIMIZER_STATE_DICT: None}
             # Fully load state for current rank
-            if self.zero_elastic_checkpoint() or dist.get_rank(
+            elif self.zero_elastic_checkpoint() or dist.get_rank(
                     group=self.optimizer.dp_process_group) == i:
                 _state = self.checkpoint_engine.load(
                     ckpt_name,
@@ -3007,6 +3004,8 @@ class DeepSpeedEngine(Module):
             # Prepare for checkpoint save by ensuring all parameters are partitioned
             self.optimizer.checkpoint_event_prologue()
 
+        rank = self.local_rank if self.use_node_local_storage() else self.global_rank
+
         # This is to make sure the checkpoint names are created without collision
         # There seems to be issue creating them in parallel
 
@@ -3060,7 +3059,7 @@ class DeepSpeedEngine(Module):
 
         # Save latest checkpoint tag
         self.checkpoint_engine.commit(tag)
-        if save_latest and self.global_rank == 0:
+        if save_latest and rank == 0:
             with open(os.path.join(save_dir, 'latest'), 'w') as fd:
                 fd.write(tag)
 
