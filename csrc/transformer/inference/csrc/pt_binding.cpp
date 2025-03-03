@@ -178,7 +178,7 @@ at::Tensor einsum_sec_sm_ecm(at::Tensor& Q, at::Tensor& W)
     /*
     // Reallocate memory if we received a new prompt
     if (!workspace || input.size(1) != 1) {
-        allocate_workspace<T>(W.size(1), InferenceContext::Instance().GetMaxTokenLenght(),
+        allocate_workspace<T>(W.size(1), InferenceContext::Instance().GetMaxTokenLength(),
     Q.size(0), 1, head_size); workspace = (T*)InferenceContext::Instance().GetWorkSpace();
     }
     */
@@ -423,7 +423,7 @@ void attention_unfused(T* prev_key_cont,
                                 workspace,
                                 CUBLAS_OP_T,
                                 CUBLAS_OP_N,
-                                InferenceContext::Instance().GetMaxTokenLenght() * k,
+                                InferenceContext::Instance().GetMaxTokenLength() * k,
                                 seq_len * k,
                                 seq_len * soft_len,
                                 bsz * heads,
@@ -457,7 +457,7 @@ void attention_unfused(T* prev_key_cont,
                                 (T*)output,
                                 CUBLAS_OP_N,
                                 CUBLAS_OP_N,
-                                InferenceContext::Instance().GetMaxTokenLenght() * k,
+                                InferenceContext::Instance().GetMaxTokenLength() * k,
                                 seq_len * soft_len,
                                 seq_len * k,
                                 bsz * heads,
@@ -514,11 +514,11 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
 
     auto query_cont = workspace + 5 * buf_size;
     size_t offset =
-        10 * (hidden_dim * bsz * InferenceContext::Instance().GetMaxTokenLenght()) +
-        layer_id * 2 * bsz * InferenceContext::Instance().GetMaxTokenLenght() * hidden_dim;
+        10 * (hidden_dim * bsz * InferenceContext::Instance().GetMaxTokenLength()) +
+        layer_id * 2 * bsz * InferenceContext::Instance().GetMaxTokenLength() * hidden_dim;
     unsigned all_tokens = soft_len;
     auto kv_cache = workspace + offset + (hidden_dim / heads) * (is_prompt ? 0 : soft_len - 1);
-    size_t value_offset = bsz * InferenceContext::Instance().GetMaxTokenLenght() * hidden_dim;
+    size_t value_offset = bsz * InferenceContext::Instance().GetMaxTokenLength() * hidden_dim;
 
     T* temp_buf = (T*)output.data_ptr() + at::numel(output);
     launch_bias_add_transform_0213<T>((T*)query_cont,
@@ -538,7 +538,7 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
                                       rotate_every_two,
                                       InferenceContext::Instance().GetCurrentStream(),
                                       3,
-                                      InferenceContext::Instance().GetMaxTokenLenght());
+                                      InferenceContext::Instance().GetMaxTokenLength());
     if (rotary_dim > 0 && rotate_half)
         launch_apply_rotary_pos_emb(query_cont,
                                     kv_cache,
@@ -551,7 +551,7 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
                                     rotate_half,
                                     rotate_every_two,
                                     InferenceContext::Instance().GetCurrentStream(),
-                                    InferenceContext::Instance().GetMaxTokenLenght());
+                                    InferenceContext::Instance().GetMaxTokenLength());
 
     attention_unfused<T>(workspace + offset,
                          (T*)query_cont,
@@ -582,8 +582,8 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
     if (layer_id == num_layers - 1) InferenceContext::Instance().advance_tokens();
     auto prev_key = torch::from_blob(workspace + offset,
                                      {bsz, heads, all_tokens, k},
-                                     {hidden_dim * InferenceContext::Instance().GetMaxTokenLenght(),
-                                      k * InferenceContext::Instance().GetMaxTokenLenght(),
+                                     {hidden_dim * InferenceContext::Instance().GetMaxTokenLength(),
+                                      k * InferenceContext::Instance().GetMaxTokenLength(),
                                       k,
                                       1},
                                      options);
@@ -591,8 +591,8 @@ std::vector<at::Tensor> ds_softmax_context(at::Tensor& query_key_value,
     auto prev_value =
         torch::from_blob(workspace + offset + value_offset,
                          {bsz, heads, all_tokens, k},
-                         {hidden_dim * InferenceContext::Instance().GetMaxTokenLenght(),
-                          k * InferenceContext::Instance().GetMaxTokenLenght(),
+                         {hidden_dim * InferenceContext::Instance().GetMaxTokenLength(),
+                          k * InferenceContext::Instance().GetMaxTokenLength(),
                           k,
                           1},
                          options);
@@ -2063,7 +2063,7 @@ std::vector<at::Tensor> apply_rotary_pos_emb(at::Tensor& mixed_query,
                                            rotate_half,
                                            rotate_every_two,
                                            InferenceContext::Instance().GetCurrentStream(),
-                                           InferenceContext::Instance().GetMaxTokenLenght());
+                                           InferenceContext::Instance().GetMaxTokenLength());
     else
         launch_apply_rotary_pos_emb<__half>((__half*)query_cont.data_ptr(),
                                             (__half*)key_cont.data_ptr(),
@@ -2076,7 +2076,7 @@ std::vector<at::Tensor> apply_rotary_pos_emb(at::Tensor& mixed_query,
                                             rotate_half,
                                             rotate_every_two,
                                             InferenceContext::Instance().GetCurrentStream(),
-                                            InferenceContext::Instance().GetMaxTokenLenght());
+                                            InferenceContext::Instance().GetMaxTokenLength());
     return {query_cont, key_cont};
 }
 
