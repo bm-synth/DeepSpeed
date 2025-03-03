@@ -19,25 +19,21 @@ deepspeed_gds_handle_t::deepspeed_gds_handle_t(const int block_size,
                                                const int queue_depth,
                                                const bool single_submit,
                                                const bool overlap_events,
-                                               const int intra_op_parallelism)
-    : deepspeed_io_handle_t(block_size, queue_depth, single_submit, overlap_events, 1),
-      _intra_gds_op_parallelism(intra_op_parallelism)
+                                               const int num_threads)
+    : deepspeed_io_handle_t(block_size, queue_depth, single_submit, overlap_events, num_threads)
 {
-    _init_cuFile(block_size, queue_depth);
+    _init_cuFile(block_size, queue_depth, num_threads);
 }
 
 deepspeed_gds_handle_t::~deepspeed_gds_handle_t() { _close_cuFile(); }
 
-const int deepspeed_gds_handle_t::get_intra_op_parallelism() const
-{
-    return _intra_gds_op_parallelism;
-}
-
-void deepspeed_gds_handle_t::_init_cuFile(const int block_size, const int queue_depth)
+void deepspeed_gds_handle_t::_init_cuFile(const int block_size,
+                                          const int queue_depth,
+                                          const int num_threads)
 {
     if (deepspeed_gds_handle_t::s_cuFile_init == 0) {
         std::string depthStr = std::to_string(queue_depth);
-        std::string threadsStr = std::to_string(_intra_gds_op_parallelism);
+        std::string threadsStr = std::to_string(num_threads);
         std::string json1 = R"({"execution": {"max_io_queue_depth": )" + depthStr + ", ";
         std::string json2 = R"("max_request_parallelism": )" + threadsStr + ", ";
         std::string json3 = R"("max_io_threads": )" + threadsStr + ", ";
@@ -106,20 +102,13 @@ std::shared_ptr<struct io_op_desc_t> deepspeed_gds_handle_t::_create_io_op_desc(
     const torch::Tensor& buffer,
     const int fd,
     const char* filename,
-    const int64_t file_num_bytes,
-    const bool validate,
-    const int64_t file_offset)
+    const long long int file_num_bytes,
+    const bool validate)
 {
     if (buffer.is_cuda()) {
-        return std::make_shared<gds_op_desc_t>(read_op,
-                                               buffer,
-                                               fd,
-                                               filename,
-                                               file_num_bytes,
-                                               _intra_op_parallelism,
-                                               validate,
-                                               file_offset);
+        return std::make_shared<gds_op_desc_t>(
+            read_op, buffer, fd, filename, file_num_bytes, _num_threads, validate);
     }
     return deepspeed_io_handle_t::_create_io_op_desc(
-        read_op, buffer, fd, filename, file_num_bytes, validate, file_offset);
+        read_op, buffer, fd, filename, file_num_bytes, validate);
 }
