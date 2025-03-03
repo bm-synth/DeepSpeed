@@ -520,6 +520,11 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         self._enable_universal_checkpoint()
         self._param_slice_mappings = self._create_param_mapping()
 
+    def destroy(self):
+        for hook in self._grad_acc_hooks:
+            hook.remove()
+        self.print_rank_0("Removed grad acc hooks")
+
     def _enable_universal_checkpoint(self):
         for lp_param_group in self.bit16_groups:
             enable_universal_checkpoint(param_list=lp_param_group)
