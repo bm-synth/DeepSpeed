@@ -234,10 +234,7 @@ class OpBuilder(ABC):
     def get_rocm_gpu_arch():
         if OpBuilder._rocm_gpu_arch:
             return OpBuilder._rocm_gpu_arch
-        rocm_info = Path("/opt/rocm/bin/rocminfo")
-        if (not rocm_info.is_file()):
-            rocm_info = Path("rocminfo")
-        rocm_gpu_arch_cmd = str(rocm_info) + " | grep -o -m 1 'gfx.*'"
+        rocm_gpu_arch_cmd = "/opt/rocm/bin/rocminfo | grep -o -m 1 'gfx.*'"
         try:
             result = subprocess.check_output(rocm_gpu_arch_cmd, shell=True)
             rocm_gpu_arch = result.decode('utf-8').strip()
@@ -250,12 +247,7 @@ class OpBuilder(ABC):
     def get_rocm_wavefront_size():
         if OpBuilder._rocm_wavefront_size:
             return OpBuilder._rocm_wavefront_size
-
-        rocm_info = Path("/opt/rocm/bin/rocminfo")
-        if (not rocm_info.is_file()):
-            rocm_info = Path("rocminfo")
-        rocm_wavefront_size_cmd = str(
-            rocm_info) + " | grep -Eo -m1 'Wavefront Size:[[:space:]]+[0-9]+' | grep -Eo '[0-9]+'"
+        rocm_wavefront_size_cmd = "/opt/rocm/bin/rocminfo | grep -Eo -m1 'Wavefront Size:[[:space:]]+[0-9]+' | grep -Eo '[0-9]+'"
         try:
             result = subprocess.check_output(rocm_wavefront_size_cmd, shell=True)
             rocm_wavefront_size = result.decode('utf-8').strip()
@@ -556,6 +548,8 @@ class OpBuilder(ABC):
 
         if self.is_rocm_pytorch():
             cxx_args.append("-D__HIP_PLATFORM_AMD__=1")
+            os.environ["PYTORCH_ROCM_ARCH"] = self.get_rocm_gpu_arch()
+            cxx_args.append('-DROCM_WAVEFRONT_SIZE=%s' % self.get_rocm_wavefront_size())
 
         op_module = load(name=self.name,
                          sources=self.strip_empty_entries(sources),
@@ -683,6 +677,12 @@ class CUDAOpBuilder(OpBuilder):
 
         if self.is_rocm_pytorch():
             compile_args['cxx'].append("-D__HIP_PLATFORM_AMD__=1")
+            #cxx compiler args are required to compile cpp files
+            compile_args['cxx'].append('-DROCM_WAVEFRONT_SIZE=%s' % self.get_rocm_wavefront_size())
+            #nvcc compiler args are required to compile hip files
+            compile_args['nvcc'].append('-DROCM_WAVEFRONT_SIZE=%s' % self.get_rocm_wavefront_size())
+            if self.get_rocm_gpu_arch():
+                os.environ["PYTORCH_ROCM_ARCH"] = self.get_rocm_gpu_arch()
 
         cuda_ext = ExtensionBuilder(name=self.absolute_name(),
                                     sources=self.strip_empty_entries(self.sources()),
