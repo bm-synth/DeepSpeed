@@ -815,6 +815,10 @@ class DeepSpeedEngine(Module):
 
         return torch.float32
 
+    @communication_data_type.setter
+    def communication_data_type(self, value):
+        self._config.communication_data_type = value
+
     def postscale_gradients(self):
         return not self._config.prescale_gradients
 
@@ -1172,7 +1176,6 @@ class DeepSpeedEngine(Module):
         self.sequence_parallel_size = groups._get_sequence_parallel_world_size()
         if self.sequence_parallel_size > 1:
             self.communication_data_type = self._config.seq_parallel_communication_data_type
-            self.seq_parallel_group = groups._get_sequence_parallel_group()
 
         if not (self.amp_enabled() or is_zero_init_model):
             self._broadcast_model()
@@ -2464,7 +2467,7 @@ class DeepSpeedEngine(Module):
             if is_moe_param(param):
                 expert_grads[param.group_name].append(grad_data)
             else:
-                non_expert_grads.append(grad_data)
+                dp_group = groups._get_sequence_data_parallel_group()
 
             if bucket_type == CSRTensor.type():
                 self.csr_allreduce_no_retain(bucket, dp_group=dp_group)
@@ -2525,9 +2528,10 @@ class DeepSpeedEngine(Module):
 
         if self.postscale_gradients():
             if self.gradient_average:
-                values.mul_(self.gradient_predivide_factor() / dist.get_world_size(group=dp_group))
+                values.mul_(self.gradient_predivide_factor() /
+                            (dist.get_world_size(group=dp_group) / float(self.sequence_parallel_size)))
         else:
-            values.mul_(1. / dist.get_world_size(group=dp_group))
+            values.mul_(1. / (dist.get_world_size(group=dp_group) / float(self.sequence_parallel_size)))
 
         indices_device_list = self.sparse_all_gather(indices, dp_group)
         values_device_list = self.sparse_all_gather(values, dp_group)

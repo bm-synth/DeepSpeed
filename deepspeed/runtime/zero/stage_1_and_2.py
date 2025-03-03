@@ -32,12 +32,6 @@ from deepspeed.checkpoint.constants import (DS_VERSION, GROUP_PADDINGS, PARTITIO
 from deepspeed.utils import link_hp_params
 from deepspeed.checkpoint import enable_universal_checkpoint
 
-from deepspeed.checkpoint.constants import (DS_VERSION, GROUP_PADDINGS, PARTITION_COUNT, LOSS_SCALER,
-                                            SINGLE_PARTITION_OF_FP32_GROUPS, BASE_OPTIMIZER_STATE,
-                                            BASE_OPTIMIZER_STATE_STEP, CLIP_GRAD, ZERO_STAGE, PARAM_SLICE_MAPPINGS)
-from deepspeed.utils import link_hp_params, lazy_init_hp_params_optimizer_state
-from deepspeed.checkpoint import enable_universal_checkpoint
-
 from deepspeed.utils import groups
 # Toggle this to true to enable correctness test
 # with gradient partitioning and without
@@ -1036,7 +1030,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                 if self.ipg_bucket_has_moe_params:
                     process_group = self.expert_dp_process_group[param.group_name] if is_moe_param(
                         param) else self.dp_process_group
-                    grad_reduc.data.div_(dist.get_world_size(group=process_group))
+                    grad_reduc.data.div_(dist.get_world_size(group=process_group) / float(self.sequence_parallel_size))
 
                 partition_ids = self.param_to_partition_ids[i][param_id]
                 assert all([p_id < dist.get_world_size(group=process_group) for p_id in partition_ids
@@ -1075,7 +1069,8 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                     curr_size += numel
                     prev_id, prev_process_group = partition_id, process_group
 
-            tensor.div_(dist.get_world_size(group=self.dp_process_group) / float(self.sequence_parallel_size))
+            if not self.ipg_bucket_has_moe_params:
+                tensor.div_(dist.get_world_size(group=self.dp_process_group) / float(self.sequence_parallel_size))
 
             tensor_to_reduce = tensor
             if self.communication_data_type != tensor.dtype:
@@ -1464,8 +1459,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         if communication_data_type != tensor.dtype:
             tensor_to_allreduce = tensor.to(communication_data_type)
 
-        if divide:
-            tensor_to_allreduce.div_(dist.get_world_size(group=process_group) / float(self.sequence_parallel_size))
+        tensor_to_allreduce.div_(dist.get_world_size(group=self.dp_process_group) / float(self.sequence_parallel_size))
 
         if rank is None:
             #    "All Reducing"
