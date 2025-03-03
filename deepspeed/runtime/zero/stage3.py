@@ -1382,7 +1382,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 param_id = self.get_param_id(p)
                 if param_id in self.norm_for_param_grads.keys():
                     param_norm = self.norm_for_param_grads[param_id]
-                    total_norm += param_norm.item()**2
+                    total_norm += param_norm**2
 
         # Sum across all model parallel GPUs.
         total_norm_cuda = get_accelerator().FloatTensor([float(total_norm)])
@@ -1392,10 +1392,14 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self._model_parallel_all_reduce(tensor=total_norm_cuda,
                                         op=torch.distributed.ReduceOp.SUM)
 
-        total_norm = total_norm_cuda[0].item()**(1. / norm_type)
+        total_norm = total_norm_cuda[0]**(1. / norm_type)
 
-        if total_norm == float('inf') or total_norm == -float('inf') or total_norm != total_norm:
-            total_norm = -1
+        norm_is_inf = total_norm.isinf()
+        norm_is_nan = total_norm.isnan()
+        inf_or_nan = norm_is_nan.logical_or(norm_is_inf)
+
+        err = torch.tensor(-1.0, device=self.device, dtype=torch.float)
+        total_norm = inf_or_nan * err + inf_or_nan.logical_not() * total_norm
 
         return total_norm
 
@@ -1735,9 +1739,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=self.dp_process_group)
 
             # Take max across all GPUs.
-            self._model_parallel_all_reduce(tensor=total_norm_cuda,
-                                            op=torch.distributed.ReduceOp.MAX)
-            total_norm = total_norm_cuda[0].item()
+            self._model_parallel_all_reduce(tensor=total_norm_cuda, op=dist.ReduceOp.MAX)
+            total_norm = total_norm_cuda[0]
         else:
             total_norm = 0.0
             # if dist.get_rank() == 0:
@@ -1759,10 +1762,14 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
             self._model_parallel_all_reduce(tensor=total_norm_cuda,
                                             op=torch.distributed.ReduceOp.SUM)
 
-            total_norm = total_norm_cuda[0].item()**(1. / norm_type)
+            total_norm = total_norm_cuda**(1. / norm_type)
 
-        if total_norm == float('inf') or total_norm == -float('inf') or total_norm != total_norm:
-            total_norm = -1
+        norm_is_inf = total_norm.isinf()
+        norm_is_nan = total_norm.isnan()
+        inf_or_nan = norm_is_nan.logical_or(norm_is_inf)
+
+        err = torch.tensor(-1.0, device=self.device, dtype=torch.float)
+        total_norm = inf_or_nan * err + inf_or_nan.logical_not() * total_norm
 
         return total_norm
 
