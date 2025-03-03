@@ -272,6 +272,7 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         if not torch.cuda.is_available:
             raise SystemError("Cannot use fp16 without CUDA.")
         self.optimizer = init_optimizer
+        self.using_real_optimizer = not isinstance(self.optimizer, DummyOptim)
 
         # Load pre-built or JIT compile (un)flatten ops
         util_ops = UtilsBuilder().load()
@@ -367,7 +368,8 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         self.gradient_predivide_factor = gradient_predivide_factor
         self.postscale_gradients = postscale_gradients
         self.gradient_accumulation_steps = gradient_accumulation_steps
-        self.micro_step_id = INITIAL_MICRO_STEP_ID
+        self.micro_step_id = 0
+        self.reduce_bucket_size = int(reduce_bucket_size)
 
         if self.reduce_scatter:
             assert self.communication_data_type in (torch.float16, torch.bfloat16), f"ZeRO-3 supports only float16 or bfloat16 communication_data_type with reduce scatter enabled. Got: '{self.communication_data_type}'"
@@ -400,6 +402,7 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         self.all_reduce_print = False
 
         self.prefetch_elements = int(prefetch_bucket_size)
+        self.contiguous_gradients = contiguous_gradients
 
         # padding on each partition for alignment purposes
         self.groups_padding = []
@@ -417,40 +420,18 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         if self.swap_optimizer:
             self._configure_tensor_swapping(offload_optimizer_config, aio_config)
 
-        see_memory_usage("Before creating fp32 partitions", force=False)
-        if not isinstance(self.optimizer, DummyOptim):
-            self._create_fp32_partitions()
-        see_memory_usage("After creating fp32 partitions", force=False)
-        dist.barrier()
+        self.__params_in_ipg_bucket: List[Parameter] = []
+        self.is_gradient_accumulation_boundary: bool = True
 
-        # To support pipelined optimizer swapping
-        if not isinstance(init_optimizer, DummyOptim):
-            self._create_next_swappable_fp32_groups()
-
-        see_memory_usage("Before initializing optimizer states", force=False)
-        if not isinstance(init_optimizer, DummyOptim):
-            self.initialize_optimizer_states()
-        see_memory_usage("After initializing optimizer states", force=False)
-        dist.barrier()
-
-        if dist.get_rank() == 0:
-            logger.info(f"optimizer state initialized")
-
-        self.reduce_bucket_size = int(reduce_bucket_size)
-
-        self.reduction_event = torch.cuda.Event(enable_timing=False, blocking=False)
-
-        self.reduction_stream = torch.cuda.Stream(
-        ) if self.overlap_comm else torch.cuda.current_stream()
-        self.callback_queued = False
-        self.copy_grad_stream = torch.cuda.Stream()
+        self.__param_reduce_events: Deque[Event] = collections.deque()
+        # TODO. make this configurable via JSON
+        self.__max_param_reduce_events: int = 2
 
         self.param_dict = {}
 
         # map between param_id and bool to specify if a param is in this partition
         self.is_param_in_current_partition = {}
 
-        self.contiguous_gradients = contiguous_gradients
         self.extra_large_param_to_reduce = None
         self.grads_in_ipg_bucket = []
         self.params_in_ipg_bucket = []
@@ -483,26 +464,15 @@ class DeepSpeedZeroOptimizer_Stage3(object):
             f'Largest partitioned param numel = {largest_partitioned_param_numel}',
             force=False)
 
-        see_memory_usage(f"Before Set Grad positions", force=False)
-
         self.grad_position = {}
-        self.set_grad_positions()
-        see_memory_usage(f"Before CPU Offload initialization", force=False)
-
-        self.grads_in_partition = None
+        if self.using_real_optimizer:
+            self._setup_for_real_optimizer()
+            self.set_grad_positions()
 
         if self.offload_optimizer:
             self.accumulated_grads_in_cpu = {}
             self.norm_for_param_grads = {}
             self.local_overflow = False
-            self.temp_grad_buffer_for_gpu_offload = torch.zeros(
-                largest_partitioned_param_numel,
-                device=torch.cuda.current_device(),
-                dtype=self.dtype)
-            self.temp_grad_gpu_buffer = torch.zeros(largest_partitioned_param_numel,
-                                                    device=torch.cuda.current_device(),
-                                                    dtype=self.dtype)
-        see_memory_usage(f"After CPU Offload initialization", force=False)
 
         # stores if a partition has been reduced in this step
         self.is_partition_reduced = {}
@@ -536,7 +506,52 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         self.debug_fp16_grads = [{} for _ in self.fp16_groups]
 
         if dist.get_rank(group=self.dp_process_group) == 0:
-            see_memory_usage(f"After initializing ZeRO optimizer", force=False)
+            see_memory_usage(f"After initializing ZeRO optimizer", force=True)
+
+    def _setup_for_real_optimizer(self):
+        see_memory_usage("Before creating fp32 partitions", force=False)
+        self._create_fp32_partitions()
+        see_memory_usage("After creating fp32 partitions", force=False)
+        dist.barrier()
+
+        # To support pipelined optimizer swapping
+        self._create_next_swappable_fp32_groups()
+
+        see_memory_usage("Before initializing optimizer states", force=False)
+
+        self.initialize_optimizer_states()
+        see_memory_usage("After initializing optimizer states", force=False)
+        dist.barrier()
+
+        if dist.get_rank() == 0:
+            logger.info(f"optimizer state initialized")
+
+        # IPG
+        if self.contiguous_gradients:
+            self.__ipg_bucket_flat_buffer: Tensor = torch.empty(
+                self.reduce_bucket_size,
+                dtype=self.dtype,
+                device=torch.cuda.current_device())
+
+        grad_partitions_flat_buffer = None
+        self.__param_id_to_grad_partition: Dict[int, Tensor] = {}
+
+        all_params = list(itertools.chain.from_iterable(self.fp16_groups))
+
+        grad_partitions_flat_buffer: Tensor = torch.zeros(
+            sum(p.ds_tensor.ds_numel for p in all_params),
+            dtype=self.dtype,
+            device=self.device,
+            pin_memory=self.offload_optimizer_pin_memory)
+
+        offset = 0
+        for param in all_params:
+            self.__param_id_to_grad_partition[
+                param.ds_id] = grad_partitions_flat_buffer.narrow(
+                    0,
+                    offset,
+                    param.ds_tensor.numel())
+            offset += param.ds_tensor.numel()
 
     # TODO. factor out to a utility outside of stage3
     @staticmethod
@@ -602,7 +617,7 @@ class DeepSpeedZeroOptimizer_Stage3(object):
 
         ###################### offload param setup ##################################
         if offload_param_config is not None:
-            if not isinstance(self.optimizer, DummyOptim):
+            if self.using_real_optimizer:
                 assert self.offload_optimizer, "parameter offload is only available with optimizer state offload"
             self.offload_param = True
             self.offload_param_pin_memory = offload_param_config[
@@ -1191,8 +1206,12 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         global FWD_MODULE_STACK
         FWD_MODULE_STACK.append(sub_module)
 
-        self._get_param_coordinator(
-            training=sub_module.training).fetch_sub_module(sub_module)
+        param_coordinator = self._get_param_coordinator(training=sub_module.training)
+        param_coordinator.trace_prologue(sub_module)
+        if param_coordinator.is_record_trace():
+            param_coordinator.record_module(sub_module)
+        param_coordinator.fetch_sub_module(sub_module)
+
         see_memory_usage(
             f"Before sub module function {sub_module.__class__.__name__} after fetch",
             force=False)
@@ -1213,9 +1232,8 @@ class DeepSpeedZeroOptimizer_Stage3(object):
             force=False)
 
         param_coordinator = self._get_param_coordinator(training=sub_module.training)
-        if not param_coordinator.trace_complete:
-            param_coordinator.record_trace(sub_module)
-
+        if param_coordinator.is_record_trace():
+            param_coordinator.record_parameters(sub_module)
         param_coordinator.release_sub_module(sub_module)
 
         see_memory_usage(
@@ -1224,8 +1242,10 @@ class DeepSpeedZeroOptimizer_Stage3(object):
 
     def pre_sub_module_backward_function(self, sub_module):
         param_coordinator = self._get_param_coordinator(training=sub_module.training)
-        if not param_coordinator.trace_complete:
-            param_coordinator.record_trace(sub_module)
+        param_coordinator.trace_prologue(sub_module)
+        if param_coordinator.is_record_trace():
+            param_coordinator.record_module(sub_module)
+            param_coordinator.record_parameters(sub_module)
         param_coordinator.fetch_sub_module(sub_module)
 
         self.param_coordinator.prefetch_next_sub_modules(sub_module,
@@ -1248,15 +1268,10 @@ class DeepSpeedZeroOptimizer_Stage3(object):
     def _release_ipg_buffers(self):
         if self.contiguous_gradients:
             self.ipg_buffer = None
-            if not self.offload_optimizer and self.is_gradient_accumulation_boundary:
-                self.grads_in_partition = None
-
-            self.grads_in_partition_offset = 0
 
     def _optimizer_step(self, sub_group_id):
         param_group_id = self.sub_group_to_group_id[sub_group_id]
         fp32_param = self.fp32_partitioned_groups_flat[sub_group_id]
-        fp16_param = self.fp16_partitioned_groups_flat[sub_group_id]
         self.optimizer.param_groups[param_group_id]['params'] = [fp32_param]
 
         self.optimizer.step()
@@ -1656,6 +1671,7 @@ class DeepSpeedZeroOptimizer_Stage3(object):
                 ]
                 #print(f"param id {param_id} i:{i}, ds_tensor {num_elements} numel {param.numel()}")
                 current_offset += num_elements
+        see_memory_usage(f"After Set Grad positions", force=False)
 
     def async_accumulate_grad_in_cpu_via_gpu(self, param, acc_grad_cpu_partition):
 
