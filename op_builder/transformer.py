@@ -32,5 +32,4 @@ class TransformerBuilder(CUDAOpBuilder):
         ]
 
     def include_paths(self):
-        includes = ['csrc/includes']
-        return includes
+        return ['csrc/includes']
