@@ -539,6 +539,17 @@ class OpBuilder(ABC):
             torch_arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST")
             os.environ["TORCH_CUDA_ARCH_LIST"] = ""
 
+        nvcc_args = self.strip_empty_entries(self.nvcc_args())
+        cxx_args = self.strip_empty_entries(self.cxx_args())
+
+        if isinstance(self, CUDAOpBuilder):
+            if not self.build_for_cpu and self.enable_bf16:
+                cxx_args.append("-DBF16_AVAILABLE")
+                nvcc_args.append("-DBF16_AVAILABLE")
+
+        if self.is_rocm_pytorch():
+            cxx_args.append("-D__HIP_PLATFORM_AMD__=1")
+
         op_module = load(name=self.name,
                          sources=self.strip_empty_entries(sources),
                          extra_include_paths=self.strip_empty_entries(extra_include_paths),
