@@ -6,10 +6,8 @@
 import sys
 import gc
 import collections
-import itertools
-from typing import Deque, Dict, Set, Tuple, Container
+from typing import Deque, Dict, Tuple
 from contextlib import contextmanager
-
 from deepspeed import comm as dist
 from deepspeed.utils import groups, z3_leaf_parameter
 
@@ -102,7 +100,7 @@ def unwrap_model_for_generation(model):
             optimizer_offload = model.optimizer.parameter_offload
         elif model.optimizer is not None:
             optimizer_offload = model.optimizer
-        optimizer_offload._register_deepspeed_module(optimizer_offload.module)
+        optimizer_offload._register_hooks_recursively(optimizer_offload.module)
     return
 
 
