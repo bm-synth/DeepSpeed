@@ -132,9 +132,7 @@ void launch_dequantize(T* output,
     hidden_dim /= 4;
     unsigned thd_cnt = (hidden_dim - 1) / threads + 1;
 
-    assert(output_size % groups == 0);
-    unsigned blocks = output_size / groups;
-
+    unsigned blocks = (output_size + hid_cnt * groups - 1) / (hid_cnt * groups);
     dim3 block_dims(threads);
     dim3 grid_dims(groups, blocks);
 
