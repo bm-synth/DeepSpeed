@@ -353,6 +353,13 @@ class LmHeadLinearAllreduce(LinearAllreduce):
             output += self.bias
         return output
 
+    def extra_repr(self):
+        out_features, in_features = self.weight.shape if self.weight is not None else (None, None)
+        dtype = self.weight.dtype if self.weight is not None else None
+        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
+            in_features, out_features, self.bias is not None, dtype)
+        return extra_repr_str
+
 
 class LmHeadLinearAllreduce(nn.Module):
 
@@ -382,6 +389,13 @@ class LmHeadLinearAllreduce(nn.Module):
             output += self.bias
         return output
 
+    def extra_repr(self):
+        out_features, in_features = self.weight.shape if self.weight is not None else (None, None)
+        dtype = self.weight.dtype if self.weight is not None else None
+        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
+            in_features, out_features, self.bias is not None, dtype)
+        return extra_repr_str
+
 
 class LinearLayer(nn.Module):
 
@@ -405,6 +419,13 @@ class LinearLayer(nn.Module):
         if self.bias is not None:
             output += self.bias
         return output
+
+    def extra_repr(self):
+        out_features, in_features = self.weight.shape
+        dtype = self.weight.dtype
+        extra_repr_str = "in_features={}, out_features={}, bias={}, dtype={}".format(
+            in_features, out_features, self.bias is not None, dtype)
+        return extra_repr_str
 
 
 class Normalize(nn.Module):
