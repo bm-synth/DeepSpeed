@@ -14,7 +14,6 @@ import os
 import psutil
 import gc
 from math import sqrt
-from bisect import bisect_left
 from packaging import version as pkg_version
 
 import torch
@@ -610,13 +609,19 @@ def partition_balanced(weights, num_parts):
     prefix_sum = np.zeros((n + 1))
     prefix_sum[1:] = np.cumsum(weights)
 
-        # Find the end index of partition p
-        parts[p] = bisect_left(weights, bsum, lo=step - chunksize, hi=min(step, num_items))
-        # Nothing more to partition, return early
-        if parts[p] == num_items:
-            # See if the current partition is overweight.
-            part_size = weights[-1] - weights[parts[p - 1]]
-            return parts, part_size < bottleneck
+    dp_max[0, 0] = 0
+    dp_cost[0, 0] = 0
+    for i in range(1, n + 1):
+        for j in range(1, min(i, m) + 1):
+            for k in range(i):
+                max_sum = max(dp_max[k, j - 1], prefix_sum[i] - prefix_sum[k])
+                min_sum = min(dp_min[k, j - 1], prefix_sum[i] - prefix_sum[k])
+                cost = max_sum - min_sum
+                if dp_cost[i, j] >= cost:
+                    dp_cost[i, j] = cost
+                    dp_max[i, j] = max_sum
+                    dp_min[i, j] = min_sum
+                    position[i, j] = k
 
     parts = [n]
     for i in reversed(range(1, m + 1)):
