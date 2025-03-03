@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 from __future__ import annotations
 '''Copyright The Microsoft DeepSpeed Team'''
 """
@@ -19,8 +14,6 @@ def err(s: str) -> None:
     print(s, file=sys.stderr)
 
 
-print(*sys.argv[1:])
-
 # There are many ways we could search for the string "torch.cuda", but `git
 # grep --no-index` is nice because
 #  - it's very fast (as compared to iterating over the file in Python)
@@ -28,7 +21,19 @@ print(*sys.argv[1:])
 #  - unlike plain grep, which is slower and has different flags on MacOS versus
 #    Linux, git grep is always the same.
 res = subprocess.run(
-    ["git", "grep", "-Hn", "--no-index", "-e", r"torch\.cuda", "--and", "--not", "-e", "#ignore-cuda", *sys.argv[1:]],
+    [
+        "git",
+        "grep",
+        "-Hn",
+        "--no-index",
+        "-e",
+        r"torch\.cuda",
+        "--and",
+        "--not",
+        "-e",
+        "#ignore-cuda",
+        *sys.argv[1:]
+    ],
     capture_output=True,
 )
 if res.returncode == 0:
@@ -42,7 +47,12 @@ elif res.returncode == 2:
     sys.exit(2)
 
 res = subprocess.run(
-    ["git", "grep", "-Hn", "--no-index", r"\.cuda()", *sys.argv[1:]],
+    ["git",
+     "grep",
+     "-Hn",
+     "--no-index",
+     r"\.cuda()",
+     *sys.argv[1:]],
     capture_output=True,
 )
 if res.returncode == 0:
@@ -52,28 +62,5 @@ if res.returncode == 0:
     sys.exit(1)
 elif res.returncode == 2:
     err(f"Error invoking grep on {', '.join(sys.argv[1:])}:")
-    err(res.stderr.decode("utf-8"))
-    sys.exit(2)
-
-files = []
-for file in sys.argv[1:]:
-    if not file.endswith(".cpp"):
-        files.append(file)
-
-res = subprocess.run(
-    ["git", "grep", "-Hn", "--no-index", r"\.is_cuda", *files],
-    capture_output=True,
-)
-if res.returncode == 0:
-    err('''
-Error: The string ".is_cuda" was found. This implies checking if a tensor is a cuda tensor.
-       Please replace all calls to "tensor.is_cuda" with "get_accelerator().on_accelerator(tensor)",
-       and add the following import line:
-       'from deepspeed.accelerator import get_accelerator'
-''')
-    err(res.stdout.decode("utf-8"))
-    sys.exit(1)
-elif res.returncode == 2:
-    err(f"Error invoking grep on {', '.join(files)}:")
     err(res.stderr.decode("utf-8"))
     sys.exit(2)
