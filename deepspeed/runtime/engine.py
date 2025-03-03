@@ -824,17 +824,8 @@ class DeepSpeedEngine(Module):
     def zero_quantized_weights(self):
         return self._config.zero_config.zero_quantized_weights
 
-    def zero_quantized_nontrainable_weights(self):
-        return self._config.zero_config.zero_quantized_nontrainable_weights
-
     def zero_quantized_gradients(self):
         return self._config.zero_config.zero_quantized_gradients
-
-    def zeropp_loco_param(self):
-        return self._config.zero_config.zeropp_loco_param
-
-    def zero_log_trace_cache_warnings(self):
-        return self._config.zero_config.log_trace_cache_warnings
 
     def dump_state(self):
         return self._config.dump_state
@@ -1163,8 +1154,7 @@ class DeepSpeedEngine(Module):
         # Query the groups module to get information about various parallel groups
         self.local_all_to_all_group = None
         if self.zero_quantized_gradients():
-            message = "Using LoCo quantized gradients" if self.zeropp_loco_param() else "Using quantized gradients"
-            log_dist(message, ranks=[0])
+            log_dist("Using quantized gradients", ranks=[0])
             self.local_all_to_all_group = groups._get_local_all_to_all_group()
         self.data_parallel_group = groups._get_data_parallel_group()
         self.dp_world_size = groups._get_data_parallel_world_size()
@@ -1562,6 +1552,10 @@ class DeepSpeedEngine(Module):
             assert not self.has_moe_layers, "MoE not supported with Stage 3"
             if isinstance(optimizer, DummyOptim):
                 log_dist("Creating ZeRO Offload", ranks=[0])
+                zpg = groups._get_zero_param_intra_parallel_group()
+                if self.zero_hpz_partition_size() > 1 and zpg is None:
+                    self._set_zero_group_parallelism()
+                    zpg = groups._get_zero_param_intra_parallel_group()
                 optimizer = DeepSpeedZeRoOffload(self.module,
                                                  timers=timers,
                                                  ds_config=self.config,
@@ -1572,7 +1566,9 @@ class DeepSpeedEngine(Module):
                                                  param_persistence_threshold=self.zero_param_persistence_threshold(),
                                                  model_persistence_threshold=self.zero_model_persistence_threshold(),
                                                  offload_param_config=self.zero_offload_param(),
-                                                 mpu=self.mpu)
+                                                 mpu=self.mpu,
+                                                 zero_param_parallel_group=zpg,
+                                                 zero_quantized_weights=self.zero_quantized_weights())
             else:
                 log_dist(
                     f'Creating fp16 ZeRO stage {zero_stage} optimizer,'
@@ -1601,6 +1597,7 @@ class DeepSpeedEngine(Module):
                     param_persistence_threshold=self.zero_param_persistence_threshold(),
                     model_persistence_threshold=self.zero_model_persistence_threshold(),
                     dp_process_group=self.data_parallel_group,
+                    all2all_process_group=self.local_all_to_all_group,
                     reduce_scatter=self.zero_reduce_scatter(),
                     overlap_comm=self.zero_overlap_comm(),
                     offload_optimizer_config=self.zero_offload_optimizer(),
@@ -1611,7 +1608,9 @@ class DeepSpeedEngine(Module):
                     gradient_predivide_factor=self.gradient_predivide_factor(),
                     gradient_accumulation_steps=self.gradient_accumulation_steps(),
                     aio_config=self.aio_config(),
-                    communication_data_type=self.communication_data_type)
+                    communication_data_type=self.communication_data_type,
+                    zero_hpz_partition_size=self.zero_hpz_partition_size(),
+                    zero_quantized_weights=self.zero_quantized_weights())
 
         else:
             raise NotImplementedError("ZeRO stage {} not implemented".format(zero_stage))

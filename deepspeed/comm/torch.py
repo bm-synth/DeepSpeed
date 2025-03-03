@@ -9,8 +9,6 @@ from deepspeed import utils
 from .utils import *
 from .backend import *
 from .comm import *
-from ..runtime import compiler
-from deepspeed.utils.torch import required_torch_version
 import os
 
 DS_COMM_ALL_GATHER_OFF = False
@@ -20,19 +18,23 @@ DS_COMM_ALL_REDUCE_OFF = False
 DS_COMM_REDUCE_OFF = False
 
 
-def disable_compiler_collective(func):
-    if required_torch_version(min_version=2.3):
-        return func
-    return compiler.disable(func)
+def is_torch_two():
+    TORCH_MAJOR = int(torch.__version__.split('.')[0])
+    if TORCH_MAJOR >= 2:
+        return True
+    else:
+        return False
 
 
-def build_shm_op():
-    builder = get_accelerator().create_op_builder("ShareMemCommBuilder")
-    if builder is None or not deepspeed.ops.__compatible_ops__[builder.NAME]:
-        return None
-    shm_cpp_module = builder.load()
-    print(f'DeepSpeed {builder.absolute_name()} built successfully')
-    return shm_cpp_module
+def torch_ver_ge_1_13():
+    if is_torch_two():
+        return True
+    else:
+        TORCH_MAJOR = int(torch.__version__.split('.')[0])
+        assert TORCH_MAJOR == 1
+
+        TORCH_MINOR = int(torch.__version__.split('.')[1])
+        return TORCH_MINOR >= 13
 
 
 def has_coalescing_manager():
@@ -41,14 +43,12 @@ def has_coalescing_manager():
 
 
 def has_all_reduce_coalesced():
-    return hasattr(torch.distributed, "all_reduce_coalesced") and required_torch_version(min_version=1.13)
+    return hasattr(torch.distributed, "all_reduce_coalesced") and torch_ver_ge_1_13()
 
 
-def get_coalescing_manager(group, device, reqs, async_op):
-    if required_torch_version(min_version=2.0, max_version=2.0):
+def get_coalescing_manager(group, device, reqs):
+    if is_torch_two():
         return torch.distributed.distributed_c10d._coalescing_manager(group, device=device, reqs=reqs)
-    elif required_torch_version(min_version=2.1):
-        return torch.distributed.distributed_c10d._coalescing_manager(group, device=device, async_ops=async_op)
     else:
         return torch.distributed.distributed_c10d._coalescing_manager(group, reqs)
 
@@ -91,43 +91,6 @@ class Noop:
 
     def wait(self):
         return None
-
-import torch
-
-
-def is_torch_two():
-    TORCH_MAJOR = int(torch.__version__.split('.')[0])
-    if TORCH_MAJOR >= 2:
-        return True
-    else:
-        return False
-
-
-def torch_ver_ge_1_13():
-    if is_torch_two():
-        return True
-    else:
-        TORCH_MAJOR = int(torch.__version__.split('.')[0])
-        assert TORCH_MAJOR == 1
-
-        TORCH_MINOR = int(torch.__version__.split('.')[1])
-        return TORCH_MINOR >= 13
-
-
-def has_coalescing_manager():
-    has_c10d = hasattr(torch.distributed, 'distributed_c10d')
-    return has_c10d and hasattr(torch.distributed.distributed_c10d, '_coalescing_manager')
-
-
-def has_all_reduce_coalesced():
-    return hasattr(torch.distributed, "all_reduce_coalesced") and torch_ver_ge_1_13()
-
-
-def get_coalescing_manager(group, device, reqs):
-    if is_torch_two():
-        return torch.distributed.distributed_c10d._coalescing_manager(group, device=device, reqs=reqs)
-    else:
-        return torch.distributed.distributed_c10d._coalescing_manager(group, reqs)
 
 
 class TorchBackend(Backend):
@@ -199,20 +162,39 @@ class TorchBackend(Backend):
         return torch.distributed.all_reduce_coalesced(tensors=tensors, op=op, group=group, async_op=async_op)
 
     def reduce(self, tensor, dst, op=ReduceOp.SUM, group=None, async_op=False):
+        if DS_COMM_REDUCE_OFF:
+            if int(os.getenv('RANK', '0')) == 0:
+                utils.logger.warning("REDUCE is OFF")
+            return Noop()
         return torch.distributed.reduce(tensor=tensor, dst=dst, op=self._reduce_op(op), group=group, async_op=async_op)
 
     def reduce_scatter(self, output, input_list, op=ReduceOp.SUM, group=None, async_op=False):
-        return torch.distributed.reduce_scatter(output=output,
-                                                input_list=input_list,
-                                                op=self._reduce_op(op),
-                                                group=group,
-                                                async_op=async_op)
+        if DS_COMM_REDUCE_SCATTER_OFF:
+            if int(os.getenv('RANK', '0')) == 0:
+                utils.logger.warning("REDUCE SCATTER  is OFF")
+            return Noop()
+        else:
+            return torch.distributed.reduce_scatter(output=output,
+                                                    input_list=input_list,
+                                                    op=self._reduce_op(op),
+                                                    group=group,
+                                                    async_op=async_op)
 
     def broadcast(self, tensor, src, group=None, async_op=False):
-        return torch.distributed.broadcast(tensor=tensor, src=src, group=group, async_op=async_op)
+        if DS_COMM_BROADCAST_OFF:
+            if int(os.getenv('RANK', '0')) == 0:
+                utils.logger.warning("BROADCAST  is OFF")
+            return Noop()
+        else:
+            return torch.distributed.broadcast(tensor=tensor, src=src, group=group, async_op=async_op)
 
     def all_gather(self, tensor_list, tensor, group=None, async_op=False):
-        return torch.distributed.all_gather(tensor_list=tensor_list, tensor=tensor, group=group, async_op=async_op)
+        if DS_COMM_ALL_GATHER_OFF:
+            if int(os.getenv('RANK', '0')) == 0:
+                utils.logger.warning("All Gather is OFF")
+            return Noop()
+        else:
+            return torch.distributed.all_gather(tensor_list=tensor_list, tensor=tensor, group=group, async_op=async_op)
 
     def all_gather_into_tensor(self, output_tensor, input_tensor, group=None, async_op=False):
         if self.has_all_gather_into_tensor():
@@ -220,11 +202,23 @@ class TorchBackend(Backend):
                                             input_tensor=input_tensor,
                                             group=group,
                                             async_op=async_op)
+
+    def all_gather_base(self, output_tensor, input_tensor, group=None, async_op=False):
+        if DS_COMM_ALL_GATHER_OFF:
+            if int(os.getenv('RANK', '0')) == 0:
+                utils.logger.warning("All Gather is OFF")
+            return Noop()
         else:
-            utils.logger.warning("unable to find torch.distributed._all_gather_base. will fall back to "
-                                 "torch.distributed.all_gather which will result in suboptimal performance. "
-                                 "please consider upgrading your pytorch installation.")
-            pass
+            if self.has_allgather_base:
+                return torch.distributed.distributed_c10d._all_gather_base(output_tensor=output_tensor,
+                                                                           input_tensor=input_tensor,
+                                                                           group=group,
+                                                                           async_op=async_op)
+            else:
+                utils.logger.warning("unable to find torch.distributed._all_gather_base. will fall back to "
+                                     "torch.distributed.reduce_scatter which will result in suboptimal performance. "
+                                     "please consider upgrading your pytorch installation.")
+                pass
 
     def all_gather_coalesced(self, output_tensors, input_tensors, group=None, async_op=False):
         """"""

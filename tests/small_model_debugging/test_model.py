@@ -25,8 +25,9 @@ class SimpleModel(torch.nn.Module):
 
     def forward(self, x, y):
         hidden = x
-        hidden = self.linear(hidden)
-        return self.cross_entropy_loss(hidden, y)
+        hidden1 = self.linear(hidden)
+        hidden2 = self.linear(hidden1)
+        return self.cross_entropy_loss(hidden2, y)
 
 
 def create_config_from_dict(tmpdir, config_dict):
@@ -87,12 +88,15 @@ config_dict = {
     "zero_optimization": {
         "stage": 0,
         "reduce_bucket_size": 20,
-        "stage3_model_persistence_threshold": 10
+        "zero_hpz_partition_size": 1,
+        "reduce_scatter": True,
+        "zero_quantized_weights": False,
+        "zero_quantized_gradients": False
     }
 }
 #        "initial_scale_power": 15
 args = get_args('/tmp/', config_dict)
-hidden_dim = 32
+hidden_dim = 4 * 1024
 
 model = SimpleModel(hidden_dim, empty_grad=False)
 
@@ -108,7 +112,7 @@ def print_params(tag, model):
             print0("{} {}:{}".format(tag, n, p))
 
 
-data_loader = get_data_loader(model=model, total_samples=1000, hidden_dim=hidden_dim, device=model.device)
+data_loader = get_data_loader(model=model, total_samples=256, hidden_dim=hidden_dim, device=model.device)
 #print_params('pre-train', model)
 
 for n, batch in enumerate(data_loader):
