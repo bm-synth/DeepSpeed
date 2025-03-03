@@ -1,8 +1,7 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
 """
+Copyright 2020 The Microsoft DeepSpeed Team
+Licensed under the MIT license.
+
 Functionality of swapping optimizer tensors to/from (NVMe) storage devices.
 """
 
@@ -21,7 +20,10 @@ def pre_basic(args, tid, read_op):
 
     task_log(tid, f'Allocate tensor of size {num_bytes} bytes')
     buffer = torch.empty(num_bytes, dtype=torch.uint8, device='cpu').pin_memory()
-    task_log(tid, f'{io_string} file {file} of size {num_bytes} bytes from buffer on device {buffer.device}')
+    task_log(
+        tid,
+        f'{io_string} file {file} of size {num_bytes} bytes from buffer on device {buffer.device}'
+    )
 
     ctxt = {}
     ctxt['file'] = file
@@ -54,8 +56,13 @@ def post_basic(pool_params):
 def main_basic_read(pool_params):
     args, tid, ctxt = pool_params
     start_time = time.time()
-    AsyncIOBuilder().load().aio_read(ctxt['buffer'], ctxt['file'], args.block_size, args.queue_depth,
-                                     args.single_submit, not args.sequential_requests, args.validate)
+    AsyncIOBuilder().load().aio_read(ctxt['buffer'],
+                                     ctxt['file'],
+                                     args.block_size,
+                                     args.queue_depth,
+                                     args.single_submit,
+                                     args.overlap_events,
+                                     args.validate)
     end_time = time.time()
     ctxt['elapsed_sec'] += end_time - start_time
 
@@ -65,8 +72,13 @@ def main_basic_read(pool_params):
 def main_basic_write(pool_params):
     args, tid, ctxt = pool_params
     start_time = time.time()
-    AsyncIOBuilder().load().aio_write(ctxt['buffer'], ctxt['file'], args.block_size, args.queue_depth,
-                                      args.single_submit, not args.sequential_requests, args.validate)
+    AsyncIOBuilder().load().aio_write(ctxt['buffer'],
+                                      ctxt['file'],
+                                      args.block_size,
+                                      args.queue_depth,
+                                      args.single_submit,
+                                      args.overlap_events,
+                                      args.validate)
     end_time = time.time()
     ctxt['elapsed_sec'] += end_time - start_time
 
@@ -89,17 +101,16 @@ def get_schedule(args, read_op):
 
 def _aio_handle_tasklet(pool_params):
     args, tid, read_op = pool_params
-    num_processes = len(args.mapping_dict)
 
     # Create schedule
     schedule = get_schedule(args, read_op)
     task_log(tid, f'schedule = {schedule}')
-    task_barrier(aio_barrier, num_processes)
+    task_barrier(aio_barrier, args.threads)
 
     # Run pre task
     task_log(tid, f'running pre-task')
     ctxt = schedule["pre"]((args, tid))
-    task_barrier(aio_barrier, num_processes)
+    task_barrier(aio_barrier, args.threads)
 
     # Run main tasks in a loop
     ctxt["main_task_sec"] = 0
@@ -107,28 +118,27 @@ def _aio_handle_tasklet(pool_params):
         task_log(tid, f'running main task {i}')
         start_time = time.time()
         ctxt = schedule["main"]((args, tid, ctxt))
-        task_barrier(aio_barrier, num_processes)
+        task_barrier(aio_barrier, args.threads)
         stop_time = time.time()
         ctxt["main_task_sec"] += stop_time - start_time
 
     # Run post task
     task_log(tid, f'running post-task')
     ctxt = schedule["post"]((args, tid, ctxt))
-    task_barrier(aio_barrier, num_processes)
+    task_barrier(aio_barrier, args.threads)
 
     return ctxt["main_task_sec"], ctxt["elapsed_sec"], ctxt["num_bytes"] * args.loops
 
 
-def _init_tasklet(b):
+def _init_takslet(b):
     global aio_barrier
     aio_barrier = b
 
 
 def aio_basic_multiprocessing(args, read_op):
-    num_processes = len(args.mapping_dict)
-    b = Barrier(num_processes)
-    pool_params = [(args, p, read_op) for p in range(num_processes)]
-    with Pool(processes=num_processes, initializer=_init_tasklet, initargs=(b, )) as p:
+    b = Barrier(args.threads)
+    pool_params = [(args, p, read_op) for p in range(args.threads)]
+    with Pool(processes=args.threads, initializer=_init_takslet, initargs=(b, )) as p:
         pool_results = p.map(_aio_handle_tasklet, pool_params)
 
     report_results(args, read_op, pool_results)
