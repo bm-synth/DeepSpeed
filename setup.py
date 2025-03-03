@@ -24,6 +24,9 @@ import subprocess
 import warnings
 import cpufeature
 from setuptools import setup, find_packages
+from setuptools.command import egg_info
+import time
+import typing
 
 torch_available = True
 try:
@@ -128,33 +131,14 @@ if torch_available and not torch.cuda.is_available():
     print("[WARNING] Torch did not find cuda available, if cross-compiling or running with cpu only "
           "you can ignore this message. Adding compute capability for Pascal, Volta, and Turing "
           "(compute capabilities 6.0, 6.1, 6.2)")
-    if os.environ.get("TORCH_CUDA_ARCH_LIST", None) is None:
-        os.environ["TORCH_CUDA_ARCH_LIST"] = get_default_compute_capatabilities()
-
-# Fix from apex that might be relevant for us as well, related to https://github.com/NVIDIA/apex/issues/456
-version_ge_1_1 = []
-if (TORCH_MAJOR > 1) or (TORCH_MAJOR == 1 and TORCH_MINOR > 0):
-    version_ge_1_1 = ['-DVERSION_GE_1_1']
-version_ge_1_3 = []
-if (TORCH_MAJOR > 1) or (TORCH_MAJOR == 1 and TORCH_MINOR > 2):
-    version_ge_1_3 = ['-DVERSION_GE_1_3']
-version_ge_1_5 = []
-if (TORCH_MAJOR > 1) or (TORCH_MAJOR == 1 and TORCH_MINOR > 4):
-    version_ge_1_5 = ['-DVERSION_GE_1_5']
-version_dependent_macros = version_ge_1_1 + version_ge_1_3 + version_ge_1_5
-
-cpu_info = cpufeature.CPUFeature
-SIMD_WIDTH = ''
-if cpu_info['AVX512f'] and DS_BUILD_AVX512:
-    SIMD_WIDTH = '-D__AVX512__'
-elif cpu_info['AVX2']:
-    SIMD_WIDTH = '-D__AVX256__'
-print("SIMD_WIDTH = ", SIMD_WIDTH)
+    if not is_env_set("TORCH_CUDA_ARCH_LIST"):
+        os.environ["TORCH_CUDA_ARCH_LIST"] = get_default_compute_capabilities()
 
 ext_modules = []
 
-# Default to pre-install kernels to false so we rely on JIT
-BUILD_OP_DEFAULT = int(os.environ.get('DS_BUILD_OPS', 0))
+# Default to pre-install kernels to false so we rely on JIT on Linux, opposite on Windows.
+BUILD_OP_PLATFORM = 1 if sys.platform == "win32" else 0
+BUILD_OP_DEFAULT = int(get_env_if_set('DS_BUILD_OPS', BUILD_OP_PLATFORM))
 print(f"DS_BUILD_OPS={BUILD_OP_DEFAULT}")
 
 if BUILD_OP_DEFAULT:
@@ -181,7 +165,7 @@ def op_envvar(op_name):
 
 def op_enabled(op_name):
     env_var = op_envvar(op_name)
-    return int(os.environ.get(env_var, BUILD_OP_DEFAULT))
+    return int(get_env_if_set(env_var, BUILD_OP_DEFAULT))
 
     command_status = list(map(command_exists, required_commands))
     if not all(command_status):
@@ -216,7 +200,7 @@ for op_name, builder in ALL_OPS.items():
     # If op is requested but not available, throw an error.
     if op_enabled(op_name) and not op_compatible:
         env_var = op_envvar(op_name)
-        if env_var not in os.environ:
+        if not is_env_set(env_var):
             builder.warning(f"One can disable {op_name} with {env_var}=0")
         abort(f"Unable to pre-compile {op_name}")
 
@@ -235,11 +219,15 @@ print(f'Install Ops={install_ops}')
 # Write out version/git info.
 git_hash_cmd = "git rev-parse --short HEAD"
 git_branch_cmd = "git rev-parse --abbrev-ref HEAD"
-if command_exists('git'):
-    result = subprocess.check_output(git_hash_cmd, shell=True)
-    git_hash = result.decode('utf-8').strip()
-    result = subprocess.check_output(git_branch_cmd, shell=True)
-    git_branch = result.decode('utf-8').strip()
+if command_exists('git') and not is_env_set('DS_BUILD_STRING'):
+    try:
+        result = subprocess.check_output(git_hash_cmd, shell=True)
+        git_hash = result.decode('utf-8').strip()
+        result = subprocess.check_output(git_branch_cmd, shell=True)
+        git_branch = result.decode('utf-8').strip()
+    except subprocess.CalledProcessError:
+        git_hash = "unknown"
+        git_branch = "unknown"
 else:
     git_hash = "unknown"
     git_branch = "unknown"
@@ -266,11 +254,11 @@ version_str = open('version.txt', 'r').read().strip()
 # Example: DS_BUILD_STRING=".dev20201022" python setup.py sdist bdist_wheel.
 
 # Building wheel for distribution, update version file.
-if 'DS_BUILD_STRING' in os.environ:
+if is_env_set('DS_BUILD_STRING'):
     # Build string env specified, probably building for distribution.
     with open('build.txt', 'w') as fd:
-        fd.write(os.environ.get('DS_BUILD_STRING'))
-    version_str += os.environ.get('DS_BUILD_STRING')
+        fd.write(os.environ['DS_BUILD_STRING'])
+    version_str += os.environ['DS_BUILD_STRING']
 elif os.path.isfile('build.txt'):
     # build.txt exists, probably installing from distribution.
     with open('build.txt', 'r') as fd:
