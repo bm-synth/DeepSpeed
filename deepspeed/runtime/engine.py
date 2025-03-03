@@ -1086,7 +1086,7 @@ class DeepSpeedEngine(Module):
             self.__check_params(self.module, torch.float)
 
         # zero.Init() handles device placement of model
-        if not (self.dont_change_device or is_zero3_model):
+        if not self.dont_change_device:
             self.module.to(self.device)
 
         # MoE related initialization
@@ -1178,7 +1178,7 @@ class DeepSpeedEngine(Module):
             self.communication_data_type = self._config.seq_parallel_communication_data_type
             self.seq_parallel_group = groups._get_sequence_parallel_group()
 
-        if not (self.amp_enabled() or is_zero3_model):
+        if not self.amp_enabled():
             self._broadcast_model()
 
     # check if parameters are duplicated in optimizer param_groups
