@@ -6,10 +6,6 @@
 import torch
 import time
 import os
-import deepspeed
-from deepspeed import comm as dist
-from deepspeed.utils.logging import log_dist
-
 from torch.nn.modules import Module
 from packaging import version as pkg_version
 from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
@@ -17,8 +13,9 @@ from deepspeed.utils.timer import SynchronizedWallClockTimer
 from deepspeed.runtime.compiler import is_compile_supported
 from ..runtime.state_dict_factory import SDLoaderFactory
 from ..runtime.weight_quantizer import WeightQuantization
-from ..module_inject import replace_transformer_layer, generic_injection
-from ..comm.comm import init_distributed
+from ..module_inject.replace_module import replace_transformer_layer
+from ..utils import logger, init_distributed
+
 from ..pipe import PipelineModule
 from ..moe.utils import has_moe_layers
 from ..module_inject import LinearAllreduce, LinearLayer, Normalize, ReplaceWithTensorSlicing
@@ -49,19 +46,23 @@ class InferenceEngine(Module):
                  injection_dict=None,
                  replace_method='auto',
                  quantization_setting=None):
-
-    def __init__(self, model, config):
         """
         Args:
             model: torch.nn.Module
-            config: DeepSpeedInferenceConfig
+            mp_size: model-parallel size
+            mpu: model-parallel unit (used for Megatron-type models)
+            checkpoint: the json-path, showing the address of model-checkpoints
+                Example: {type: 'Megatron', 'checkpoints': [ckpt_mp0.pt, ckpt_mp1.pt], 'version': 1.0}
+            dtype: data-type by which inference is executed
+            injection_dict: the dictionary that shows the injection policy:
+                Example: {BertLayer: HFBertLayerPolicy}
+            return_tuple: if true, inference-API returns a tuple, otherwise a tensor
+            replace_method: the injection method, this can be passed as auto if no injection-policy is defined, in which case the injection is automatic based on the available policies
+            quantization_setting:
+                one of None, Tuple(mlp_extra_grouping, quantize_groups), quantize_groups
         """
-        global DS_INFERENCE_ENABLED
-        DS_INFERENCE_ENABLED = True
 
         super().__init__()
-        if DeepSpeedTransformerInference.workspace is not None:
-            self.destroy()
 
         self.module = model
         self._config = config
@@ -90,7 +91,7 @@ class InferenceEngine(Module):
         self.quantize_merge_count = 1
         self.quantization_scales = None
 
-        self._check_quantize_setting(quantization_setting)
+        self._init_quantization_setting(quantization_setting)
 
         if not self.injection_dict and config.replace_with_kernel_inject:
             # This is a hack to remove the prepare_mask function on HF side for BLOOM architecture
@@ -122,8 +123,15 @@ class InferenceEngine(Module):
             # 1. User specified Tensor Parallelism
             assert not config.replace_with_kernel_inject, "Cannot use both user specified injection policy and kernel injection"
             for client_module, injection_policy in self.injection_dict.items():
+                self._apply_injection_policy(client_module,
+                                             injection_policy,
+                                             return_tuple)
+        elif replace_method == "auto":
+            self._apply_injection_policy()
 
-        self.module.to(torch.cuda.current_device())
+        device = torch.cuda.current_device()
+        logger.info(f"Place model to device: {device}")
+        self.module.to(device)
 
         if self.mp_world_size > 1:
             self.model_orig_fwd = self.module.forward
@@ -143,46 +151,9 @@ class InferenceEngine(Module):
                         config.injection_policy_tuple = injection_policy
                     self._apply_injection_policy(config, client_module)
 
-        device = get_accelerator().current_device_name()
-        # NOTE: This check assumes a Hugging Face hierarchy for the device type i.e. module.device.type
-        is_meta_device = hasattr(self.module, "device") and self.module.device.type == 'meta'
-        if is_meta_device:
-            self.module.to_empty(device=device)
-        elif not config.keep_module_on_host:
-            self.module.to(device)
-
-        if config.tensor_parallel.tp_size > 1:
-            _rng_state = get_accelerator().get_rng_state().to(get_accelerator().current_device_name())
-            dist.broadcast(_rng_state, 0)
-            get_accelerator().set_rng_state(_rng_state.cpu())
-
-        if config.tensor_parallel.tp_size > 1:
-            assert not config.enable_cuda_graph, "Cuda graph is not supported for model parallelism"
-
-        # Check if local CUDA graphs can be created in replacement modules
-        self.local_cuda_graph = self._local_cuda_graph_used(self.module)
-        self._is_compiled = False
-
-    def destroy(self):
-        DeepSpeedTransformerInference.layer_id = 0
-        DeepSpeedSelfAttention.num_layers = 0
-        if DeepSpeedTransformerInference.workspace.is_allocated():
-            DeepSpeedTransformerInference.workspace.release_workspace()
-        DeepSpeedTransformerInference.workspace = None
-
-    def profile_model_time(self, use_cuda_events=True):
-        if not self.model_profile_enabled and not self._config.enable_cuda_graph:
-            self.module.register_forward_pre_hook(self._pre_forward_hook)
-            self.module.register_forward_hook(self._post_forward_hook)
-        self.model_profile_enabled = True
-        self.use_cuda_events = use_cuda_events
-        if self.use_cuda_events:
-            self.timers = SynchronizedWallClockTimer()
-
-    # todo: remove this once all the config dicts are centralized from top level pydantic config
-    def _get_model_config_generate(self, config):
-        # this is being passed to replace_transformer_layer(config=self.user_model_config_dict)
-        self.config = getattr(self.module, 'config', None) if config.config is None else config.config
+    def _get_model_config_generate(self):
+        self.config = getattr(self.module, 'config', None)
+        self.generate = getattr(self.module, 'generate', None)
 
     def _create_model_parallel_group(self):
         # Call the init process
@@ -198,38 +169,47 @@ class InferenceEngine(Module):
         else:
             self.mp_group = InferenceEngine.inference_mp_group
 
-    def _check_quantize_setting(self, quantization_setting):
-        self.quatize_bits = 8
+    def _init_quantization_setting(self, quantization_setting):
+        self.quantize_bits = 8
         self.mlp_extra_grouping = False
         self.quantize_groups = 1
-        if quantization_setting is None:
-            return
-        elif type(quantization_setting) is tuple:
+        if type(quantization_setting) is tuple:
             self.mlp_extra_grouping, \
             self.quantize_groups = quantization_setting
-        else:
+        elif quantization_setting is not None:
             self.quantize_groups = quantization_setting
+        logger.info(f"quantize_bits = {self.quantize_bits} "
+                    f"mlp_extra_grouping = {self.mlp_extra_grouping}, "
+                    f"quantize_groups = {self.quantize_groups}")
 
     def _validate_args(self, mpu):
-        assert isinstance(self.module, Module)
-        assert isinstance(self.mp_world_size, int)
-        assert self.mp_world_size >= 1
+        if not isinstance(self.module, Module):
+            raise ValueError(f"model must be a torch.nn.Module, got {type(self.module)}")
+        if not isinstance(self.mp_world_size, int) or self.mp_world_size < 1:
+            raise ValueError(f"mp_size must be an int >= 1, got {self.mp_world_size}")
 
         if mpu:
-            methods = [f"get_model_parallel_group"]
-            methods.extend([f"get_data_parallel_group"])
+            methods = ["get_model_parallel_group", "get_data_parallel_group"]
             for method in methods:
-                assert hasattr(mpu, method), f"mpu is missing {method}"
+                if not hasattr(mpu, method):
+                    raise ValueError(f"mpu is missing {method}")
+        if self.checkpoint is not None and not isinstance(self.checkpoint, str):
+            raise ValueError(
+                f"checkpoint must be None or a str, got {type(self.checkpoint)}")
 
-        assert self.checkpoint is None or isinstance(self.checkpoint, str)
+        supported_dtypes = [None, torch.half, torch.int8, torch.float]
+        if self.dtype not in supported_dtypes:
+            raise ValueError(
+                f"{self.dtype} not supported, valid dtype: {supported_dtypes}")
 
-        supported_dtypes = [torch.half, torch.int8, torch.float]
-        assert self.dtype is None or self.dtype in supported_dtypes, f"dtype={self.dtype} is not in the \
-            list of supported dtypes {supported_dtypes}"
+        if self.injection_dict is not None and not isinstance(self.injection_dict, dict):
+            raise ValueError(
+                f"injection_dict must be None or a dict, got: {self.injection_dict}")
 
-        assert self.injection_dict is None or isinstance(self.injection_dict, dict)
-
-    def _apply_injection_policy(self, client_module=None, injection_policy=None):
+    def _apply_injection_policy(self,
+                                client_module=None,
+                                injection_policy=None,
+                                return_tuple=True):
         replace_transformer_layer(client_module,
                                   self.module,
                                   policy=injection_policy,
@@ -247,8 +227,9 @@ class InferenceEngine(Module):
         sd_loader = SDLoaderFactory.get_sd_loader_json(load_dir)
         is_pipe_parallel = isinstance(self.module, PipelineModule)
 
-        assert (not is_pipe_parallel),\
-        'pipeline parallelism is currently not supported in inference.'
+        if is_pipe_parallel:
+            raise RuntimeError(
+                'pipeline parallelism is currently not supported in inference.')
 
         mp_rank = 0 if self.mp_group is None else dist.get_rank(group=self.mp_group)
 
