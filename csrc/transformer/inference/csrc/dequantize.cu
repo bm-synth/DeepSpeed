@@ -45,6 +45,39 @@ __global__ void dequantize_kernel(T* output,
     }
 }
 
+__global__ void dequantize_kernel(__half* output,
+                                  const int8_t* input,
+                                  const float* qscale,
+                                  unsigned output_size,
+                                  unsigned hidden_dim,
+                                  unsigned groups,
+                                  unsigned merge_count)
+{
+    unsigned merge_hidden = hidden_dim >> merge_count;
+    unsigned quantization_stride = (merge_hidden * output_size) / groups;
+
+    unsigned bid = blockIdx.x;
+    unsigned tid = threadIdx.x;
+
+    while (tid < output_size) {
+        unsigned w_index = bid / merge_hidden;
+        unsigned q_index = tid + bid * output_size;
+
+        auto q = input[q_index];
+
+        unsigned merge_hidden_total = w_index * merge_hidden;
+        unsigned scale_index =
+            ((((bid - merge_hidden_total) + tid * merge_hidden) / quantization_stride)
+             << merge_count) +
+            w_index;
+
+        float scale_data = qscale[scale_index];
+
+        output[q_index] = __float2half(scale_data * (float)q);
+        tid += blockDim.x;
+    }
+}
+
 template <typename T>
 void launch_dequantize(T* output,
                        const int8_t* input,

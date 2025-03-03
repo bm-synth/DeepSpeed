@@ -104,8 +104,6 @@ __global__ void bias_add_transform_0213(T* output,  // q
                                         int max_out_tokens,
                                         float rope_theta)
 {
-    using T2 =
-        typename std::conditional<std::is_same<T, __half>::value, __half2, __nv_bfloat162>::type;
     unsigned half_dim = (rotary_dim << 3) >> 1;
     int d0_stride = hidden_dim * seq_length;
     int d1_stride = hidden_dim;
@@ -303,8 +301,6 @@ __global__ void pad_add_transform_0213(T* output,
                                        int heads,
                                        int padded_head_size)
 {
-    using T2 =
-        typename std::conditional<std::is_same<T, __half>::value, __half2, __nv_bfloat162>::type;
     float4 ZERO;
     const T2 zero_h = conversion::to<T2>(0.f);
     T2* ZERO_h = reinterpret_cast<T2*>(&ZERO);
@@ -441,8 +437,6 @@ __global__ void bias_add_transform_0213(T* output,
                                         int heads,
                                         int head_ext)
 {
-    using T2 =
-        typename std::conditional<std::is_same<T, __half>::value, __half2, __nv_bfloat162>::type;
     int d0_stride = hidden_dim * seq_length;
     int d1_stride = hidden_dim;
     int d2_stride = hidden_dim / heads;
@@ -497,8 +491,6 @@ __global__ void bias_add_transform_0213_v2(T* output,
                                            int seq_length,
                                            int heads)
 {
-    using T2 =
-        typename std::conditional<std::is_same<T, __half>::value, __half2, __nv_bfloat162>::type;
     __shared__ float4 in_data[3072];
 
     int d0_stride = hidden_dim * seq_length;
