@@ -21,17 +21,23 @@ AUTO_MODULE_KEY = 'auto'
 class SDLoaderFactory:
     @staticmethod
     def get_sd_loader_json(json_file, checkpoint_engine):
-        with open(json_file) as f:
-            data = json.load(f)
-            sd_type = data['type']
-            ckpt_list = data['checkpoints']
-            version = data['version']
-            if 'BLOOM' in sd_type or 'Bloom' in sd_type:
-                return ckpt_list
-            return SDLoaderFactory.get_sd_loader(ckpt_list,
-                                                 checkpoint_engine,
-                                                 sd_type,
-                                                 version)
+        if isinstance(json_file, str):
+            with open(json_file) as f:
+                data = json.load(f)
+        else:
+            assert isinstance(json_file, dict)
+            data = json_file
+        sd_type = data['type']
+        ckpt_list = data['checkpoints']
+        version = data['version']
+        ckpt_type = data.get('parallelization', 'pp')
+        mp_size = data.get('mp_size', 0)
+        if sd_type.lower() in ['bloom', 'ds_model']:
+            return data
+        return SDLoaderFactory.get_sd_loader(ckpt_list,
+                                             checkpoint_engine,
+                                             sd_type,
+                                             version)
 
     @staticmethod
     def get_sd_loader(ckpt_list, checkpoint_engine, sd_type='Megatron', version=None):

@@ -30,7 +30,8 @@ class DSPolicy(ABC):
         self.is_megatron_v2 = megatron_v2
         self.mlp_act_func_type = mlp_act_func_type
         self.pre_attn_norm = pre_attn_norm
-        self.load_prefix = False
+        self.use_load_prefix = use_load_prefix
+        self.split_qkv = split_qkv
 
     def attention(self):
         """
