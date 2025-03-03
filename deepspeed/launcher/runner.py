@@ -221,20 +221,15 @@ def parse_args(args=None):
                         "arguments.")
 
     parser.add_argument('user_args', nargs=argparse.REMAINDER)
-
     parser.add_argument("--bind_cores_to_rank",
                         action="store_true",
                         help="Bind each rank to different cores of the host")
-
     parser.add_argument("--bind_core_list",
                         type=str,
                         default=None,
                         help="List of cores to bind to with comma separated list of "
                         "numbers and range. i.e. 1,3-5,7 => [1,3,4,5,7].  When not "
                         "specified, all cores on system would be used rank binding")
-
-    parser.add_argument("--ssh_port", type=int, default=None, help="SSH port to use for remote connections")
-
     return parser.parse_args(args=args)
 
 
@@ -530,6 +525,10 @@ def main(args=None):
             deepspeed_launch.append("--enable_elastic_training")
             deepspeed_launch.append(f"--max_elastic_nodes={args.max_elastic_nodes}")
             deepspeed_launch.append(f"--min_elastic_nodes={args.min_elastic_nodes}")
+        if args.bind_cores_to_rank:
+            deepspeed_launch.append("--bind_cores_to_rank")
+        if args.bind_core_list != None:
+            deepspeed_launch.append(f"--bind_core_list={args.bind_core_list}")
         cmd = deepspeed_launch + [args.user_script] + args.user_args
     else:
         args.launcher = args.launcher.lower()
