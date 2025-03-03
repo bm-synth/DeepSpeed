@@ -260,7 +260,16 @@ Enabling and configuring ZeRO memory optimizations
     "reduce_scatter": [true|false],
     "reduce_bucket_size": 5e8,
     "contiguous_gradients" : [true|false],
-    "cpu_offload": [true|false]
+    "cpu_offload": [true|false],
+    "cpu_offload_params" : [true|false],
+    "cpu_offload_use_pin_memory" : [true|false],
+    "stage3_max_live_parameters" : 1e9,
+    "stage3_max_reuse_distance" : 1e9,
+    "stage3_prefetch_bucket_size" : 5e8,
+    "stage3_param_persistence_threshold" : 1e6,
+    "sub_group_size" : 1e12,
+    "elastic_checkpoint" : [true|false],
+    "stage3_gather_fp16_weights_on_model_save": [true|false]
     }
 ```
 
@@ -325,198 +334,10 @@ Enabling and configuring ZeRO memory optimizations
 | Do not partition parameters smaller than this threshold. Smaller values use less memory, but can greatly increase communication (especially latency-bound messages). | `1e5`   |
 
 
-***stage3_gather_16bit_weights_on_model_save***: [boolean]
-
-| Description                                                                                                                                                                                                                                                                    | Default |
-|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| ------- |
-| Consolidate the weights before saving the model by `save_16bit_model()`. Since the weights are partitioned across GPUs, they aren't part of `state_dict`, so this function automatically gathers the weights when this option is enabled and then saves the fp16 model weights. | `False` |
-
-***stage3_module_granularity_threshold***: [integer]
-| Description                                                                                                                                                                                                                                                                    | Default |
-|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| ------- |
-| The granularity of a module is determined by the ratio of `parameter_count` / `(1 + descendant_count)`. ZeRO3 classifies modules with a granularity below the threshold as fine-grained, treating them as integral units during parameter fetching. This reduces host and communication overhead from separate hooks. | `0` |
-
-***zero_hpz_partition_size***: [integer]
-
-| Description                                                                                                                         | Default |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| Number of ranks in hiearchical partitioning ZeRO (hpZ) secondary tensor group of ZeRO++, default is 1 meaning no hpZ, ideal is number of ranks (gpus) per node. | `1`   |
-
-***zero_quantized_weights***: [boolean]
-
-| Description                                                                                                                         | Default |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------- |
-|Boolean indicating whether to enable communication efficient quantized weights of ZeRO++. | `False`   |
-
-***zero_quantized_gradients***: [boolean]
-
-| Description                                                                                                                         | Default |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------- |
-|Boolean indicating whether to enable communication efficient quantized gradients of ZeRO++. | `False`   |
-
-<i>**log_trace_cache_warnings**</i>: [boolean]
-
-| Description                                                                                                         | Default |
-| ------------------------------------------------------------------------------------------------------------------- | ------- |
-| Log warnings from trace cache optimization of parameter sharding, such as cache invalidation events. | `False`  |
-
-***cpu_offload***: [boolean]
-
-**Deprecated:** **cpu_offload** is deprecated and will be removed in future, please use `offload_optimizer` instead.
-{: .notice--warning}
-
-| Description                                                                                                                                       | Default |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| Enable offloading of optimizer memory and computation to CPU. This frees up GPU memory for larger models or batch sizes. Valid with stage 1 and 2. | `False` |
-
-
-### Parameter offloading
-Enabling and configuring ZeRO optimization of parameter offloading to CPU/NVMe. Available only with ZeRO stage 3.
-Note that if the value of "device" is not specified or not supported, an assertion will be triggered.
-
-```json
-  "offload_param": {
-    "device": "[cpu|nvme]",
-    "nvme_path": "/local_nvme",
-    "pin_memory": [true|false],
-    "buffer_count": 5,
-    "buffer_size": 1e8,
-    "max_in_cpu": 1e9
-  }
-```
-***device***: [string]
-
-| Description                                                                        | Default |
-| ---------------------------------------------------------------------------------- | ------- |
-| Device memory to offload model parameters. Supported options are `cpu` and `nvme`. | `cpu`   |
-
-***nvme_path***: [string]
-
-| Description                                               | Default       |
-| --------------------------------------------------------- | ------------- |
-| Filesystem path for NVMe device for parameter offloading. | `/local_nvme` |
-
-***pin_memory***: [boolean]
-
-| Description                                                                                          | Default |
-| ---------------------------------------------------------------------------------------------------- | ------- |
-| Offload to page-locked CPU memory. This could boost throughput at the cost of extra memory overhead. | `false` |
-
-***buffer_count***: [integer]
-
-| Description                                                        | Default |
-| ------------------------------------------------------------------ | ------- |
-| Number of buffers in buffer pool for parameter offloading to NVMe. | 5       |
-
-
-***buffer_size***: [integer]
-
-| Description                                                      | Default |
-| ---------------------------------------------------------------- | ------- |
-| Size of buffers in buffer pool for parameter offloading to NVMe. | 1e8     |
-
-***max_in_cpu***: [integer]
-
-| Description                                                                                | Default |
-| ------------------------------------------------------------------------------------------ | ------- |
-| Number of parameter elements to maintain in CPU memory when offloading to NVMe is enabled. | 1e9     |
-
-### Optimizer offloading
-Enabling and configuring ZeRO optimization of offloading optimizer computation to CPU and state to CPU/NVMe. CPU offloading is available with ZeRO stage 1, 2, 3. NVMe offloading is available only with ZeRO stage 3.
-Note that if the value of "device" is not specified or not supported, an assertion will be triggered.
-```json
-  "offload_optimizer": {
-    "device": "[cpu|nvme]",
-    "nvme_path": "/local_nvme",
-    "pin_memory": [true|false],
-    "ratio": 0.3,
-    "buffer_count": 4,
-    "fast_init": false
-  }
-```
-***device***: [string]
-
-| Description                                                                                                                                            | Default |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| Device memory to offload optimizer state. Supported options are `cpu` and `nvme`. Optimizer computation is offload to CPU regardless of device option. | `cpu`   |
-
-***nvme_path***: [string]
-
-| Description                                                     | Default       |
-| --------------------------------------------------------------- | ------------- |
-| Filesystem path for NVMe device for optimizer state offloading. | `/local_nvme` |
-
-***pin_memory***: [boolean]
-
-| Description                                                                                          | Default |
-| ---------------------------------------------------------------------------------------------------- | ------- |
-| Offload to page-locked CPU memory. This could boost throughput at the cost of extra memory overhead. | `false` |
-
-***ratio***: [float]
-
-| Description                                                         | Default |
-| ------------------------------------------------------------------- | ------- |
-| the ratio of parameters updating (i.e. optimizer step) on CPU side. | 1       |
-
-***buffer_count***: [integer]
-
-| Description                                                                                                                                                                                                                                              | Default |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| Number of buffers in buffer pool for optimizer state offloading to NVMe. This should be at least the number of states maintained per parameter by the optimizer. For example, Adam optimizer has 4 states (parameter, gradient, momentum, and variance). | 4       |
-
-***fast_init***: [boolean]
-
-| Description                                                   | Default |
-| ------------------------------------------------------------- | ------- |
-| Enable fast optimizer initialization when offloading to NVMe. | `false` |
-
-
-### Asynchronous I/O
-Configuring the asynchronous I/O module for offloading parameter and optimizer states to persistent (NVMe) storage. This module uses Linux native asynchronous I/O (libaio).
-```json
-  "aio": {
-    "block_size": 1048576,
-    "queue_depth": 8,
-    "thread_count": 1,
-    "single_submit": false,
-    "overlap_events": true
-  }
-```
-***block_size***: [integer]
-
-| Description              | Default |
-| ------------------------ | ------- |
-| I/O block size in bytes. | 1048576 |
-
-***queue_depth***: [integer]
-
-| Description      | Default |
-| ---------------- | ------- |
-| I/O queue depth. | 8       |
-
-***thread_count***: [integer]
-
-| Description                                                               | Default |
-| ------------------------------------------------------------------------- | ------- |
-| Intra-request parallelism for each read/write submitted by a user thread. | 1       |
-
-***single_submit***: [boolean]
-
-| Description                                                                                            | Default |
-| ------------------------------------------------------------------------------------------------------ | ------- |
-| Submit requests to storage device as multiple individual requests as opposed to one block of requests. | `false` |
-
-***overlap_events***: [boolean]
-
-| Description                                                                                                    | Default |
-| -------------------------------------------------------------------------------------------------------------- | ------- |
-| Submit requests to storage device in an overlapped fashion without waiting for completion of earlier requests. | `true`  |
-
-***ignore_unused_parameters***: [boolean]
-
-| Description                                                                                                                                                                                                                                                                                                                                                     | Default |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| Unused parameters in modules may be unexpected in static networks, but could be normal in dynamic networks. This controls whether or not training should terminate with an error message when unused parameters are detected. This is set to `True` by default, which means unused parameters are ignored and training continues. Now is just used in stage 2. | `True`  |
+***stage3_gather_fp16_weights_on_model_save***: [boolean]
+| Description                                                                                                                                                          | Default |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Consolidate the weights before saving the model by `save_fp16_model()`. Since the weights are partitioned across GPUs, they aren't part of `state_dict`, so this function automatically gather the weights when this option is enabled and then saves the fp16 model weights. | `False` |
 
 ### Logging
 

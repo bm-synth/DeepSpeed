@@ -3276,9 +3276,15 @@ class DeepSpeedEngine(Module):
     def _replace_module_consolidated_state_dict(self):
         """
         Get a full non-partitioned state_dict with fp16 weights on cpu.
+
         Important: this function must be called on all ranks and not just rank 0.
-        This is similar to nn.Module.state_dict (modelled after _save_to_state_dict)
-        This method is used for tensor parallel training.
+
+        This is similar to nn.Module.state_dict (modelled after _save_to_state_dict), but:
+
+        1. consolidates the weights from different partitions on gpu0
+        2. works on one layer at a time to require as little gpu0 memory as possible, by
+        moving the already consolidated weights to cpu
+        3. takes care to keep the shared params shared when gradually copying the params to cpu
 
         Returns:
         OrderedDict: The consolidated state dictionary if the current process rank is 0, otherwise None.
