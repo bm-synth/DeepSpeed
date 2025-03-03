@@ -12,103 +12,20 @@ from einops import rearrange
 
 import deepspeed.comm as dist
 from deepspeed.accelerator import get_accelerator
-from deepspeed.module_inject.tp_shard import get_shard_size_list, set_num_kv_heads, get_num_kv_heads
-from deepspeed.utils import groups
 
 
-def _generate_layout_params(scatter_idx, batch_dim_idx, seq_world_size, input):
-    """
-    This function generates the parameters required for `permute` and `reshape` operations,
-    which are used to process data before and after `all2all` communication.
-    """
-    if batch_dim_idx == 0:
-        if scatter_idx < 2:
-            bs, global_seq_len, num_local_head, head_dim = input.shape
-            pre_all2all_inp_shape = [bs, seq_world_size, global_seq_len // seq_world_size, num_local_head, head_dim]
-            pre_all2all_permute_idx = (1, 0, 2, 3, 4)
-
-            post_all2all_permute_idx = (1, 2, 0, 3, 4)
-            post_all2all_res_shape = [bs, global_seq_len // seq_world_size, seq_world_size * num_local_head, head_dim]
-        else:
-            bs, local_seq_len, num_total_head, head_dim = input.shape
-            assert num_total_head % seq_world_size == 0, f"Number of heads ({num_total_head}) must be divisible by the sequence parallel size ({seq_world_size})!"
-            pre_all2all_inp_shape = [bs, local_seq_len, seq_world_size, num_total_head // seq_world_size, head_dim]
-            pre_all2all_permute_idx = (2, 0, 1, 3, 4)
-
-            post_all2all_permute_idx = (1, 0, 2, 3, 4)
-            post_all2all_res_shape = [bs, seq_world_size * local_seq_len, num_total_head // seq_world_size, head_dim]
-    else:
-        if scatter_idx < 2:
-            global_seq_len, bs, num_local_head, head_dim = input.shape
-            pre_all2all_inp_shape = [seq_world_size, global_seq_len // seq_world_size, bs, num_local_head, head_dim]
-            pre_all2all_permute_idx = None
-
-            post_all2all_permute_idx = (1, 2, 0, 3, 4)
-            post_all2all_res_shape = [bs, seq_world_size * global_seq_len, num_local_head // seq_world_size, head_dim]
-        else:
-            local_seq_len, bs, num_total_head, head_dim = input.shape
-            assert num_total_head % seq_world_size == 0, f"Number of heads ({num_total_head}) must be divisible by the sequence parallel size ({seq_world_size})!"
-            pre_all2all_inp_shape = [local_seq_len, bs, seq_world_size, num_total_head // seq_world_size, head_dim]
-            pre_all2all_permute_idx = (2, 0, 1, 3, 4)
-            post_all2all_permute_idx = None
-            post_all2all_res_shape = [local_seq_len * seq_world_size, bs, num_total_head // seq_world_size, head_dim]
-
-    return pre_all2all_permute_idx, pre_all2all_inp_shape, post_all2all_permute_idx, post_all2all_res_shape
-
-
-def post_all2all(permute_idx, res_shape):
-    """
-    Post-processing function for `all2all` communication.
-    """
+def post_all2all(transpose, res_shape):
 
     def post_func(input):
-        if permute_idx is not None:
-            input = input.permute(permute_idx).contiguous()
-        output = input.reshape(res_shape).contiguous()
-
-        return output
+        if transpose:
+            input = input.transpose(0, 2).contiguous()
+        input = input.reshape(res_shape)
+        return input
 
     return post_func
 
 
-def pre_all2all_fun(permute_idx, inp_shape, input):
-    """
-    Pre-processing function for `all2all` communication.
-    """
-    input_t = input.reshape(inp_shape).contiguous()
-    if permute_idx is not None:
-        input_t = input_t.permute(permute_idx).contiguous()
-    return input_t
-
-
-def _rotate_half(x):
-    """
-    change sign so the last dimension becomes [-odd, +even]
-    """
-    x = rearrange(x, '... (j d) -> ... j d', j=2)
-    x1, x2 = x.unbind(dim=-2)
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb(t, freqs_cos, freqs_sin):
-    """
-    input tensor t is of shape [seq_length, ..., dim]
-    rotary positional embeding tensor freqs is of shape [seq_length, ..., dim]
-    check https://kexue.fm/archives/8265 for detailed formulas
-    """
-    rot_dim = freqs_cos.shape[-1]
-    # ideally t_pass is empty so rotary pos embedding is applied to all tensor t
-    t, t_pass = t[..., :rot_dim], t[..., rot_dim:]
-
-    # first part is cosine component
-    # second part is sine component, need to change signs with _rotate_half method
-    t = (t * freqs_cos) + (_rotate_half(t) * freqs_sin)
-
-    res = t if t_pass.shape[-1] == 0 else torch.cat((t, t_pass), dim=-1)
-    return res
-
-
-def uneven_heads_all2all(input, scatter_idx, gather_idx, batch_dim_idx, group):
+def single_all_to_all(input, scatter_idx, gather_idx, group, async_op=False, handle=None, type=None):
     seq_world_size = dist.get_world_size(group)
     inp_shape = list(input.shape)
     assert batch_dim_idx in [0, 1], "batch_dim_idx must be either 0 or 1"
@@ -243,9 +160,18 @@ def single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, asyn
     output = torch.empty_like(input_t)
     work = dist.all_to_all_single(output, input_t, group=group, async_op=async_op)
 
-    # if scattering the seq-dim, transpose the heads back to the original dimension
-    if scatter_idx < 2:
-        output = output.transpose(0, 2).contiguous()
+    res_shape=( inp_shape[: gather_idx] + \
+        [inp_shape[gather_idx] * seq_world_size,] + \
+        inp_shape[gather_idx + 1:])
+    transpose = True if scatter_idx < 2 else False
+    post_all2all_fun = post_all2all(transpose, res_shape)
+
+    if async_op:
+        if type in ('dq', 'dk'):
+            handle[type + '_work'] = work
+            handle[type + '_grad'] = output
+            handle[type + '_post_all2all_func'] = post_all2all_fun
+            return output.view(res_shape)
 
     res = post_all2all_fun(output)
     return res
@@ -259,7 +185,6 @@ class _SeqAllToAll(torch.autograd.Function):
                 input: Tensor,
                 scatter_idx: int,
                 gather_idx: int,
-                batch_dim_idx: int,
                 stream=None,
                 handle=None,
                 type=None,
@@ -270,30 +195,30 @@ class _SeqAllToAll(torch.autograd.Function):
         ctx.stream = stream
         ctx.handle = handle
         ctx.type = type
-        ctx.batch_dim_idx = batch_dim_idx
         if ctx.handle is None:
-            res = single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, False)
+            res = single_all_to_all(input, scatter_idx, gather_idx, group, False)
 
         else:
             # overlap communication path
             if not is_fwd and type == 'o':
                 assert ctx.stream != None
-                res = single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, False)
+                res = single_all_to_all(input, scatter_idx, gather_idx, group, False)
                 get_accelerator().current_stream().wait_stream(ctx.stream)
+                del ctx.stream.activation_buffer_list
                 # The computation of d o_weight can overlap with the communication of d o_input
 
             elif not is_fwd and type in ('q', 'k'):
                 # Achieve communication overlap by pipelining the matrix computation and communication of dq, dk, and dv
                 type = 'd' + type
-                res = single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, True, handle, type)
+                res = single_all_to_all(input, scatter_idx, gather_idx, group, True, handle, type)
 
             elif is_fwd and type in ('q', 'k'):
                 # Achieve communication overlap by pipelining the matrix computation and communication of q, k, and v
                 type = 'fwd_' + type
-                res = single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, False, handle, type)
+                res = single_all_to_all(input, scatter_idx, gather_idx, group, False, handle, type)
 
             else:
-                res = single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, False)
+                res = single_all_to_all(input, scatter_idx, gather_idx, group, False)
 
         return res
 
@@ -301,8 +226,8 @@ class _SeqAllToAll(torch.autograd.Function):
     def backward(ctx: Any, *grad_output: Tensor) -> Tuple[None, Tensor, None, None]:
 
         return (None,
-                _SeqAllToAll.apply(ctx.group, *grad_output, ctx.gather_idx, ctx.scatter_idx, ctx.batch_dim_idx,
-                                   ctx.stream, ctx.handle, ctx.type, False), None, None, None, None, None, None, None)
+                _SeqAllToAll.apply(ctx.group, *grad_output, ctx.gather_idx, ctx.scatter_idx, ctx.stream, ctx.handle,
+                                   ctx.type, False), None, None, None, None, None, None)
 
 
 class DistributedAttention(torch.nn.Module):
@@ -337,6 +262,10 @@ class DistributedAttention(torch.nn.Module):
             self.sp_overlap_comm = True
             self.dafult_stream = get_accelerator().default_stream()
 
+    def layer_sync(self, layer):
+        if self.sp_overlap_comm and hasattr(layer, 'done_event'):
+            self.dafult_stream.wait_event(layer.done_event)
+
     def forward(self, query: Tensor, key: Tensor, value: Tensor, *args: Any, **kwargs) -> Tensor:
         """ forward
 
@@ -369,15 +298,15 @@ class DistributedAttention(torch.nn.Module):
             return pre_hook_fun
 
         self.layer_sync(query)
-        query_layer = _SeqAllToAll.apply(self.spg, query, self.scatter_idx, self.gather_idx, batch_dim_idx, None,
+        query_layer = _SeqAllToAll.apply(self.spg, query, self.scatter_idx, self.gather_idx, None,
                                          self.overlap_handles, 'q')
         self.layer_sync(key)
-        key_layer = _SeqAllToAll.apply(self.spg, key, self.scatter_idx, self.gather_idx, batch_dim_idx, None,
-                                       self.overlap_handles, 'k')
+        key_layer = _SeqAllToAll.apply(self.spg, key, self.scatter_idx, self.gather_idx, None, self.overlap_handles,
+                                       'k')
         if self.sp_overlap_comm:
             self.dafult_stream.wait_stream(self.sp_stream)
 
-        value_layer = _SeqAllToAll.apply(self.spg, value, self.scatter_idx, self.gather_idx, batch_dim_idx, None,
+        value_layer = _SeqAllToAll.apply(self.spg, value, self.scatter_idx, self.gather_idx, None,
                                          self.overlap_handles, 'v')
 
         if self.sp_overlap_comm:
@@ -392,12 +321,11 @@ class DistributedAttention(torch.nn.Module):
             grad_fn_k.register_prehook(bwd_hook(layer_type='k'))
 
         #out shape : e.g., [s:h/p:]
-        context_layer = self.local_attn(query_layer, key_layer, value_layer, *args, **kwargs)
 
         context_layer = self.local_attn(query_layer, key_layer, value_layer, *args, **kwargs)
 
-        output = _SeqAllToAll.apply(self.spg, context_layer, self.gather_idx, self.scatter_idx, batch_dim_idx,
-                                    self.sp_stream, self.overlap_handles, 'o')
+        output = _SeqAllToAll.apply(self.spg, context_layer, self.gather_idx, self.scatter_idx, self.sp_stream,
+                                    self.overlap_handles, 'o')
 
         #out e.g., [s/p::h]
         return output
