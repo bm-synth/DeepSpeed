@@ -3430,6 +3430,10 @@ class DeepSpeedEngine(Module):
             ``True`` when a model has been saved, ``False`` otherwise. It will not be saved if
             stage3_gather_16bit_weights_on_model_save is ``False``.
 
+        Returns:
+            ``True`` when a model has been saved, ``False`` otherwise. It will not be saved if
+            stage3_gather_fp16_weights_on_model_save is ``False``.
+
         Important: all processes must call this method and not just the process with rank 0. It is
         because the processes need to work in sync to gather the weights. This method will hang
         waiting to synchronize with other processes if it's called just for the process with rank 0.
@@ -3446,95 +3450,15 @@ class DeepSpeedEngine(Module):
             else:
                 # the model will be bogus if not consolidated so don't confuse the user by saving it
                 logger.info(
-                    f"Did not save the model {path} because 'stage3_gather_16bit_weights_on_model_save' is False")
+                    f"Did not save the model {path} because `stage3_gather_fp16_weights_on_model_save` is False"
+                )
                 return False
         else:
             state_dict = self.module_state_dict(exclude_frozen_parameters=exclude_frozen_parameters)
 
-        tag = f"global_step{self.global_steps}"
-        tag = str(tag)
-        self.checkpoint_engine.create(tag)
-
-        if dist.get_rank() == 0:
-            self.checkpoint_engine.makedirs(save_dir, exist_ok=True)
-            logger.info(f"Saving model weights to {path}, tag: {tag}")
-            self.checkpoint_engine.save(state_dict, path)
-
-        self.checkpoint_engine.commit(tag)
+        if torch.distributed.get_rank() == 0:
+            os.makedirs(save_dir, exist_ok=True)
+            logger.info(f"Saving model weights to {path}")
+            torch.save(state_dict, path)
 
         return True
-
-    def empty_partition_cache(self):
-        """
-        Release GPU memory consumed by offloaded model parameters.
-        """
-        if hasattr(self.optimizer, 'empty_partition_cache'):
-            self.optimizer.empty_partition_cache()
-            gc.collect()
-            get_accelerator().empty_cache()
-
-    def compile(self, backend=get_accelerator().get_compile_backend(), compile_kwargs={}) -> None:
-        """Compile the module using the specified backend and kwargs.
-        If a compiler_fn is set, it will be used instead of torch.compile().
-        """
-        # Avoid graph breaks
-        deepspeed.utils.nvtx.enable_nvtx = False
-
-        if not is_compile_supported():
-            raise RuntimeError("compile is not supported in your version of PyTorch.")
-
-        if self.is_compiled:
-            return
-
-        if 'backend' in compile_kwargs:
-            logger.warning("The `backend` in `compile_kwargs` will be overridden. Use the `backend` argument instead.")
-
-        # create new dict to avoid modifying original dict
-        self.module.compile(**{**compile_kwargs, 'backend': backend})
-        self._is_compiled = True
-
-    @property
-    def is_compiled(self) -> bool:
-        return self._is_compiled
-
-    def offload_states(self,
-                       include: Container[OffloadStateTypeEnum] = None,
-                       device: OffloadDeviceEnum = OffloadDeviceEnum.cpu,
-                       pin_memory: bool = True,
-                       non_blocking: bool = False) -> None:
-        """Offload the engine's states to the specified device.
-
-        Arguments:
-            include: Optional. The set of states to offload. If not provided, all states are offloaded.
-            device: Optional. The device to move the ZeRO optimizer buffers to. Currently only `OffloadDeviceEnum.cpu` is supported.
-            pin_memory: Optional. Whether to pin the memory of the offloaded states.
-            non_blocking: Optional. Whether to offload the states asynchronously.
-        """
-        assert self.zero_optimization_stage(
-        ) == ZeroStageEnum.weights, "Moving buffers across devices is supported only for ZeRO stage 3."
-
-        opt_offload_config = self.zero_offload_optimizer()
-        assert opt_offload_config is None or opt_offload_config.device == OffloadDeviceEnum.none, "Moving states across devices is not supported for offloaded optimizer states."
-        param_offload_config = self.zero_offload_param()
-        assert param_offload_config is None or param_offload_config.device == OffloadDeviceEnum.none, "Moving states across devices is not supported for offloaded parameters."
-
-        assert not self.zero_offload_param(), "Moving states across devices is not supported for offloaded parameters."
-
-        if device == OffloadDeviceEnum.none:
-            logger.warning("No device specified for offloading states.")
-            return
-
-        if device == OffloadDeviceEnum.nvme:
-            raise ValueError("NVMe offload is not supported for offloading states.")
-
-        self.optimizer.offload_states(include=include, device=device, pin_memory=pin_memory, non_blocking=non_blocking)
-
-    def reload_states(self, non_blocking: bool = False) -> None:
-        """Reload the engine states to the original device.
-
-        Arguments:
-            non_blocking: Optional. Whether to offload the states asynchronously.
-        """
-        assert self.zero_optimization_stage(
-        ) == ZeroStageEnum.weights, "Moving buffers back is supported only for ZeRO stage 3."
-        self.optimizer.reload_states(non_blocking=non_blocking)
