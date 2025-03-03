@@ -253,7 +253,8 @@ class OpBuilder(ABC):
             rocm_info = Path("rocminfo")
         rocm_gpu_arch_cmd = str(rocm_info) + " | grep -o -m 1 'gfx.*'"
         try:
-            result = subprocess.check_output(rocm_gpu_arch_cmd, shell=True)
+            safe_cmd = shlex.split(rocm_gpu_arch_cmd)
+            result = subprocess.check_output(safe_cmd)
             rocm_gpu_arch = result.decode('utf-8').strip()
         except subprocess.CalledProcessError:
             rocm_gpu_arch = ""
@@ -271,7 +272,8 @@ class OpBuilder(ABC):
         rocm_wavefront_size_cmd = str(
             rocm_info) + " | grep -Eo -m1 'Wavefront Size:[[:space:]]+[0-9]+' | grep -Eo '[0-9]+'"
         try:
-            result = subprocess.check_output(rocm_wavefront_size_cmd, shell=True)
+            safe_cmd = shlex.split(rocm_wavefront_size_cmd)
+            result = subprocess.check_output(rocm_wavefront_size_cmd)
             rocm_wavefront_size = result.decode('utf-8').strip()
         except subprocess.CalledProcessError:
             rocm_wavefront_size = "32"
