@@ -454,7 +454,7 @@ class GPT2CheckpointTestCase(BaseTestCase):
         try:
             cmd = shlex.split(f"rm -rf {checkpoint_name}")
             print(f"{self.id()} cmd: {cmd}")
-            subprocess.run(cmd, check=False, executable='/bin/bash')
+            subprocess.run(cmd, shell=True, check=False, executable='/bin/bash')
         except:
             print("No old checkpoint")
 
