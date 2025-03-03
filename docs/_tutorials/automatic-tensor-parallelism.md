@@ -141,7 +141,6 @@ The following model families have been successfully tested with automatic tensor
 - longt5
 - luke
 - llama
-- llama2
 - m2m_100
 - marian
 - mistral
