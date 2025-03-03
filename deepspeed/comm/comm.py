@@ -155,7 +155,7 @@ def init_deepspeed_backend(ds_backend, timeout, init_method):
     elif ds_backend == MPI_BACKEND:
         utils.logger.debug("MPI backend in DeepSpeed not yet implemented")
     elif ds_backend == GLOO_BACKEND:
-        utils.logger.warn("Gloo backend in DeepSpeed not yet implemented")
+        utils.logger.debug("Gloo backend in DeepSpeed not yet implemented")
     elif ds_backend == CCL_BACKEND:
         ccl_backend = CCLBackend(rank=rank, world_size=size, timeout=timeout, init_method=init_method)
         utils.logger.info(f"Initialize {ds_backend} backend")
@@ -620,14 +620,13 @@ def init_distributed(dist_backend=None,
         dist_init_required = cdb is None or not cdb.is_initialized()
 
     if cdb is None:
-        if torch.distributed.is_initialized():
-            # The user initialized torch.dist themselves, create cdb and short-circuit
-            cdb = TorchBackend(dist_backend, timeout, init_method)
-            return
-        else:
-            init_deepspeed_backend(get_accelerator().communication_backend_name(), timeout, init_method)
-            set_backend()
-            utils.logger.info(f'cdb={cdb}')
+        init_deepspeed_backend(get_accelerator().communication_backend_name(), timeout, init_method)
+        set_backend()
+        utils.logger.info(f'cdb={cdb}')
+    if cdb is None and torch.distributed.is_initialized():
+        # The user initialized torch.dist themselves, create cdb and short-circuit
+        cdb = TorchBackend(dist_backend, timeout, init_method)
+        return
 
     if dist_init_required is False:
         assert (
