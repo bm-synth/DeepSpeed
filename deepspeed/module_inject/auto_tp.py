@@ -135,9 +135,7 @@ class Loading():
         load_layers = [nn.Linear, nn.Embedding, nn.LayerNorm]
         load_layer_names = [
             "LPLayerNorm", "SharedEmbedding", "OPTLearnedPositionalEmbedding", "LlamaRMSNorm", "FalconLinear",
-            "MistralRMSNorm", "T5LayerNorm", "MixtralRMSNorm", "Phi3RotaryEmbedding", "Phi3SuScaledRotaryEmbedding",
-            "Phi3RMSNorm", "YuanRMSNorm", "YuanRotaryEmbedding", "Phi3LongRoPEScaledRotaryEmbedding", "Qwen2RMSNorm",
-            "DeepseekV2RMSNorm", "DeepseekV2YarnRotaryEmbedding", "MoEGate"
+            "MistralRMSNorm", "T5LayerNorm", "MixtralRMSNorm"
         ]
         return module.__class__ in load_layers or module._get_name() in load_layer_names
 
@@ -318,12 +316,6 @@ class AutoTP():
                 # Mixtral-7x8b used w2*act(w1*w3) linear. need to replace w2 to linearallreduce.
                 elif 'w2' in layer and 'Mixtral' in str(type(module)):
                     gem_list = gem_list + [layer]
-                elif 'self_attn.dense' in layer and 'Phi' in str(type(module)):
-                    gem_list = gem_list + [layer]
-                elif 'self_attention.dense' in layer and 'ChatGLM' in str(model):
-                    gem_list = gem_list + [layer]
-                elif 'dense_4h_to_h' in layer and 'ChatGLM' in str(model):
-                    gem_list = gem_list + [layer]
 
             layer_list = []
             if gem_list != []:
@@ -355,14 +347,12 @@ class AutoTP():
         return_new_copy = not self.keep_module_on_host
         weight_shape = child.weight.shape
         mp_replace = ReplaceWithTensorSlicing(mp_group=self.mp_group)
-        # For TP layer skip, e.g., MoE gate, deepseek low rank layer skip
-        if "q_a_proj" in name or "kv_a_proj_with_mqa" in name or name == "block_sparse_moe.gate" or (
-            ('mlp.shared_expert_gate' == name or 'mlp.gate' == name) and 'qwen2_moe' in str(type(self.module))):
+        # For mixtral-7x8b, need to skip MoE gate linear replace.
+        if name == "block_sparse_moe.gate":
             return child
-        # For Yuan model
-        if 'Yuan' in str(self.module):
-            if 'v_proj' in name:
-                return Yuan_LinearLayer(child, self.mp_group)
+        if name in self.all_reduce_linears:
+            # if conv_linear_layer [weight_shape[1], weight_shape[0] // mp_size]
+            # else [weight_shape[0], weight_shape[1] // mp_size]
 
             elif 'o_proj' in name:
                 return Yuan_LinearAllreduce(child, self.mp_group)
