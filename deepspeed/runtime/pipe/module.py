@@ -193,7 +193,7 @@ class PipelineModule(nn.Module):
         self.global_rank = dist.get_rank(group=self.world_group)
         self.world_size = dist.get_world_size(group=self.world_group)
         self.local_rank = int(os.environ.get("LOCAL_RANK", None))
-        assert self.local_rank is not None
+        assert self.local_rank != None
 
         if topology:
             self._topo = topology
@@ -241,7 +241,7 @@ class PipelineModule(nn.Module):
 
         #with torch.random.fork_rng(devices=[get_accelerator().current_device_name()]):
         self._build()
-        self.to(get_accelerator().device_name(self.local_rank))
+        self.to(f'cuda:{self.local_rank}')
 
         self.tied_comms = self._index_tied_modules()
         self._synchronize_tied_weights()
