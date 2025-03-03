@@ -2126,9 +2126,16 @@ class DeepSpeedEngine(Module):
         else:
             self.compression_scheduler.step()
             if self.lr_scheduler is not None:
-                self.lr_scheduler.step(**(lr_kwargs or {}))
-            if report_progress and (self.global_steps + 1) % self.steps_per_print() == 0:
-                self._report_progress(self.global_steps + 1)
+                try:
+                    self.lr_scheduler.step(**(lr_kwargs or {}))
+                except TypeError:
+                    # XXX Hack to work with Megatron 2.0 and DeepSpeed pipelines.
+                    # We don't currently have a way to specify lr_kwargs from
+                    # pipe_engine.train_batch()
+                    self.lr_scheduler.step(self.train_batch_size())
+
+        if report_progress and (self.global_steps + 1) % self.steps_per_print() == 0:
+            self._report_progress(self.global_steps + 1)
 
         self.losses = 0.0
         self.global_steps += 1
