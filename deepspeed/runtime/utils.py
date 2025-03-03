@@ -13,8 +13,7 @@ from deepspeed.moe.utils import is_moe_param, split_params_into_shared_and_exper
 import os
 import psutil
 import gc
-from math import ceil
-from math import floor
+from math import sqrt
 from bisect import bisect_left
 from packaging import version as pkg_version
 
