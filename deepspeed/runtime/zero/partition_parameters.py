@@ -909,6 +909,10 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         this feature must be used.
 
         .. note::
+            Initializes ``torch.distributed`` if it has not already been done so.
+            See :meth:`deepseed.init_distributed` for more information.
+
+        .. note::
             Initializes ``deepspeed.comm`` if it has not already been done so.
             See :meth:`deepspeed.init_distributed` for more information.
 
