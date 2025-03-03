@@ -833,6 +833,7 @@ class DeepSpeedLight(Module):
             if numel > numel_per_bucket:
                 self.allreduce_and_copy(small_bucket)
                 small_bucket = []
+                numel = 0
         if len(small_bucket) > 0:
             self.allreduce_and_copy(small_bucket)
 
