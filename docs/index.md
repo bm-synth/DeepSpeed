@@ -80,9 +80,39 @@ In line with Microsoft's mission to solve humanity's most pressing challenges, t
 
    The [DeepSpeed](https://github.com/deepspeedai/deepspeed) library implements and packages the innovations and technologies in DeepSpeed Training, Inference and Compression Pillars into a single easy-to-use, open-sourced repository. It allows for an easy composition of a multitude of features within a single training, inference or compression pipeline. The DeepSpeed Library is heavily adopted by the DL community, and has been used to enable some of the most powerful models (see [DeepSpeed Adoption](#deepspeed-adoption)).
 
-## Model Implementations for Inference (MII)
+Below we provide a brief feature list, see our detailed [feature
+overview](/features/) for descriptions and usage.
 
-   [Model Implementations for Inference (MII)](https://github.com/deepspeedai/deepspeed-mii) is an open-sourced repository for making low-latency and high-throughput inference accessible to all data scientists by alleviating the need to apply complex system optimization techniques themselves. Out-of-box, MII offers support for thousands of widely used DL models, optimized using DeepSpeed-Inference, that can be deployed with a few lines of code, while achieving significant latency reduction compared to their vanilla open-sourced versions.
+* [Distributed Training with Mixed Precision](/features/#distributed-training-with-mixed-precision)
+    * 16-bit mixed precision
+    * Single-GPU/Multi-GPU/Multi-Node
+* [Model Parallelism](/features/#model-parallelism)
+    * Support for Custom Model Parallelism
+    * Integration with Megatron-LM
+* [The Zero Redundancy Optimizer (ZeRO)](/features/#the-zero-redundancy-optimizer)
+    * Optimizer State and Gradient Partitioning
+    * Activation Partitioning
+    * Constant Buffer Optimization
+    * Contiguous Memory Optimization
+* [Additional Memory and Bandwidth Optimizations](/features/#additional-memory-and-bandwidth-optimizations)
+    * Smart Gradient Accumulation
+    * Communication/Computation Overlap
+* [Training Features](/features/#training-features)
+    * Simplified training API
+    * Activation Checkpointing API
+    * Gradient Clipping
+    * Automatic loss scaling with mixed precision
+* [Training Optimizers](/features/#training-optimizers)
+    * Fused Adam optimizer and arbitrary `torch.optim.Optimizer`
+    * Memory bandwidth optimized FP16 Optimizer
+    * Large Batch Training with LAMB Optimizer
+    * Memory efficient Training with ZeRO Optimizer
+* [Training Agnostic Checkpointing](/features/#training-agnostic-checkpointing)
+* [Advanced Parameter Search](/features/#advanced-parameter-search)
+    * Learning Rate Range Test
+    * 1Cycle Learning Rate Schedule
+* [Simplified Data Loader](/features/#simplified-data-loader)
+* [Performance Analysis and Debugging](/features/#performance-analysis-and-debugging)
 
 ## DeepSpeed on Azure
 
