@@ -49,6 +49,7 @@ class AsyncIOBuilder(TorchCPUOpBuilder):
         return ['csrc/aio/py_lib', 'csrc/aio/common'] + CUDA_INCLUDE
 
     def cxx_args(self):
+        # -O0 for improved debugging, since performance is bound by I/O
         CPU_ARCH = self.cpu_arch()
         SIMD_WIDTH = self.simd_width()
         return [
