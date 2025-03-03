@@ -18,27 +18,28 @@ import torch
 import contextlib
 import torch.distributed as dist
 
+import mmap
 from torch import _C
 from torch.cuda import _lazy_call, device as device_ctx_manager
 
 from deepspeed.runtime.config import DeepSpeedConfig
 from deepspeed.utils import logger
-from deepspeed.runtime.utils import copy_to_device, move_to_device, see_memory_usage
+from deepspeed.runtime.utils import copy_to_device, move_to_device, see_memory_usage, bwc_tensor_model_parallel_rank
 from deepspeed.utils.timer import SynchronizedWallClockTimer as Timers
 
-#DeepSpeed Checkpointing Enabled or Disabled
+# DeepSpeed Checkpointing Enabled or Disabled
 deepspeed_checkpointing_enabled = False
 
-#MP parameters
+# MP parameters
 mpu = None
 mp_rank = None
 mp_size = None
 mp_group = None
 
-#Model Parameters
+# Model Parameters
 num_layers = None
 
-#Checkpointing buffers
+# Checkpointing buffers
 contiguous_data_buffers = []
 data_offsets = []
 
@@ -47,39 +48,12 @@ size_offsets = []
 
 timers = None
 
-#optimization flags
+# optimization flags
 PARTITION_ACTIVATIONS = False
 CPU_CHECKPOINT = False
 CONTIGUOUS_CHECKPOINTING = False
 SYNCHRONIZE = False
 PROFILE_TIME = False
-
-
-def see_memory_usage(message, force=False):
-    #return
-    if not force:
-        return
-    #dist.barrier()
-    if dist.get_rank() == 0:
-        logger.info(message)
-        logger.info(
-            "Memory Allocated %s GigaBytes",
-            torch.cuda.memory_allocated() / (1024 * 1024 * 1024),
-        )
-        logger.info(
-            "Max Memory Allocated %s GigaBytes",
-            torch.cuda.max_memory_allocated() / (1024 * 1024 * 1024),
-        )
-        logger.info(
-            "Cache Allocated %s GigaBytes",
-            torch.cuda.memory_cached() / (1024 * 1024 * 1024),
-        )
-        logger.info(
-            "Max cache Allocated %s GigaBytes",
-            torch.cuda.max_memory_cached() / (1024 * 1024 * 1024),
-        )
-        #input("Press Any Key To Continue ..")
-
 
 # Default name for the model parallel rng tracker.
 _MODEL_PARALLEL_RNG_TRACKER_NAME = 'model-parallel-rng'
@@ -231,7 +205,7 @@ def model_parallel_cuda_manual_seed(seed):
     Two set of RNG states are tracked:
         default state: This is for data parallelism and is the same among a
                        set of model parallel GPUs but different across
-                       different model paralle groups. This is used for
+                       different model parallel groups. This is used for
                        example for dropout in the non-model-parallel regions.
         model-parallel state: This state is different among a set of model
                               parallel GPUs, but the same across data parallel
@@ -239,10 +213,13 @@ def model_parallel_cuda_manual_seed(seed):
                               model parallel regions.
     """
     global mpu
+
+    tp_rank = bwc_tensor_model_parallel_rank(mpu)
+
     # 2718 is just for fun and any POSITIVE value will work.
     offset = seed + 2718
-    model_parallel_seed = offset + mpu.get_model_parallel_rank()
-    # Data parallel gets the original sedd.
+    model_parallel_seed = offset + tp_rank
+    # Data parallel gets the original seed.
     data_parallel_seed = seed
 
     if torch.distributed.get_rank() == 0:
@@ -251,7 +228,7 @@ def model_parallel_cuda_manual_seed(seed):
             'model parallel rank {}, and data parallel rank {} with '
             'model parallel seed: {} and data parallel seed: {}'.format(
                 torch.distributed.get_rank(),
-                mpu.get_model_parallel_rank(),
+                tp_rank,
                 mpu.get_data_parallel_rank(),
                 model_parallel_seed,
                 data_parallel_seed),
@@ -549,9 +526,14 @@ class CheckpointFunction(torch.autograd.Function):
         global data_offsets, size_offsets
         if mp_rank is None:
             if mpu is not None:
-                mp_rank = mpu.get_model_parallel_rank()
-                mp_size = mpu.get_model_parallel_world_size()
-                mp_group = mpu.get_model_parallel_group()
+                if hasattr(mpu, 'get_tensor_model_parallel_rank'):
+                    mp_rank = mpu.get_tensor_model_parallel_rank()
+                    mp_size = mpu.get_tensor_model_parallel_world_size()
+                    mp_group = mpu.get_tensor_model_parallel_group()
+                else:
+                    mp_rank = mpu.get_model_parallel_rank()
+                    mp_size = mpu.get_model_parallel_world_size()
+                    mp_group = mpu.get_model_parallel_group()
             else:
                 mp_rank = 0
                 mp_size = 1
@@ -560,7 +542,7 @@ class CheckpointFunction(torch.autograd.Function):
         global cuda_device, transport_stream, PARTITION_ACTIVATIONS, buffer_0, buffer_1, buffer_0_offset, buffer_1_offset
 
         if cuda_device is None:
-            see_memory_usage("First Forward Begining", force=True)
+            see_memory_usage("First Forward Beginning", force=False)
             if dist.get_rank() == 0:
                 logger.info(f"Activation Checkpointing Information")
                 logger.info(
@@ -570,7 +552,7 @@ class CheckpointFunction(torch.autograd.Function):
                     f"----contiguous Memory Checkpointing {CONTIGUOUS_CHECKPOINTING} with {num_layers} total layers"
                 )
                 logger.info(f"----Synchronization {SYNCHRONIZE}")
-                logger.info(f"----Profiling {PROFILE_TIME}")
+                logger.info(f"----Profiling time in checkpointing {PROFILE_TIME}")
 
             cuda_device = torch.cuda.current_device()
             transport_stream = torch.cuda.Stream(device=cuda_device)
@@ -594,10 +576,12 @@ class CheckpointFunction(torch.autograd.Function):
         ctx.fwd_cuda_rng_state = torch.cuda.get_rng_state()
         ctx.fwd_cuda_rng_state_tracker = get_cuda_rng_tracker().get_states()
 
-        #ctx.save_for_backward(*args)
+        see_memory_usage("Before running forward on the layer", force=False)
+        # ctx.save_for_backward(*args)
         with torch.no_grad():
             outputs = run_function(*inputs_cuda)
 
+        see_memory_usage("After running forward on the layer", force=False)
         del inputs_cuda
 
         if PARTITION_ACTIVATIONS:
@@ -639,10 +623,10 @@ class CheckpointFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grads):
         global timers
-        #see_memory_usage("In backward", force=True)
-        #removing pointers to the contiguous buffer memory
-        #so that they can be garbage collected once the checkpoints
-        #have been used
+        see_memory_usage("In backward", force=False)
+        # removing pointers to the contiguous buffer memory
+        # so that they can be garbage collected once the checkpoints
+        # have been used
         if SYNCHRONIZE:
             torch.cuda.synchronize()
         if PROFILE_TIME:
@@ -655,14 +639,14 @@ class CheckpointFunction(torch.autograd.Function):
             for buffers in contiguous_data_buffers:
                 buffers = []
 
-            #frees up all the pointers to the checkpoints except for the ones
-            #stored by save for backward
+            # frees up all the pointers to the checkpoints except for the ones
+            # stored by save for backward
             contiguous_data_buffers = []
             contiguous_size_buffers = []
             data_offsets = []
             size_offsets = []
 
-        #see_memory_usage("In backward checkpointing code", force=True)
+        see_memory_usage("In backward checkpointing code", force=False)
         if not torch.autograd._is_checkpoint_valid():
             raise RuntimeError("Checkpointing is not compatible with .grad(), "
                                "please use .backward() if possible")
@@ -703,9 +687,12 @@ class CheckpointFunction(torch.autograd.Function):
         #     current_stream=torch.cuda.current_stream()
         #     current_stream.wait_stream(transport_stream)
 
+        see_memory_usage("In backward checkpointing code before forward", force=False)
+
         with torch.enable_grad():
             outputs = ctx.run_function(*detached_inputs)
 
+        see_memory_usage("In backward checkpointing code after forward", force=False)
         # Set the states back to what it was at the start of this function.
         torch.set_rng_state(bwd_cpu_rng_state)
         _set_cuda_rng_state(bwd_cuda_rng_state)
@@ -727,7 +714,16 @@ class CheckpointFunction(torch.autograd.Function):
                 output_tensors.append(out)
                 grad_tensors.append(grad)
 
+        see_memory_usage("In backward checkpointing code before backward", force=False)
+
         torch.autograd.backward(output_tensors, grad_tensors)
+
+        # Force clear our stashed tensors to prevent a memory leak in certain scenarios
+        ctx.deepspeed_saved_tensors = None
+        ctx.non_tensor_args = None
+        ctx.tensor_flags = None
+
+        see_memory_usage("After backward checkpointing code after backward", force=False)
 
         if PROFILE_TIME:
             timers('backward').stop()
@@ -787,20 +783,21 @@ def reset():
         for buffers in contiguous_data_buffers:
             buffers = []
 
-        #frees up all the pointers to the checkpoints except for the ones
-        #stored by save for backward
+        # frees up all the pointers to the checkpoints except for the ones
+        # stored by save for backward
         contiguous_data_buffers = []
         contiguous_size_buffers = []
         data_offsets = []
         size_offsets = []
 
 
-def _configure_using_config_file(deepspeed_config, mpu=None):
+def _configure_using_config_file(config, mpu=None):
     global num_layers, PARTITION_ACTIVATIONS, CONTIGUOUS_CHECKPOINTING, \
         CPU_CHECKPOINT, SYNCHRONIZE, PROFILE_TIME
 
-    config = DeepSpeedConfig(deepspeed_config, mpu=mpu).activation_checkpointing_config
-    logger.info(config.repr())
+    config = DeepSpeedConfig(config, mpu=mpu).activation_checkpointing_config
+    if dist.get_rank() == 0:
+        logger.info(config.repr())
     PARTITION_ACTIVATIONS = config.partition_activations
     CONTIGUOUS_CHECKPOINTING = config.contiguous_memory_optimization
     num_layers = config.number_checkpoints
@@ -902,7 +899,7 @@ def configure(
         PROFILE_TIME = profile
 
     if CONTIGUOUS_CHECKPOINTING:
-        assert PARTITION_ACTIVATIONS, "Contiguous Checkpointing is only availble with partitioned activations. Set partitioned activations to true in deepspeed config"
+        assert PARTITION_ACTIVATIONS, "Contiguous Checkpointing is only available with partitioned activations. Set partitioned activations to true in deepspeed config"
     if CONTIGUOUS_CHECKPOINTING:
         assert num_layers is not None, "Must specify the number of layers with contiguous memory checkpointing"
 
