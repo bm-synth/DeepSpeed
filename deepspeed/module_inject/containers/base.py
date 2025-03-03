@@ -103,15 +103,19 @@ class BaseTransformerContainer(ABC):
 
         return self.ds_model_config
 
+    def check_meta_tensor_support(self):
+        if hasattr(self.qkvw, 'is_meta'):
+            if self.qkvw.is_meta:
+                assert self.ckpt_load_enabled, "Meta tensors are not supported for this model currently."
+        else:
+            raise NotImplementedError("Meta tensor support is not available, please upgrade to torch 1.10+")
+
     def initialize_tensors(self, enable_training=False):
         # Set the tensors from policy (user module) to container (DS module)
         self.set_attention(*self.policy.attention(enable_training=enable_training))
         self.set_mlp(*self.policy.mlp())
         self.set_layernorm(*self.policy.layernorm())
-        self.set_lora_params(self.policy.get_lora_params())
-        self.q_k_v = self.policy.get_q_k_v()
-        if self.q_k_v is not None:
-            self.set_q_k_v(*self.q_k_v)
+        self.check_meta_tensor_support()
 
     def convert_to_required_dtype(self, dtype):
         # Note: converting tensors to fp16 requires that we do it in-place using self.__dict__ and not make a list/dict copy
