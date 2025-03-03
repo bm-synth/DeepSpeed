@@ -216,7 +216,10 @@ class FP16_DeepSpeedZeroOptimizer(object):
         # number of elements per partition in each group
         self.partition_size = []
 
-        partition_id = dist.get_rank(group=self.dp_process_group)
+        #align nccl all-gather send buffers to 4-bye boundary
+        self.nccl_start_alignment_factor = 2  # 4-byte alignment/sizeof(fp16) = 2
+
+        assert (allgather_bucket_size % self.nccl_start_alignment_factor == 0), f"allgather_bucket_size must be a multiple of nccl_start_alignment_factor, {self.nccl_start_alignment_factor} "
 
         self.all_reduce_print = False
 
@@ -262,7 +265,8 @@ class FP16_DeepSpeedZeroOptimizer(object):
             self.fp16_groups_flat.append(
                 self.flatten_dense_tensors_aligned(
                     self.round_robin_fp16_groups[i],
-                    dist.get_world_size(group=self.dp_process_group)).cuda(
+                    self.nccl_start_alignment_factor *
+                    dist.get_world_size(group=self.real_dp_process_group[i])).cuda(
                         torch.cuda.current_device()))
             see_memory_usage(f"After flattening and moving param group {i} to GPU",
                              force=False)
@@ -280,6 +284,11 @@ class FP16_DeepSpeedZeroOptimizer(object):
             data_parallel_partitions = self.get_data_parallel_partitions(
                 self.fp16_groups_flat[i])
             self.parallel_partitioned_fp16_groups.append(data_parallel_partitions)
+
+            # verify that data partition start locations are 4-byte aligned
+            for partitioned_data in data_parallel_partitions:
+                assert (partitioned_data.data_ptr() %
+                        (2 * self.nccl_start_alignment_factor) == 0)
 
             # a partition of the fp32 master weights that will be updated by this process
             self.single_partition_of_fp32_groups.append(
@@ -1849,8 +1858,9 @@ class FP16_DeepSpeedZeroOptimizer(object):
             ]
             flat_merged_partitions = flatten_dense_tensors_aligned(
                 merged_partitions,
-                dist.get_world_size(group=self.dp_process_group))
-            dp_partitions = self.get_data_parallel_partitions(flat_merged_partitions)
+                self.nccl_start_alignment_factor *
+                dist.get_world_size(group=self.real_dp_process_group[i]))
+            dp_partitions = self.get_data_parallel_partitions(flat_merged_partitions, i)
             merged_single_partition_of_fp32_groups.append(dp_partitions[partition_id])
 
         for current, saved in zip(self.single_partition_of_fp32_groups, merged_single_partition_of_fp32_groups):
