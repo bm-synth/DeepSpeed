@@ -8,6 +8,7 @@ tags: getting-started
 ## Installation
 
 * Please see our [Azure tutorial](/tutorials/azure/) to get started with DeepSpeed on Azure!
+* To get started with DeepSpeed on AzureML, please see the [AzureML Examples GitHub](https://github.com/Azure/azureml-examples/tree/main/workflows/train/deepspeed)
 * If you're not on Azure, we recommend using our docker image via `docker pull deepspeed/deepspeed:latest` which contains a pre-installed version of DeepSpeed and all the necessary dependencies.
 * If you want to install DeepSpeed manually, we provide an install script `install.sh` to help install on a local machine or across an entire cluster.
 
