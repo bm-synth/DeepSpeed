@@ -1078,7 +1078,41 @@ class FP16_DeepSpeedZeroOptimizer_Stage3(object):
         def _pre_forward_module_hook(module, *args):
             self.pre_sub_module_forward_function(module)
 
-        def _post_forward_module_hook(module, *args):
+        def _post_forward_module_hook(module, input, output):
+            global FWD_MODULE_STACK
+            FWD_MODULE_STACK.pop()
+
+            if not isinstance(output, (list, tuple)):
+                if torch.is_tensor(output):
+                    output = [output]
+                else:
+                    #print(f'got UNKNOWN type {type(output)}')
+                    outputs = []
+                    for name, val in vars(output).items():
+                        if not name.startswith('__') and torch.is_tensor(val):
+                            outputs.append(val)
+                    output = outputs
+                    #print(f'convert output to {output}')
+
+            for item in filter(lambda item: is_zero_param(item), output):
+                if not any(id(item) in m._external_params for m in FWD_MODULE_STACK):
+                    item.ds_active_sub_modules += 1
+                    module_to_register = FWD_MODULE_STACK[-1]
+                    print_rank_0(
+                        f'Registering dangling parameter for module {module_to_register.__class__.__name__}.',
+                        force=False)
+                    register_external_parameter(module_to_register, item)
+
+                    # It's possible that the parameter was already external to the completed module. If so, remove it the
+                    # registration as it will be covered by the outer module instead.
+                    if id(item) in module._external_params:
+                        print_rank_0(
+                            f'  Unregistering nested dangling parameter from module {module.__class__.__name__}',
+                            force=False)
+                        unregister_external_parameter(module, item)
+
+                    item.all_gather()
+
             self.post_sub_module_forward_function(module)
 
         def _pre_backward_module_hook(module, inputs, output):
