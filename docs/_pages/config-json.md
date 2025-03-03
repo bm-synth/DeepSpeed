@@ -299,7 +299,8 @@ Enabling and configuring ZeRO memory optimizations
     "stage3_param_persistence_threshold" : 1e6,
     "sub_group_size" : 1e12,
     "elastic_checkpoint" : [true|false],
-    "stage3_gather_fp16_weights_on_model_save": [true|false]
+    "stage3_gather_fp16_weights_on_model_save": [true|false],
+    "ignore_unused_parameters": [true|false]
     }
 ```
 
@@ -542,6 +543,11 @@ Configuring the asynchronous I/O module for offloading parameter and optimizer s
 | ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | Submit requests to storage device in an overlapped fashion without waiting for completion of earlier requests. | `true`  |
 
+***ignore_unused_parameters***: [boolean]
+
+| Description                                                                                                                            | Default |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Unused parameters in modules may be unexpected in static networks, but could be normal in dynamic networks. This controls whether or not training should terminate with an error message when unused parameters are detected. This is set to `False` by default, which means unused parameters are ignored and training continues. Now is just used in stage 2. | `True` |
 
 ### Logging
 
