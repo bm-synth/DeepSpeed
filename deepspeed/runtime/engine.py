@@ -243,7 +243,8 @@ class DeepSpeedEngine(Module):
                                           steps_per_output=self.steps_per_print(),
                                           monitor_memory=False)
 
-        log_dist(f"DeepSpeed Flops Profiler Enabled: {self.flops_profiler_enabled()}", ranks=[0])
+        log_dist(f"DeepSpeed Flops Profiler Enabled: {self.flops_profiler_enabled()}",
+                 ranks=[0])
 
         if self.flops_profiler_enabled():
             self.flops_profiler = FlopsProfiler(self.module, self, self.flops_profiler_recompute_fwd_factor())
@@ -765,26 +766,21 @@ class DeepSpeedEngine(Module):
     def aio_config(self):
         return self._config.aio_config
 
-    def get_data_types(self):
-        model_dtype = torch.float32
-        if self.fp16_enabled():
-            model_dtype = torch.float16
-        elif self.bfloat16_enabled():
-            model_dtype = torch.bfloat16
-
-        if self._config.grad_accum_dtype is None:
-            if model_dtype == torch.bfloat16 and not self.zero_optimization():
-                grad_accum_dtype = torch.float32
-            else:
-                grad_accum_dtype = model_dtype
+    def _configure_lr_scheduler(self, client_lr_scheduler):
+        # First check for scheduler in json configuration
+        lr_scheduler = self._scheduler_from_config(self.optimizer)
+        if lr_scheduler:
+            log_dist(
+                f"DeepSpeed using configured LR scheduler = {self.scheduler_name()}",
+                ranks=[0])
+            self.lr_scheduler = lr_scheduler
         else:
             if isinstance(client_lr_scheduler, Callable):
-                if self.global_rank == 0:
-                    logger.info('DeepSpeed using client callable to create LR scheduler')
+                log_dist('DeepSpeed using client callable to create LR scheduler',
+                         ranks=[0])
                 self.lr_scheduler = client_lr_scheduler(self.basic_optimizer)
             else:
-                if self.global_rank == 0:
-                    logger.info('DeepSpeed using client LR scheduler')
+                log_dist('DeepSpeed using client LR scheduler', ranks=[0])
                 self.lr_scheduler = client_lr_scheduler
 
         log_dist(f'DeepSpeed LR Scheduler = {self.lr_scheduler}', ranks=[0])
@@ -1165,24 +1161,20 @@ class DeepSpeedEngine(Module):
                 client_optimizer.param_groups[:] = [
                     pg for pg in client_optimizer.param_groups if len(pg["params"]) != 0
                 ]
-                if self.global_rank == 0:
-                    logger.info(
-                        "Removing param_group that has no 'params' in the client Optimizer"
-                    )
+                log_dist(
+                    "Removing param_group that has no 'params' in the client Optimizer",
+                    ranks=[0])
 
                 basic_optimizer = client_optimizer
-                if self.global_rank == 0:
-                    logger.info('Using client Optimizer as basic optimizer')
+                log_dist('Using client Optimizer as basic optimizer', ranks=[0])
             else:
                 basic_optimizer = client_optimizer(model_parameters)
-                if self.global_rank == 0:
-                    logger.info('Using client callable to create basic optimizer')
+                log_dist('Using client callable to create basic optimizer', ranks=[0])
         else:
             basic_optimizer = self._configure_basic_optimizer(model_parameters)
-            if self.global_rank == 0:
-                logger.info(
-                    'Using DeepSpeed Optimizer param name {} as basic optimizer'.format(
-                        self.optimizer_name()))
+            log_dist(
+                f"Using DeepSpeed Optimizer param name {self.optimizer_name()} as basic optimizer",
+                ranks=[0])
 
             occurrence = sum([
                 ids_list(group['params']).count(param_id) if param_id in ids_list(group['params']) else 0
@@ -1191,9 +1183,8 @@ class DeepSpeedEngine(Module):
             assert occurrence <= 1, f"Parameter with name: {name} occurs multiple times in optimizer.param_groups. Make sure it only appears once to prevent undefined behavior."
 
         self.basic_optimizer = basic_optimizer
-        if self.global_rank == 0:
-            logger.info('DeepSpeed Basic Optimizer = {}'.format(
-                basic_optimizer.__class__.__name__))
+        log_dist("DeepSpeed Basic Optimizer = {basic_optimizer.__class__.__name__}",
+                 ranks=[0])
 
         if self.zero_optimization():
             assert not self.amp_enabled(), "Amp and ZeRO are not currently compatible, please use (legacy) fp16 mode which performs similar to amp opt_mode=O2"
@@ -1212,8 +1203,7 @@ class DeepSpeedEngine(Module):
         elif self.amp_enabled():
             assert not (self.fp16_enabled() or self.bfloat16_enabled()), "Cannot enable both amp with (legacy) fp16 or bfloat16 mode"
             amp_params = self.amp_params()
-            if self.global_rank == 0:
-                logger.info(f"Initializing AMP with these params: {amp_params}")
+            log_dist(f"Initializing AMP with these params: {amp_params}", ranks=[0])
             try:
                 logger.info("Initializing Apex amp from: {}".format(amp.__path__))
             except NameError:
@@ -1410,8 +1400,8 @@ class DeepSpeedEngine(Module):
         if optimizer is None:
             optimizer = DummyOptim(list(self.module.parameters()))
 
-        if self.global_rank == 0:
-            logger.info('Creating unfused BF16 optimizer')
+        log_dist('Creating BF16 optimizer', ranks=[0])
+
         timers = self.timers if self.wall_clock_breakdown() else None
         optimizer = BF16_Optimizer(
             optimizer,
@@ -1426,7 +1416,6 @@ class DeepSpeedEngine(Module):
 
     def _configure_zero_optimizer(self, optimizer):
         zero_stage = self.zero_optimization_stage()
-        log_dist('Creating fp16 ZeRO stage {} optimizer'.format(zero_stage), ranks=[0])
         assert self.communication_data_type in (torch.float16, torch.bfloat16), "ZeRO supports only 'communication_data_type': ['fp16', 'bfp16']"
         timers = self.timers if self.wall_clock_breakdown() else None
 
@@ -1454,6 +1443,8 @@ class DeepSpeedEngine(Module):
             round_robin_gradients = self.zero_round_robin_gradients()
             assert not isinstance(optimizer, DummyOptim), "zero stage 2 requires an optimizer"
 
+            log_dist('Creating fp16 ZeRO stage {} optimizer'.format(zero_stage),
+                     ranks=[0])
             # Overlap and contiguous grads are meaningless in stage 1 and are ignored
             if zero_stage == ZeroStageEnum.optimizer_states:
                 overlap_comm = False
@@ -1496,10 +1487,8 @@ class DeepSpeedEngine(Module):
 
         elif zero_stage == ZeroStageEnum.weights:
             assert not self.has_moe_layers, "MoE not supported with Stage 3"
-            logger.info("Initializing ZeRO Stage 3") if dist.get_rank() == 0 else None
-            from deepspeed.runtime.zero.stage3 import DeepSpeedZeroOptimizer_Stage3
-
             if isinstance(optimizer, DummyOptim):
+                log_dist("Creating ZeRO Offload", ranks=[0])
                 optimizer = DeepSpeedZeRoOffload(
                     self.module,
                     timers=timers,
@@ -1509,10 +1498,13 @@ class DeepSpeedEngine(Module):
                     max_reuse_distance=self.zero_max_reuse_distance(),
                     max_live_parameters=self.zero_max_live_parameters(),
                     param_persistence_threshold=self.zero_param_persistence_threshold(),
+                    model_persistence_threshold=self.zero_model_persistence_threshold(),
                     offload_param_config=self.zero_offload_param(),
                     mpu=self.mpu)
             else:
-
+                log_dist('Creating fp16 ZeRO stage {} optimizer'.format(zero_stage),
+                         ranks=[0])
+                from deepspeed.runtime.zero.stage3 import DeepSpeedZeroOptimizer_Stage3
                 optimizer = DeepSpeedZeroOptimizer_Stage3(
                     self.module,
                     optimizer,
@@ -1528,6 +1520,7 @@ class DeepSpeedEngine(Module):
                     max_reuse_distance=self.zero_max_reuse_distance(),
                     max_live_parameters=self.zero_max_live_parameters(),
                     param_persistence_threshold=self.zero_param_persistence_threshold(),
+                    model_persistence_threshold=self.zero_model_persistence_threshold(),
                     dp_process_group=self.data_parallel_group,
                     reduce_scatter=self.zero_reduce_scatter(),
                     overlap_comm=self.zero_overlap_comm(),
