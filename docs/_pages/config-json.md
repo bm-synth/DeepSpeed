@@ -400,6 +400,106 @@ Enabling and configuring ZeRO memory optimizations
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | Consolidate the weights before saving the model by `save_fp16_model()`. Since the weights are partitioned across GPUs, they aren't part of `state_dict`, so this function automatically gather the weights when this option is enabled and then saves the fp16 model weights. | `False` |
 
+***cpu_offload***: [boolean]
+
+**Deprecated:** **cpu_offload** is disabled and will be removed in future, please use `offload_optimizer` instead.
+{: .notice--warning}
+
+| Description                                                                                                              | Default |
+| ------------------------------------------------------------------------------------------------------------------------ | ------- |
+| Enable offloading of optimizer memory and computation to CPU. This frees up GPU memory for larger models or batch sizes. Valid only with stage 2.| `False` |
+
+
+### Parameter offloading
+Enabling and configuring ZeRO optimization of parameter offloading to CPU/NVMe. Available only with ZeRO stage 3.
+```json
+  "offload_param": {
+    "device": "[none|cpu|nvme]",
+    "nvme_path": "/local_nvme",
+    "pin_memory": [true|false],  
+    "buffer_count": 5,
+    "buffer_size": 1e8,
+    "max_in_cpu": 1e9
+  }
+```
+***device***: [string]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Device memory to offload model parameters. Supported options are `cpu` and `nvme`. | `cpu`   |
+
+***nvme_path***: [string]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Filesystem path for NVMe device for parameter offloading. | `/local_nvme`   |
+
+***pin_memory***: [boolean]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Offload to page-locked CPU memory. This could boost throughput at the cost of extra memory overhead. | `false`  |
+
+***buffer_count***: [integer]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Number of buffers in buffer pool for parameter offloading to NVMe. | 5  |
+
+
+***buffer_size***: [integer]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Size of buffers in buffer pool for parameter offloading to NVMe. | 1e8  |
+
+***max_in_cpu***: [integer]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Number of parameter elements to maintain in CPU memory when offloading to NVMe is enabled. | 1e9  |
+
+### Optimizer offloading
+Enabling and configuring ZeRO optimization of offloading optimizer computation to CPU and state to CPU/NVMe. CPU offloading is available with ZeRO stage 2 or 3. NVMe offloading is available only with ZeRO stage 3.
+```json
+  "offload_optimizer": {
+    "device": "[none|cpu|nvme]",
+    "nvme_path": "/local_nvme",
+    "pin_memory": [true|false],
+    "buffer_count": 4,
+    "fast_init": false
+  }
+```
+***device***: [string]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Device memory to offload optimizer state. Supported options are `cpu` and `nvme`. Optimizer computation is offload to CPU regardless of device option. | `cpu`   |
+
+***nvme_path***: [string]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Filesystem path for NVMe device for optimizer state offloading. | `/local_nvme`   |
+
+***pin_memory***: [boolean]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Offload to page-locked CPU memory. This could boost throughput at the cost of extra memory overhead. | `false`  |
+
+***buffer_count***: [integer]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Number of buffers in buffer pool for optimizer state offloading to NVMe. This should be at least the number of states maintained per parameter by the optimizer. For example, Adam optimizer has 4 states (parameter, gradient, momentum, and variance). | 4  |
+
+***fast_init***: [boolean]
+
+| Description                                                                                                                           | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Enable fast optimizer initialization when offloading to NVMe. | `false`  |
+
 ### Logging
 
 <i>**steps_per_print**</i>: [integer]
