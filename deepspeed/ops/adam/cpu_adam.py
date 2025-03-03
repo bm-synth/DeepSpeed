@@ -68,16 +68,16 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
 
         self.opt_id = DeepSpeedCPUAdam.optimizer_id
         DeepSpeedCPUAdam.optimizer_id = DeepSpeedCPUAdam.optimizer_id + 1
+        self.adam_w_mode = adamw_mode
+        self.ds_opt_adam = CPUAdamBuilder().load()
 
-        global ds_opt_adam
-        ds_opt_adam = importlib.import_module('deepspeed.ops.adam.cpu_adam_op')
-        ds_opt_adam.create_adam(self.opt_id,
-                                lr,
-                                betas[0],
-                                betas[1],
-                                eps,
-                                weight_decay,
-                                adamw_mode)
+        self.ds_opt_adam.create_adam(self.opt_id,
+                                     lr,
+                                     betas[0],
+                                     betas[1],
+                                     eps,
+                                     weight_decay,
+                                     adamw_mode)
 
     def __setstate__(self, state):
         super(DeepSpeedCPUAdam, self).__setstate__(state)
