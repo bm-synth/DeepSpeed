@@ -38,13 +38,11 @@ class TestQuantParam(DistributedTest):
     def test_move_to_accelerator(self):
         device = get_accelerator().current_device()
         data = torch.rand(5, 5, device='cpu', dtype=torch.bfloat16)
-        quantization_config = QuantizationConfig()
-        quantization_config.q_dtype = FPQuantizerBuilder.get_default_quant_dtype()
-        qp = QuantizedParameter(data, quantization_config=quantization_config)
+        qp = QuantizedParameter(data)
         assert qp.device == torch.device('cpu')
         qp = qp.to(get_accelerator().current_device_name())
         assert qp.device == torch.device(device)
-        assert qp.dtype == quantization_config.q_dtype
+        assert qp.dtype == torch.int8
 
     def test_hf_clone(self):
         device = get_accelerator().current_device_name()
