@@ -24,7 +24,7 @@ from .offload_constants import *
 
 from ..utils import see_memory_usage
 from deepspeed.utils import log_dist, init_distributed
-from deepspeed.utils.debug import debug_param2name_id_shape, debug_module2name, debug_param2name, debug_param2name_id_shape_status, printflock, log_rank_file
+from deepspeed.utils.debug import debug_param2name_id_shape, debug_param2name_id_shape_device, debug_module2name, debug_param2name, debug_param2name_id_shape_status, printflock, log_rank_file
 
 from deepspeed.utils import groups
 import deepspeed
@@ -1202,39 +1202,10 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 param_list = [cls]
             return self._all_gather(param_list, async_op=async_op, hierarchy=hierarchy)
 
-        def _all_gather_dtype(dtype, params, world_size, rank_in_group, ds_process_group):
-            partition_sz = sum(p.ds_tensor.ds_numel for p in params)
-
-            use_secondary_tensor = params[0].ds_secondary_tensor is not None
-
-            if use_secondary_tensor:
-                partition_sz = sum(p.ds_tensor.ds_numel * p.ds_secondary_tensor_num_of_groups for p in params)
-
-            flat_tensor = torch.empty(partition_sz * world_size,
-                                      dtype=dtype,
-                                      device=get_accelerator().current_device_name(),
-                                      requires_grad=False)
-
-            partitions: List[Parameter] = []
-            for i in range(world_size):
-                partitions.append(flat_tensor.narrow(0, partition_sz * i, partition_sz))
-
-            if use_secondary_tensor:
-                instrument_w_nvtx(
-                    torch.cat)([p.ds_secondary_tensor.to(get_accelerator().current_device_name()) for p in params],
-                               out=partitions[rank_in_group])
-            else:
-                instrument_w_nvtx(torch.cat)([p.ds_tensor.to(get_accelerator().current_device_name()) for p in params],
-                                             out=partitions[rank_in_group])
-            handle = _dist_allgather_fn(partitions[rank_in_group], flat_tensor, ds_process_group)
-            #Fix get_partition_dp_group(params[0]))
-
-            return AllGatherCoalescedHandle(
-                allgather_handle=handle,
-                params=params,
-                partitions=partitions,
-                world_size=world_size,
-                use_secondary_tensor=use_secondary_tensor,
+        def partition(param_list=None, hierarchy=0, has_been_updated=False):
+            cls = param
+            print_rank_0(
+                f"{'--'*hierarchy}----Partitioning param {debug_param2name_id_shape_device(cls)}"
             )
 
         @instrument_w_nvtx
@@ -1446,7 +1417,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         def partition_gradients(param_list=None, partition_buffers=None, hierarchy=0, accumulate=False):
             cls = param
             print_rank_0(
-                f"{'--'*hierarchy}----Partitioning param gradient with id {debug_param2name_id_shape_device(cls)}")
+                f"{'--'*hierarchy}----Partitioning param gradient with id {debug_param2name_id_shape_device(cls)}"
+            )
             if param_list is None:
                 param_list = [cls]
                 if isinstance(partition_buffers, torch.Tensor):
