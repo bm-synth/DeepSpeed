@@ -517,12 +517,10 @@ class EltwiseMultiplicationTestNetwork_NamedTuple(EltwiseMultiplicationTestNetwo
 
     def forward(self, *args, **kwargs) -> EltwiseMultiplicationNamedTuple:
         outputs_dicts = super().forward(*args, **kwargs)
-        return EltwiseMultiplicationNamedTuple(
-            hidden1=outputs_dicts["hidden1"],
-            hidden2=outputs_dicts["hidden2"],
-            y_hat=outputs_dicts["y_hat"],
-            loss=outputs_dicts["loss"],
-        )
+        return EltwiseMultiplicationNamedTuple(hidden1=outputs_dicts['hidden1'],
+                                               hidden2=outputs_dicts['hidden2'],
+                                               y_hat=outputs_dicts['y_hat'],
+                                               loss=outputs_dicts['loss'])
 
     @staticmethod
     def to_dict(outputs: EltwiseMultiplicationNamedTuple) -> Dict[str, Tensor]:
@@ -534,20 +532,18 @@ class EltwiseMultiplicationTestNetwork_NamedTuple(EltwiseMultiplicationTestNetwo
         }
 
 
-EltwiseMultiplication_namedtuple = namedtuple("EltwiseMultiplication_namedtuple",
-                                              ["hidden1", "hidden2", "y_hat", "loss"])
+EltwiseMultiplication_namedtuple = namedtuple('EltwiseMultiplication_namedtuple',
+                                              ['hidden1', 'hidden2', 'y_hat', 'loss'])
 
 
 class EltwiseMultiplicationTestNetwork_namedtuple(EltwiseMultiplicationTestNetwork_Dict):
 
     def forward(self, *args, **kwargs) -> EltwiseMultiplication_namedtuple:
         outputs_dicts = super().forward(*args, **kwargs)
-        return EltwiseMultiplication_namedtuple(
-            hidden1=outputs_dicts["hidden1"],
-            hidden2=outputs_dicts["hidden2"],
-            y_hat=outputs_dicts["y_hat"],
-            loss=outputs_dicts["loss"],
-        )
+        return EltwiseMultiplication_namedtuple(hidden1=outputs_dicts['hidden1'],
+                                                hidden2=outputs_dicts['hidden2'],
+                                                y_hat=outputs_dicts['y_hat'],
+                                                loss=outputs_dicts['loss'])
 
     @staticmethod
     def to_dict(outputs: EltwiseMultiplicationNamedTuple) -> Dict[str, Tensor]:
@@ -563,12 +559,7 @@ class EltwiseMultiplicationTestNetwork_Tuple(EltwiseMultiplicationTestNetwork_Di
 
     def forward(self, *args, **kwargs) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         outputs_dicts = super().forward(*args, **kwargs)
-        return (
-            outputs_dicts["hidden1"],
-            outputs_dicts["hidden2"],
-            outputs_dicts["y_hat"],
-            outputs_dicts["loss"],
-        )
+        return (outputs_dicts['hidden1'], outputs_dicts['hidden2'], outputs_dicts['y_hat'], outputs_dicts['loss'])
 
     @staticmethod
     def to_dict(outputs: Tuple[Tensor, Tensor, Tensor, Tensor]) -> Dict[str, Tensor]:
@@ -584,12 +575,7 @@ class EltwiseMultiplicationTestNetwork_List(EltwiseMultiplicationTestNetwork_Dic
 
     def forward(self, *args, **kwargs) -> List[Tensor]:
         outputs_dicts = super().forward(*args, **kwargs)
-        return [
-            outputs_dicts["hidden1"],
-            outputs_dicts["hidden2"],
-            outputs_dicts["y_hat"],
-            outputs_dicts["loss"],
-        ]
+        return [outputs_dicts['hidden1'], outputs_dicts['hidden2'], outputs_dicts['y_hat'], outputs_dicts['loss']]
 
     @staticmethod
     def to_dict(outputs: List[Tensor]) -> Dict[str, Tensor]:
@@ -601,6 +587,17 @@ class EltwiseMultiplicationTestNetwork_List(EltwiseMultiplicationTestNetwork_Dic
         }
 
 
+@pytest.mark.parametrize("param_persistence_threshold", [0, 10])
+@pytest.mark.parametrize("fp16_enabled", [True, False])
+@pytest.mark.parametrize("contiguous_gradients", [True, False])
+@pytest.mark.parametrize("offload_optimizer", [True, False])
+@pytest.mark.parametrize("zero_grad", [True, False])
+@pytest.mark.parametrize("prefetching", [True, False])
+@pytest.mark.parametrize("model_class", [
+    EltwiseMultiplicationTestNetwork_Dict, EltwiseMultiplicationTestNetwork_NamedTuple,
+    EltwiseMultiplicationTestNetwork_namedtuple, EltwiseMultiplicationTestNetwork_Tuple,
+    EltwiseMultiplicationTestNetwork_List
+])
 class TestZero3ParamPartitioningBase(DistributedTest):
     world_size = 2
 
@@ -644,14 +641,13 @@ class TestZero3ParamPartitioningBase(DistributedTest):
 
     def _test(
         self,
-        param_persistence_threshold: int = 0,
-        fp16_enabled: bool = False,
-        contiguous_gradients: bool = False,
-        offload_optimizer: bool = False,
-        zero_grad: bool = False,
-        prefetching: bool = False,
-        reduce_scatter: bool = False,
-        model_class: EltwiseMultiplicationTestNetwork_Dict = EltwiseMultiplicationTestNetwork_Dict,
+        param_persistence_threshold: int,
+        fp16_enabled: bool,
+        contiguous_gradients: bool,
+        offload_optimizer: bool,
+        zero_grad: bool,
+        prefetching: bool,
+        model_class: EltwiseMultiplicationTestNetwork_Dict,
     ) -> None:
         if offload_optimizer and not contiguous_gradients:
             return
@@ -987,34 +983,16 @@ class TestZero3InitForParentWeightInitialization(DistributedTest):
 @pytest.mark.parametrize("offload_optimizer", [True, False])
 @pytest.mark.parametrize("zero_grad", [True, False])
 @pytest.mark.parametrize("prefetching", [True, False])
-@pytest.mark.parametrize("reduce_scatter", [True, False])
-@pytest.mark.parametrize(
-    "model_class",
-    [
-        EltwiseMultiplicationTestNetwork_Dict,
-        EltwiseMultiplicationTestNetwork_NamedTuple,
-        EltwiseMultiplicationTestNetwork_namedtuple,
-        EltwiseMultiplicationTestNetwork_Tuple,
-        EltwiseMultiplicationTestNetwork_List,
-    ],
-)
-"""
-
-
-@pytest.mark.skip("not working")
+@pytest.mark.parametrize("model_class", [
+    EltwiseMultiplicationTestNetwork_Dict, EltwiseMultiplicationTestNetwork_NamedTuple,
+    EltwiseMultiplicationTestNetwork_namedtuple, EltwiseMultiplicationTestNetwork_Tuple,
+    EltwiseMultiplicationTestNetwork_List
+])
 class TestZero3ParamPartitioningBaseBF16(DistributedTest):
     world_size = 2
 
-    def test(
-        self,
-        param_persistence_threshold: int,
-        contiguous_gradients: bool,
-        offload_optimizer: bool,
-        zero_grad: bool,
-        prefetching: bool,
-        reduce_scatter: bool,
-        model_class: EltwiseMultiplicationTestNetwork_Dict,
-    ) -> None:
+    def test(self, param_persistence_threshold: int, contiguous_gradients: bool, offload_optimizer: bool,
+             zero_grad: bool, prefetching: bool, model_class: EltwiseMultiplicationTestNetwork_Dict) -> None:
         if offload_optimizer and not contiguous_gradients:
             return
 
