@@ -1042,6 +1042,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             stream = self.reduction_stream
             if not get_accelerator().resolves_data_dependency():
                 stream.wait_stream(get_accelerator().current_stream())
+                get_accelerator().current_stream().wait_stream(stream)
         else:
             stream = get_accelerator().current_stream()
 
