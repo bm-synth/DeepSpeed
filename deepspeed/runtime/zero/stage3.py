@@ -205,8 +205,11 @@ class PrefetchCoordinator(object):
     def reset_step(self):
         self.step_id = 0
 
-    # returns the next numel parameters that will be used next but are not available or inflight
-    def get_params_to_prefetch(self, sub_module, numel=2000000):
+            self.__submodule_order = tuple(self.__submodule_order)  # freeze
+            self.__param_order = tuple(self.__param_order)  # freeze
+            self.trace_complete = True
+            print_rank_0(f"completed trace: {[m.id for m in self.__submodule_order]}",
+                         force=False)
 
         # numel_in_sub_module = 0
         # for name, param in sub_module.named_parameters(recurse=False):
