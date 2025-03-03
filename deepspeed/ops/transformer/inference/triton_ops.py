@@ -78,35 +78,29 @@ def _fwd_kernel(
     q = tl.load(Q_block_ptr)
     q = (q * qk_scale).to(tl.float16)
     # loop over k, v and update accumulator
-    for start_n in range(0, N_CTX, BLOCK_N):
-        start_n = tl.multiple_of(start_n, BLOCK_N)
-        # -- compute qk ----
-        k = tl.load(k_ptrs + start_n * stride_kn)
-
-        qk = tl.dot(q, tl.trans(k))
-        qk *= sm_scale
-        # -- compute m_ij, p, l_ij
-        m_ij = tl.max(qk, 1)
-        p = tl.exp(qk - m_ij[:, None])
-        l_ij = tl.sum(p, 1)
-        # -- update m_i and l_i
-        m_i_new = tl.maximum(m_i, m_ij)
-        alpha = tl.exp(m_i - m_i_new)
-        beta = tl.exp(m_ij - m_i_new)
-        l_i_new = alpha * l_i + beta * l_ij
-        # -- update output accumulator --
-        # scale p
-        p_scale = beta / l_i_new
-        p = p * p_scale[:, None]
-        # scale acc
-        acc_scale = l_i / l_i_new * alpha
-        acc = acc * acc_scale[:, None]
-        # update acc
-        v = tl.load(v_ptrs + start_n * stride_vk)
-        p = p.to(tl.float16)
-        acc += tl.dot(p, v)
-        # update m_i and l_i
-        l_i = l_i_new
+    lo = 0
+    #hi = (start_m + 1) * BLOCK_M if IS_CAUSAL else N_CTX
+    hi = N_CTX
+    #hi = (start_m + 1) * BLOCK_M
+    for start_n in range(lo, hi, BLOCK_N):
+        # -- load k, v --
+        k = tl.load(K_block_ptr)
+        v = tl.load(V_block_ptr)
+        # -- compute qk ---
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        #if IS_CAUSAL:
+        #qk = tl.where(offs_m[:, None] >= (start_n + offs_n[None, :]), qk, float("-inf"))
+        qk += tl.dot(q, k)
+        # -- compute scaling constant ---
+        m_i_new = tl.maximum(m_i, tl.max(qk, 1))
+        alpha = tl.math.exp2(m_i - m_i_new)
+        p = tl.math.exp2(qk - m_i_new[:, None])
+        # -- scale and update acc --
+        acc_scale = l_i * 0 + alpha  # workaround some compiler bug
+        acc *= acc_scale[:, None]
+        acc += tl.dot(p.to(tl.float16), v)
+        # -- update m_i and l_i --
+        l_i = l_i * alpha + tl.sum(p, 1)
         m_i = m_i_new
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
