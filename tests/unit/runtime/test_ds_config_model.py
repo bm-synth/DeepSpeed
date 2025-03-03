@@ -5,11 +5,8 @@
 
 import pytest
 import json
-import os
-from typing import List, Optional
-
-from pydantic import Field, ValidationError
-
+from typing import List
+from deepspeed.pydantic_v1 import Field, ValidationError
 from deepspeed.runtime import config as ds_config
 from deepspeed.runtime.config_utils import DeepSpeedConfigModel
 

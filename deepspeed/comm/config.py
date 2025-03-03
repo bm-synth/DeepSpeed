@@ -3,10 +3,10 @@ Copyright (c) Microsoft Corporation
 Licensed under the MIT license.
 """
 
-from typing import Optional
-from deepspeed.runtime.config_utils import get_scalar_param
-from pydantic import BaseModel, validator, ValidationError, create_model
+# DeepSpeed Team
+
 from .constants import *
+from ..pydantic_v1 import BaseModel
 
 
 class CommsConfig(BaseModel):
