@@ -236,7 +236,7 @@ Example of <i>**scheduler**</i>
 | -------------------------------------------------------------------------------------------------- | ------- |
 | <i>**min_loss_scale**</i> is  a **fp16** parameter representing the minimum dynamic loss scale value. | `1000`  |
 
-### BFLOAT16 options
+### BFLOAT16 training options
 
 **Note:** this mode cannot be combined with the `amp` mode described below.
 {: .notice--warning}
@@ -244,10 +244,7 @@ Example of <i>**scheduler**</i>
 **Note:** this mode cannot be combined with the `fp16` mode described above.
 {: .notice--warning}
 
-**Note:** this mode is only compatible with ZeRO stage 2.
-{: .notice--warning}
-
-<i>**bfloat16**</i>: [dictionary]
+<i>**bf16**</i>: [dictionary]
 
 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Default |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -259,11 +256,11 @@ Example of <i>**scheduler**</i>
  }
 ```
 
-<i>**bfloat16:enabled**</i>: [boolean]
+<i>**bf16:enabled**</i>: [boolean]
 
-| Description                                                                                 | Default |
-| ------------------------------------------------------------------------------------------- | ------- |
-| <i>**enabled**</i> is a **bfloat16** parameter indicating whether or not BFLOAT16 training enabled. | `false` |
+| Description                                                        | Default |
+|--------------------------------------------------------------------| ------- |
+| <i>**enabled**</i> indicates whether BFLOAT16 training is enabled. | `false` |
 
 
 ### Automatic mixed precision (AMP) training options
