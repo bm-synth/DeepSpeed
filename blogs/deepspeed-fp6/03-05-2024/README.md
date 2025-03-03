@@ -43,7 +43,7 @@ To cite DeepSpeed-FP6, please cite the following two arxiv reports - ZeroQuant(4
 
 In the evolving landscape of Large Language Models (LLMs) like GPT, our research aims to boost computational efficiency and storage while preserving model quality. This focus brings us to tackle the complex challenges of 4-bit quantization, where optimizing performance, efficiency, and accuracy is crucial.
 
-**Exploring the Challenges of 4-bit Quantization** In our recent research findings -- ZeroQuant (4+2)[1], we explore the capabilities of INT4 quantization techniques (like the GPTQ algorithm) for serving Large Language Models (LLMs). While these techniques reduce memory and computational requirements, they often perform poorly on a broad array of tasks, including generative tasks such as code generation and summarization, due to overfitting issues. This highlights the urgent need for new quantization approaches that simultaneously improve both the efficiency and effectiveness of LLMs.
+**Exploring the Challenges of 4-bit Quantization** In our recent research findings -- ZeroQuant (4+2)[1], we explore the capabilities of INT4 quantization techniques (like the GPTQ algorithm) for serving Large Language Models (LLMs). While these techniques reduce memory and computational requirements, they often perform poorly on a broad array of tasks, including generative tasks such as code generation and summarization, due to overfitting issues. This highlights the urgent need for new quantization approaches that simultanenously improve both the efficiency and effectiveness of LLMs.
 
 **Breakthroughs with FP6 Precision** Our exploration of different quantization methods led us to the FP6 precision standard. Despite the challenges in integrating and accelerating FP6 with current AI hardware -- which we will address in the next section - this format excels in performance and flexibility across various tasks. Notably, we observe that for generative tasks, FP6 quantization can match the performance of the half-precision (FP16) format. For example, with FP6 quantization, StarCoder-15B achieves comparable code generation results to the FP16 variant, while a smaller model, such as BART-460M, achieves comparable summarization performance to the standard FP16 equivalent. In order to preserve these quality gains, while matching the system efficiency of INT4 quantization on AI hardware, we propose a novel 4+2 FP6 scheme. This innovation makes FP6 a promising direction for improving the efficiency of LLMs, marking a significant leap in AI technology advancement. For more details, please refer to our research paper - ZeroQuant (4+2)[1].
 
@@ -108,7 +108,7 @@ pip install qtorch
 
 To benchmark with our DeepSpeed-FP6, please visit the following script:
 ```bash
-https://github.com/deepspeedai/DeepSpeedExamples/blob/master/benchmarks/inference/mii/run_fp6.sh
+https://github.com/microsoft/DeepSpeedExamples/blob/master/benchmarks/inference/mii/run_fp6.sh
 ```
 
 Please also visit the [FP6-LLM github](https://github.com/usyd-fsalab/fp6_llm) for the standalone kernel of FP6.  Don't forget to star the repo to show your support!
@@ -122,9 +122,9 @@ Currently, DeepSpeed-FP6 supports only dense models with MoE models support upco
 * Please visit our [website](https://www.deepspeed.ai/) for detailed blog posts, tutorials, and helpful documentation.
 * Follow us on our [English X(Twitter)](https://twitter.com/MSFTDeepSpeed), [Japanese X(Twitter)](https://twitter.com/MSFTDeepSpeedJP), and [Chinese Zhihu](https://www.zhihu.com/people/deepspeed) for latest news on DeepSpeed.
 
-We welcome your contributions to DeepSpeed! We encourage you to report issues, contribute PRs, and join discussions on the [DeepSpeed GitHub](https://github.com/deepspeedai/DeepSpeed/) page. Please see our [contributing guide](https://github.com/deepspeedai/DeepSpeed/blob/master/CONTRIBUTING.md) for more details. We are open to collaborations with universities, research labs, companies, such as those working together on deep learning research, applying DeepSpeed to empower real-world AI models and applications, and so on. For such requests (and other requests unsuitable for GitHub), please directly email to deepspeed-info@microsoft.com.
+We welcome your contributions to DeepSpeed! We encourage you to report issues, contribute PRs, and join discussions on the [DeepSpeed GitHub](https://github.com/microsoft/DeepSpeed/) page. Please see our [contributing guide](https://github.com/microsoft/DeepSpeed/blob/master/CONTRIBUTING.md) for more details. We are open to collaborations with universities, research labs, companies, such as those working together on deep learning research, applying DeepSpeed to empower real-world AI models and applications, and so on. For such requests (and other requests unsuitable for GitHub), please directly email to deepspeed-info@microsoft.com.
 
-* "Star" our [DeepSpeed GitHub](https://github.com/deepspeedai/DeepSpeed/) and [DeepSpeed-MII GitHub](https://github.com/deepspeedai/DeepSpeed-MII/) and [DeepSpeedExamples GitHub](https://github.com/deepspeedai/DeepSpeedExamples/)  repositories if you like our work!
+* "Star" our [DeepSpeed GitHub](https://github.com/microsoft/DeepSpeed/) and [DeepSpeed-MII GitHub](https://github.com/microsoft/DeepSpeed-MII/) and [DeepSpeedExamples GitHub](https://github.com/microsoft/DeepSpeedExamples/)  repositories if you like our work!
 
 
 # 6. Acknowledgments and Contributions <a name="ac"></a>
