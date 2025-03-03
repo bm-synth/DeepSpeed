@@ -119,14 +119,11 @@ class TorchBackend(Backend):
         if self.shm_comm_op != None:
             self.shm_comm_op.initialize(self.get_world_size(), self.get_rank())
 
-    @classmethod
-    @disable_compiler_collective
-    def get_all_gather_function(self):
-        if hasattr(torch.distributed, "all_gather_into_tensor"):
-            return torch.distributed.all_gather_into_tensor
-        elif hasattr(torch.distributed, "_all_gather_base"):
-            return torch.distributed._all_gather_base
-        return None
+    def init_process_group(self, backend, timeout, init_method):
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(backend,
+                                                 timeout=timeout,
+                                                 init_method=init_method)
 
     @classmethod
     @disable_compiler_collective
