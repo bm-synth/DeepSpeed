@@ -35,6 +35,8 @@ from deepspeed.checkpoint.constants import (DS_VERSION, OPTIMIZER_STATE_DICT, SI
                                             FP32_FLAT_GROUPS, ZERO_STAGE, PARTITION_COUNT, PARAM_SHAPES, BUFFER_NAMES,
                                             FROZEN_PARAM_SHAPES, FROZEN_PARAM_FRAGMENTS)
 
+debug = 0
+
 
 @dataclass
 class zero_model_state:
@@ -155,23 +157,11 @@ def parse_optim_states(files, ds_checkpoint_dir):
         state_dict["optimizer_state_dict"].pop("optimizer_state_dict", None)
         state_dicts.append(state_dict)
 
-    if not ZERO_STAGE in state_dicts[0][OPTIMIZER_STATE_DICT]:
-        raise ValueError(f"{files[0]} is not a zero checkpoint")
-    zero_stage = state_dicts[0][OPTIMIZER_STATE_DICT][ZERO_STAGE]
-    world_size = state_dicts[0][OPTIMIZER_STATE_DICT][PARTITION_COUNT]
-
-    # For ZeRO-2 each param group can have different partition_count as data parallelism for expert
-    # parameters can be different from data parallelism for non-expert parameters. So we can just
-    # use the max of the partition_count to get the dp world_size.
-
-    if type(world_size) is list:
-        world_size = max(world_size)
-
-    if world_size != total_files:
-        raise ValueError(
-            f"Expected {world_size} of '*_optim_states.pt' under '{ds_checkpoint_dir}' but found {total_files} files. "
-            "Possibly due to an overwrite of an old checkpoint, or a checkpoint didn't get saved by one or more processes."
-        )
+    if not "zero_stage" in state_dicts[0]['optimizer_state_dict']:
+        raise ValueError(f"non zero checkpoint")
+    zero_stage = state_dicts[0]['optimizer_state_dict']["zero_stage"]
+    world_size = state_dicts[0]['optimizer_state_dict']["partition_count"]
+    param_shapes = state_dicts[0]["param_shapes"]
 
     # the groups are named differently in each stage
     if zero_stage <= 2:
@@ -181,8 +171,15 @@ def parse_optim_states(files, ds_checkpoint_dir):
     else:
         raise ValueError(f"unknown zero stage {zero_stage}")
 
-    fp32_flat_groups = [state_dicts[i][OPTIMIZER_STATE_DICT][fp32_groups_key] for i in range(len(state_dicts))]
-    return zero_stage, world_size, fp32_flat_groups
+    # if there is more than one param group, there will be multiple flattened tensors - one
+    # flattened tensor per group - for simplicity merge them into a single tensor
+    #
+    # XXX: could make the script more memory efficient for when there are multiple groups - it
+    # will require matching the sub-lists of param_shapes for each param group flattened tensor
+    fp32_flat_groups = [
+        torch.cat(state_dicts[i]['optimizer_state_dict'][fp32_groups_key],
+                  0) for i in range(len(state_dicts))
+    ]
 
 
 def _get_fp32_state_dict_from_zero_checkpoint(ds_checkpoint_dir, exclude_frozen_parameters):
@@ -368,17 +365,65 @@ def _zero3_merge_frozen_params(state_dict, world_size, zero_model_states):
         print(f'Frozen params: Have {avail_numel} numels to process.')
         print(f'Frozen params: Need {wanted_numel} numels in {wanted_params} params')
 
-    total_params = 0
+    optim_files = get_optim_files(checkpoint_dir)
+    zero_stage, world_size, param_shapes, fp32_flat_groups = parse_optim_states(optim_files)
+    print(
+        f"Detected checkpoint of type zero stage {zero_stage}, world_size: {world_size}")
+
+    # Reconstruction protocol:
+    #
+    # - for zero2 we just need to concat the partitions back to back and reconsolidate over one huge
+    # flat buffer - no need to deal with padding since if there is any it will be only in the tail
+    # of the last partition so there it will be just left out
+    #
+    # - for zero3 we need to zip the partitions together at boundary of each param, re-consolidating
+    # each param, while dealing with padding if any
+
+    if debug:
+        for i in range(world_size):
+            print(f"fp32_flat_groups[i].shape={fp32_flat_groups[i].shape}")
+
+    if zero_stage == 2:
+        # XXX: memory usage doubles here (zero2)
+        full_single_fp32_vector = torch.cat(fp32_flat_groups, 0)
+
+    # XXX: for huge models that can't fit into the host's RAM we will have to recode this to support
+    # out-of-core computing solution
+    state_dict = OrderedDict()
+    offset = 0
     total_numel = 0
     for name, shape in zero_model_states[0].frozen_param_shapes.items():
         total_params += 1
         unpartitioned_numel = shape.numel()
         total_numel += unpartitioned_numel
 
-        param_frags = tuple(model_state.frozen_param_fragments[name] for model_state in zero_model_states)
-        state_dict[name] = torch.cat(param_frags, 0).narrow(0, 0, unpartitioned_numel).view(shape)
+        if zero_stage == 2:
+            if debug:
+                print(
+                    f"{name} full shape: {shape} unpartitioned numel {unpartitioned_numel} "
+                )
+            state_dict[name] = full_single_fp32_vector.narrow(
+                0,
+                offset,
+                unpartitioned_numel).view(shape)
+            offset += unpartitioned_numel
 
-        partitioned_numel, partitioned_padding_numel = zero3_partitioned_param_info(unpartitioned_numel, world_size)
+        elif zero_stage == 3:
+            partitioned_numel, partitioned_padding_numel = zero3_partitioned_param_info(unpartitioned_numel, world_size)
+
+            if debug:
+                print(
+                    f"{name} full shape: {shape} partition0 numel={partitioned_numel} partitioned_padding_numel={partitioned_padding_numel}"
+                )
+
+            # XXX: memory usage doubles here (zero3)
+            state_dict[name] = torch.cat(
+                tuple(fp32_flat_groups[i].narrow(0,
+                                                 offset,
+                                                 partitioned_numel)
+                      for i in range(world_size)),
+                0).view(shape)
+            offset += partitioned_numel + partitioned_padding_numel
 
         if debug:
             print(
