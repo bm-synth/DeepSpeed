@@ -320,6 +320,43 @@ and return the states for the client model.
 
 ```
 
+### DeepSpeed Activation Checkpoints (Optional)
+
+DeepSpeed can reduce the activation memory during model parallel training by partitioning activation checkpoints across model parallel GPUs, or offloading them to CPU. These optimizations are optional, and can be skipped unless activation memory becomes a memory bottleneck. To enable partition activation, we use the `deepspeed.checkpointing` API to replace Megatron's activation checkpointing and random state tracker APIs. The replacement should happen before the first invocation of these APIs.
+
+a) Replace in `pretrain_gpt.py` :
+
+ ```python
+    # Optional DeepSpeed Activation Checkpointing Features
+    #
+    if args.deepspeed and args.deepspeed_activation_checkpointing:
+        set_deepspeed_activation_checkpointing(args)
+
+def set_deepspeed_activation_checkpointing(args):
+
+    deepspeed.checkpointing.configure(mpu,
+                            deepspeed_config=args.deepspeed_config,
+                            partition_activation=True)
+
+    mpu.checkpoint = deepspeed.checkpointing.checkpoint
+    mpu.get_cuda_rng_tracker = deepspeed.checkpointing.get_cuda_rng_tracker
+    mpu.model_parallel_cuda_manual_seed =
+                    deepspeed.checkpointing.model_parallel_cuda_manual_seed
+```
+
+b) Replace in `mpu/transformer.py`:
+
+```python
+if deepspeed.checkpointing.is_configured():
+            global get_cuda_rng_tracker, checkpoint
+            get_cuda_rng_tracker = deepspeed.checkpoint.get_cuda_rng_tracker
+            checkpoint = deepspeed.checkpointing.checkpoint
+
+```
+
+With these replacements, various DeepSpeed activation checkpointing optimizations such as activation partitioning, contiguous checkpointing, and CPU checkpointing, can be specified with either `deepspeed.checkpointing.configure` or in the `deepspeed_config` file.
+
+
 ### Train  scripts
 Assume webtext data was prepared in previous step, to start training
 Megatron-LM GPT2 model with DeepSpeed applied, execute the following command to
@@ -392,22 +429,4 @@ and achieves better performance.
 </p>
 
 
-**a ) Megatron-LM GPT2 Baseline**
-
-|      | Model Parallelism | Data Parallelism | #gpus | batch size | layers | hidden size | attention heads | samples / sec |
-| ---- | ----------------: | ---------------: | ----: | ---------: | -----: | -----------:| --------------: | ------------: |
-| 1.5B | 2                 | 32               | 64    | 512        | 48     | 1600        | 16              | 128.56        |
-| 4B   | 4                 | 16               | 64    | 128        | 64     | 2304        | 16              | 49.36         |
-| 8B   | 4                 | 16               | 64    | 128        | 72     | 3072        | 24              | 24.57         |
-| 20B  | 16                | 4                | 64    | 16         | 111    | 3808        | 32              | 3.42          |
-
-
-
-**b ) Megatron-LM GPT2 with DeepSpeed**
-
-|      | Model Parallelism | Data Parallelism | #gpus | batch size | layers | hidden size | attention heads | samples / sec |
-| ---- | ----------------: | ---------------: | ----: | ---------: | -----: | -----------:| --------------: | ------------: |
-| 1.5B | 1                 | 64               | 64    | 2048       | 48     | 1600        | 16              | 151.35        |
-| 4B   | 1                 | 64               | 64    | 512        | 64     | 2304        | 16              | 75.13         |
-| 8B   | 2                 | 32               | 64    | 512        | 72     | 3072        | 24              | 43.52         |
-| 20B  | 4                 | 16               | 64    | 128        | 111    | 3808        | 32              | 12.65         |
+Furthermore, in the absence of model parallelism, these models can be trained on low bandwidth clusters while still achieving significantly better throughput compared to using model parallelism. For example, the GPT-2 model can be trained nearly 4x faster with ZeRO powered data parallelism compared to using model parallelism on a four node cluster connected with 40 Gbps Infiniband interconnect, where each node have four NVIDIA 16GB V100 GPUs connected with PCI-E. Therefore, with this performance improvement, large model training is no longer limited to GPU clusters with ultra fast interconnect but also accessible on modest clusters with limited bandwidth.
