@@ -5,7 +5,7 @@ date: 2020-09-09 01:00:00
 tags: training inference English
 ---
 
-Attention-based deep learning models such as the transformers are highly effective in capturing the relationship between tokens in an input sequence, even across long distances. As a result, they are used with text, image, and sound-based inputs, where the sequence length can be in thousands of tokens. However, despite the effectiveness of attention modules to capture long term dependencies, in practice, their application to long sequence input is limited by compute and memory requirements of the attention computation that grow quadratically, `O(n^2)`, with the sequence length `n`.
+Attention-based deep learning models such as the transformers are highly effective in capturing relationship between tokens in an input sequence, even across long distances. As a result, they are used with text, image, and sound-based inputs, where the sequence length can be in thousands of tokens. However, despite the effectiveness of attention modules to capture long term dependencies, in practice, their application to long sequence input is limited by compute and memory requirements of the attention computation that grow quadratically, `O(n^2)`, with the sequence length `n`.
 
 To address this limitation, DeepSpeed offers a suite of sparse attention kernels --an instrumental technology that can reduce the compute and memory requirement of attention computation by orders-of-magnitude via block-sparse computation. The suite not only alleviates the memory bottleneck of attention calculation, but also performs sparse computation efficiently. Its APIs allow convenient integration with any transformer-based models. Along with providing a wide spectrum of sparsity structures, it has the flexibility of handling any user-defined block-sparse structures. More specifically, sparse attention (SA) can be designed to compute local attention between nearby tokens, or global attention via summary tokens computed with local attention. Moreover, SA can also allow random attention, or any combination of local, global, and random attention as shown in the following figure with blue, orange, and green blocks, respectively. As a result, SA decreases the memory footprint to `O(wn)`, in which `1 < w < n` is a parameter, whose value depends on the attention structure.
 
@@ -18,7 +18,7 @@ Block-sparse computations handled by DeepSpeed Sparse Attention kernels are illu
 
 ![Sparse attention backward pass](/assets/images/sa_backward_pass.png){: .align-center}
 
-To learn more about Sparsity Config, and also how to use this library, please check our [tutorial](/tutorials/sparse-attention/) that provides detailed information about it.
+To learn more about Sparsity Config, and also how to use this library, please check our [tutorial](/tutorials/sparse_attention/) that provides detailed information about it.
 
 ## Performance Results
 
@@ -43,7 +43,7 @@ Related works along the line of sparse attention ([Sparse Transformer](https://a
 ![Accuracy of long document comprehension application](/assets/images/sa_long_document_comprehension_result.png){: .align-center}
 
 
-* **Comparison with state of the art, Longformer**
+* **comparison with state of the art, Longformer**
 We compared SA with Longformer, a state-of-the-art sparse structure and implementation. In our experiment, SA uses `Fixed` sparsity, and two implementations have comparable accuracy. On system performance, SA outperforms Longformer both in training and inference:
   * **1.47x** faster execution pre-training MLM on Wikitext103
 We ran an experiment following the [notebook](https://github.com/allenai/longformer/blob/master/scripts/convert_model_to_long.ipynb) offered by Longformer. In this experiment, we pre-train an MLM model using RoBERTa-base checkpoint. This is done on 8 V100-SXM2 GPU. Following table shows the details of the result in which using DeepSpeed Sparse Attention shows 1.47x speed up.
@@ -73,10 +73,10 @@ Through our Long Document Comprehension application we described above, we also 
 |32                  |1.24            |
 |16                  |1.23            |
 
-* **Flexibility to handle any block-sparse structure**
+* **flexibility to handle any block-sparse structure**
 DeepSpeed Sparse Attention suite does not target at any specific sparse structure but enables model scientists to explore any block sparse structure with efficient system support. Currently, we have added popular sparse structure like:
   * [Fixed](https://arxiv.org/pdf/1904.10509.pdf) (from OpenAI Sparse Transformer)
   * [BigBird](https://arxiv.org/pdf/2007.14062.pdf) (from Google)
   * BSLongformer (Block-Sparse implementation of [Longformer](https://arxiv.org/pdf/2004.05150.pdf) from AI2)
 
-We also define a template to have `variable` structure (top figure), which can be used to simply customize any block-sparse random/local/global attention pattern. In addition to this list, user can add any other sparsity structure as described in [tutorial](https://www.deepspeed.ai/tutorials/sparse-attention/) section.
+We also define a template to have `variable` structure (top figure), which can be used to simply customize any block-sparse random/local/global attention pattern. In addition to this list, user can add any other sparsity structure as described in [tutorial](https://www.deepspeed.ai/tutorials/sparse_attention/) section.
