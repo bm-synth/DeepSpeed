@@ -219,3 +219,93 @@ def add_config_arguments(parser):
     parser = _add_core_arguments(parser)
 
     return parser
+
+
+def init_inference(model,
+                   triangular_masking=True,
+                   mp_size=1,
+                   training_mp_size=1,
+                   mpu=None,
+                   ep_group=None,
+                   expert_mp_group=None,
+                   checkpoint=None,
+                   dtype=None,
+                   injection_policy=None,
+                   replace_method='auto',
+                   quantization_setting=None,
+                   replace_with_kernel_inject=False,
+                   return_tuple=True,
+                   ep_size=1,
+                   moe=False,
+                   moe_experts=1,
+                   moe_type='standard',
+                   args=None,
+                   enable_cuda_graph=False):
+    """Initialize the DeepSpeed InferenceEngine.
+
+    Arguments:
+        model: Required: nn.module class before apply any wrappers
+
+        triangular_masking: Required: this shows the type of masking for attention scores in transformer layer
+            note that the masking is application specific.
+
+        mp_size: Optional: Desired model parallel size, default is 1 meaning no
+            model parallelism.
+
+        training_mp_size: Optional: if loading a checkpoint this is the mp size that it was trained with,
+            it may be different than what the mp size that you want to use during inference.
+
+        mpu: Optional: A model parallelism unit object that implements
+            get_{model,data}_parallel_{rank,group,world_size}()
+
+        checkpoint: Optional: Path to deepspeed compatible checkpoint or path to
+            JSON with load policy.
+
+        dtype: Optional: Desired model data type, will convert model to this type.
+            Supported target types: torch.half, torch.int8, torch.float
+
+        injection_policy: Optional: Dictionary mapping a client nn.Module to its corresponding
+            injection policy. e.g., {BertLayer : deepspeed.inference.HFBertLayerPolicy}
+
+        replace_method: Optional: If 'auto' DeepSpeed will automatically try and replace
+            model modules with its optimized versions. If an injection_policy is set this will
+            override the automatic replacement behavior.
+
+        quantization_setting: Optional: Quantization settings used for quantizing your model using the MoQ.
+            The setting can be one element or a tuple. If one value is passed in, we consider it as the number
+            of groups used in quantization. A tuple is passed in if we want to mention that there is extra-grouping
+            for the MLP part of a Transformer layer (e.g. (True, 8) shows we quantize the model using 8 groups for
+            all the network except the MLP part that we use 8 extra grouping).
+        replace_with_kernel_inject: If set we inject kernel as we initialize the inference-engine
+
+    Returns:
+        A deepspeed.InferenceEngine wrapped model.
+    """
+    log_dist("DeepSpeed info: version={}, git-hash={}, git-branch={}".format(
+        __version__,
+        __git_hash__,
+        __git_branch__),
+             ranks=[0])
+
+    engine = InferenceEngine(model,
+                             triangular_masking,
+                             mp_size,
+                             training_mp_size,
+                             ep_size,
+                             mpu,
+                             ep_group,
+                             expert_mp_group,
+                             checkpoint,
+                             dtype,
+                             injection_policy,
+                             return_tuple,
+                             replace_method,
+                             quantization_setting,
+                             replace_with_kernel_inject,
+                             moe,
+                             moe_experts,
+                             moe_type,
+                             args,
+                             enable_cuda_graph)
+
+    return engine
