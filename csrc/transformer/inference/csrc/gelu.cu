@@ -591,8 +591,30 @@ __global__ void moe_res_matmul(__half* residual,
 {
 #ifdef HALF_PRECISION_AVAILABLE
     unsigned tid = threadIdx.x;
+    float2* residual_cast = reinterpret_cast<float2*>(residual);
+    float2* mlp_out_cast = reinterpret_cast<float2*>(mlp_out);
+    float2* coef_cast = reinterpret_cast<float2*>(coef);
+    float2* coef_cast2 = coef_cast + hidden_dim;
 
-        mem_access::store_global<granularity>(mlp_out_seq + tid, mlp);
+    residual_cast += blockIdx.x * hidden_dim;
+    mlp_out_cast += blockIdx.x * hidden_dim;
+
+    while (tid < hidden_dim) {
+        float2 res = residual_cast[tid];
+        float2 coef1 = coef_cast[tid];
+        float2 coef2 = coef_cast2[tid];
+        float2 data = mlp_out_cast[tid];
+        __half* data_h = reinterpret_cast<__half*>(&data);
+        __half* coef1_h = reinterpret_cast<__half*>(&coef1);
+        __half* coef2_h = reinterpret_cast<__half*>(&coef2);
+        __half* res_h = reinterpret_cast<__half*>(&res);
+        data_h[0] = res_h[0] * coef1_h[0] + data_h[0] * coef2_h[0];
+        data_h[1] = res_h[1] * coef1_h[1] + data_h[1] * coef2_h[1];
+        data_h[2] = res_h[2] * coef1_h[2] + data_h[2] * coef2_h[2];
+        data_h[3] = res_h[3] * coef1_h[3] + data_h[3] * coef2_h[3];
+
+        mlp_out_cast[tid] = data;
+        tid += blockDim.x;
     }
 #endif
 }
