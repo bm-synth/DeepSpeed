@@ -128,10 +128,9 @@ accepts a client state dictionary `client_sd` for saving. These items can be
 retrieved from `load_checkpoint` as a return argument. In the example above,
 the `step` value is stored as part of the `client_sd`.
 
-**Important**: all processes must call this method and not just the process with rank 0. It is because
+Important: all processes must call this method and not just the process with rank 0. It is because
 each process needs to save its master weights and scheduler+optimizer states. This method will hang
 waiting to synchronize with other processes if it's called just for the process with rank 0.
-{: .notice--info}
 
 ## DeepSpeed Configuration
 
