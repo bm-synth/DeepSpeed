@@ -489,6 +489,13 @@ class PipelineModule(nn.Module):
                 weight_group_list.append((weight, comm['group']))
         return weight_group_list
 
+    def get_tied_weights_and_groups(self):
+        weight_group_list = []
+        for key, comm in self.tied_comms.items():
+            weight = getattr(self.tied_modules[key], comm['weight_attr'])
+            weight_group_list.append((weight, comm['group']))
+        return weight_group_list
+
     def _synchronize_tied_weights(self):
         for key, comm in self.tied_comms.items():
             for attr_name in comm['weight_attr']:

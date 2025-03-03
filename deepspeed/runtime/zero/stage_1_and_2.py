@@ -9,20 +9,28 @@ from packaging import version as pkg_version
 from collections import OrderedDict
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 
-from deepspeed.runtime.base_optimizer import ZeROOptimizer
-from deepspeed.runtime.fp16.loss_scaler import CreateLossScaler
-from deepspeed.runtime.utils import (empty_cache, see_memory_usage, inf, is_model_parallel_parameter,
-                                     align_dense_tensors, all_gather_dp_groups)
-from deepspeed.runtime.zero.config import ZeroStageEnum
-from deepspeed.runtime.zero.offload_config import OffloadDeviceEnum
+from deepspeed.runtime.fp16.loss_scaler import LossScaler, DynamicLossScaler
+from deepspeed.runtime.utils import (bwc_tensor_model_parallel_rank,
+                                     get_global_norm,
+                                     see_memory_usage,
+                                     is_model_parallel_parameter,
+                                     align_dense_tensors,
+                                     all_gather_dp_groups)
+
+from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION_GRADIENTS
+from deepspeed.runtime.zero.offload_constants import OFFLOAD_CPU_DEVICE, OFFLOAD_OPTIMIZER
 from deepspeed.ops.adam import DeepSpeedCPUAdam
 from deepspeed.utils import logger
 from deepspeed.utils.bwc import bwc_tensor_model_parallel_rank
 from deepspeed.moe.utils import is_moe_param
 from deepspeed.git_version_info import version
-
 from deepspeed.runtime.constants import PIPE_REPLICATED
-from deepspeed.accelerator import get_accelerator
+from deepspeed.checkpoint.constants import (DS_VERSION,
+                                            PARTITION_COUNT,
+                                            SINGLE_PARTITION_OF_FP32_GROUPS,
+                                            BASE_OPTIMIZER_STATE,
+                                            CLIP_GRAD,
+                                            ZERO_STAGE)
 
 from deepspeed.checkpoint.constants import (DS_VERSION, GROUP_PADDINGS, PARTITION_COUNT, LOSS_SCALER,
                                             SINGLE_PARTITION_OF_FP32_GROUPS, BASE_OPTIMIZER_STATE,
@@ -937,8 +945,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         )
 
     # create a flat tensor aligned at the alignment boundary
-    def flatten_dense_tensors_aligned(self, tensor_list, alignment, use_cpu_data=False):
-        tensor_list = [param.cpu_data for param in tensor_list] if use_cpu_data else tensor_list
+    def flatten_dense_tensors_aligned(self, tensor_list, alignment):
         return self.flatten(align_dense_tensors(tensor_list, alignment))
 
     ############### Independent Partition Gradient ########################
@@ -1924,8 +1931,13 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
 
                 self.timers(OPTIMIZER_GRADIENTS_TIMER).stop()
 
-        self._global_grad_norm = get_global_norm(norm_list=norm_groups)
-        self.unscale_and_clip_grads(single_partition_grad_groups, self._global_grad_norm)
+        scaled_global_grad_norm = get_global_norm(norm_list=norm_groups)
+        self.unscale_and_clip_grads(single_partition_grad_groups,
+                                    scaled_global_grad_norm)
+
+        # Stash unscaled gradient norm
+        self._global_grad_norm = scaled_global_grad_norm / self.loss_scale
+
         self.stop_timers([OPTIMIZER_GRADIENTS])
 
         self.start_timers([OPTIMIZER_STEP])
@@ -1956,15 +1968,15 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         if self.cpu_offload:
             self.reset_cpu_buffers()
 
-        self.timers(OPTIMIZER_ALLGATHER_TIMER).start()
-        # Gather the updated weights from everyone.
-        # Then all partitions of the model parameters are updated and ready for next round forward.
-        all_gather_dp_groups(groups_flat=self.bit16_groups_flat,
-                             partitioned_param_groups=self.parallel_partitioned_bit16_groups,
-                             dp_process_group=self.real_dp_process_group,
-                             start_alignment_factor=self.nccl_start_alignment_factor,
-                             allgather_bucket_size=self.allgather_bucket_size)
-        self.timers(OPTIMIZER_ALLGATHER_TIMER).stop()
+        self.start_timers([OPTIMIZER_ALLGATHER])
+        # gather the updated weights from everyone
+        all_gather_dp_groups(
+            partitioned_param_groups=self.parallel_partitioned_bit16_groups,
+            dp_process_group=self.real_dp_process_group,
+            start_alignment_factor=self.nccl_start_alignment_factor,
+            allgather_bucket_size=self.allgather_bucket_size)
+
+        self.stop_timers([OPTIMIZER_ALLGATHER])
 
         # TODO: we probably don't need this? just to be safe
         for i in range(len(self.bit16_groups)):
@@ -2386,7 +2398,23 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         # I think it should actually be ok to reload the optimizer before the model.
         dp_rank = dist.get_rank(group=self.dp_process_group)
         current_rank_sd = state_dict_list[dp_rank]
-        self._load_global_state(current_rank_sd)
+        self.loss_scaler = current_rank_sd.get('loss_scaler', self.loss_scaler)
+        self.dynamic_loss_scale = current_rank_sd.get('dynamic_loss_scale',
+                                                      self.dynamic_loss_scale)
+        self.overflow = current_rank_sd.get('overflow', self.overflow)
+        self.clip_grad = current_rank_sd.get(CLIP_GRAD, self.clip_grad)
+
+        ckpt_version = current_rank_sd.get(DS_VERSION, False)
+        assert ckpt_version, f"Empty ds_version in checkpoint, not clear how to proceed"
+        ckpt_version = pkg_version.parse(ckpt_version)
+
+        # zero stage 1 mode
+        if not self.partition_gradients:
+            required_version = pkg_version.parse("0.3.17")
+            error_str = f"ZeRO stage 1 changed in {required_version} and is not backwards compatible " \
+                "with older stage 1 checkpoints. If you'd like to load an old ZeRO-1 checkpoint " \
+                "please use an older version of DeepSpeed (<= 0.5.8) and set 'legacy_stage1': true in your zero config json."
+            assert required_version <= ckpt_version, f"Old version: {ckpt_version} {error_str}"
 
         ckpt_is_rigid = isinstance(current_rank_sd[BASE_OPTIMIZER_STATE], dict)
 

@@ -16,13 +16,11 @@ FP32_FLAT_GROUPS = 'fp32_flat_groups'
 BASE_OPTIMIZER_STATE = 'base_optimizer_state'
 BASE_OPTIMIZER_STATE_STEP = 'base_optimizer_state_step'
 SINGLE_PARTITION_OF_FP32_GROUPS = "single_partition_of_fp32_groups"
-PARAM_GROUPS = 'param_groups'
-GROUP_PADDINGS = 'group_paddings'
+GROUPS_PADDING = 'groups_padding'
+
 PARTITION_COUNT = 'partition_count'
 ZERO_STAGE = 'zero_stage'
 CLIP_GRAD = 'clip_grad'
-FP32_WEIGHT_KEY = "fp32"
-LOSS_SCALER = 'loss_scaler'
 
 #########################################
 # Module checkpoint keys

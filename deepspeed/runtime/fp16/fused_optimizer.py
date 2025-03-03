@@ -12,7 +12,9 @@ from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 from deepspeed.runtime.base_optimizer import DeepSpeedOptimizer
 from deepspeed.runtime.utils import get_global_norm, get_flattened_grad_norm, CheckOverflow, get_weight_norm, get_norm_with_moe_layers, is_model_parallel_parameter
 from deepspeed.runtime.fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, MIN_LOSS_SCALE
-from deepspeed.utils import logger, log_dist
+from deepspeed.utils import groups, logger, log_dist
+from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, CLIP_GRAD
+import torch.distributed as dist
 
 
 class FP16_Optimizer(DeepSpeedOptimizer):
@@ -96,6 +98,7 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
         self.clip_grad = clip_grad
         self.norm_type = 2
+        self.step_count = 0
 
         if required_torch_version(max_version=0.4):
             self.clip_grad_norm = torch.nn.utils.clip_grad_norm
@@ -177,10 +180,12 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
         scaled_grad_norm = get_global_norm(norm_list=norm_groups)
 
-        combined_scale = self.unscale_and_clip_grads(grads_groups_flat, scaled_grad_norm, apply_scale=False)
+        combined_scale = self.unscale_and_clip_grads(grads_groups_flat,
+                                                     scaled_grad_norm,
+                                                     apply_scale=False)
 
         # Stash unscaled gradient norm
-        self._global_grad_norm = scaled_grad_norm / self.cur_scale
+        self._global_grad_norm = scaled_global_grad_norm / self.cur_scale
 
         # norm is in fact norm*cur_scale
         self.optimizer.step(grads=[[g] for g in grads_groups_flat],
@@ -313,13 +318,22 @@ class FP16_Optimizer(DeepSpeedOptimizer):
             self.fp32_groups_flat[i].grad = grads_groups_flat[i]
             param_group = self.optimizer.param_groups[i]
 
-            # split expert and non_expert grads for norm
-            if self.has_moe_layers and is_moe_param_group(param_group):
-                if param_group['name'] not in expert_grads_for_norm:
-                    expert_grads_for_norm[param_group['name']] = []
+        self.start_timers([COMPUTE_NORM])
+
+        all_groups_norm = get_grad_norm(self.fp32_groups_flat, mpu=self.mpu)
+
+        self.stop_timers([COMPUTE_NORM])
+
+        if self.has_moe_layers:
+            all_groups_norm = self._get_norm_with_moe_layers(all_groups_norm)
+
+        scaled_global_grad_norm = get_global_norm(norm_list=[all_groups_norm])
+
+        # Stash unscaled gradient norm
+        self._global_grad_norm = scaled_global_grad_norm / self.cur_scale
 
         self.start_timers([UNSCALE_AND_CLIP])
-        self.unscale_and_clip_grads(grads_groups_flat, [all_groups_norm])
+        self.unscale_and_clip_grads(grads_groups_flat, scaled_global_grad_norm)
         self.stop_timers([UNSCALE_AND_CLIP])
 
         all_groups_norm = get_flattened_grad_norm(non_experts_grads_for_norm,
@@ -361,7 +375,25 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
         self.timers.log(STEP_TIMERS)
 
+        self.step_count += 1
+
         return self.overflow
+
+    def _get_norm_with_moe_layers(self, all_groups_norm):
+        #all_groups_norm_old = all_groups_norm
+        # Need to allreduce (avg) the norms across different ranks because moe params will not be synced during allreduce
+        if self.using_pipeline:
+            pg = self.deepspeed.mpu.get_data_parallel_group()
+        else:
+            pg = groups._get_data_parallel_group()
+        scaled_norm = all_groups_norm * 1.0 / float(dist.get_world_size(group=pg))
+        scaled_norm_tensor = torch.tensor(scaled_norm,
+                                          device=self.fp32_groups_flat[0].device,
+                                          dtype=torch.float)
+        dist.all_reduce(scaled_norm_tensor, group=pg)
+        all_groups_norm = scaled_norm_tensor.item()
+        #print(f"old = {all_groups_norm_old} and new = {all_groups_norm} at rank: {torch.distributed.get_rank()}")
+        return all_groups_norm
 
     def unscale_and_clip_grads(self, grad_groups_flat, total_norm, apply_scale=True):
         # compute combined scale factor for this group
@@ -386,12 +418,9 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         2. scaled_loss = fp32_loss*loss_scale
         3. scaled_loss.backward(), which accumulates scaled gradients into the ``.grad`` attributes of the model's fp16 leaves
         """
-        if self.custom_loss_scaler:
-            scaled_loss = self.external_loss_scale * loss
-            scaled_loss.backward()
-        else:
-            scaled_loss = (loss.float()) * self.cur_scale
-            scaled_loss.backward(create_graph=create_graph, retain_graph=retain_graph)
+
+        scaled_loss = (loss.float()) * self.cur_scale
+        scaled_loss.backward(create_graph=create_graph, retain_graph=retain_graph)
 
     def _update_scale(self, skip):
         if self.dynamic_loss_scale:
