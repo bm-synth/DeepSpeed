@@ -49,6 +49,7 @@ The default is to use the NCCL backend, which DeepSpeed has been thoroughly test
 
 But if you don't need the distributed environment setup until after `deepspeed.initialize()` you don't have to use this function, as DeepSpeed will automatically initialize the distributed environment during its `initialize`. Regardless, you will need to remove `torch.distributed.init_process_group` if you already had it in place.
 
+
 ### Training
 
 Once the DeepSpeed engine has been initialized, it can be used to train the
