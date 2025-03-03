@@ -16,6 +16,7 @@ if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
     pytest.skip("Inference ops are not available on this system", allow_module_level=True)
 
 
+
 def ref_implementation(vals, gamma, epsilon):
     variance = vals.to(torch.float32).pow(2).mean(-1, keepdim=True)
     vals = vals * torch.rsqrt(variance + epsilon)
