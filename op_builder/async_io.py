@@ -3,6 +3,7 @@ Copyright 2020 The Microsoft DeepSpeed Team
 """
 import distutils.spawn
 import subprocess
+import torch
 
 from .builder import OpBuilder
 
@@ -48,11 +49,16 @@ class AsyncIOBuilder(TorchCPUOpBuilder):
         # -O0 for improved debugging, since performance is bound by I/O
         CPU_ARCH = self.cpu_arch()
         SIMD_WIDTH = self.simd_width()
+        TORCH_MAJOR, TORCH_MINOR = map(int, torch.__version__.split('.')[0:2])
+        if TORCH_MAJOR >= 2 and TORCH_MINOR >= 1:
+            CPP_STD = '-std=c++17'
+        else:
+            CPP_STD = '-std=c++14'
         return [
             '-g',
             '-Wall',
             '-O0',
-            '-std=c++14',
+            CPP_STD,
             '-shared',
             '-fPIC',
             '-Wno-reorder',
