@@ -8,186 +8,6 @@ import re
 
 from torch import nn
 from .replace_policy import replace_policies
-from typing import Optional
-import torch
-from deepspeed import comm as dist
-from .layers import LinearAllreduce, LinearLayer, LmHeadLinearAllreduce, Yuan_LinearAllreduce, Yuan_LinearLayer, GateUpPack_LinearLayer, Conv_LinearALlreduce, fused_LinearLayer, conv_LinearLayer
-from deepspeed.accelerator import get_accelerator
-from .fusedqkv_utils import require_tp_fused_qkvw
-from deepspeed.module_inject.tp_shard import get_shard_size, get_shard_size_list
-from deepspeed.utils import groups
-from deepspeed.module_inject.layers import is_autotp_training_mode
-
-
-def move(tensor, device, copy=True):
-    if tensor.is_meta:
-        return torch.empty_like(tensor, device=device)
-    else:
-        # Using new tensors help in freeing memory (after split for example) was done before by calling clone().
-        # Using copy=True instead of clone() will help in case of cpu --> cpu.
-        # Otherwise to() will not create a new copy for the view of the full tensor, and it will not be de-referenced.
-        return tensor.to(device, copy=copy)
-
-
-class ReplaceWithTensorSlicing:
-
-    def __init__(self, mp_group=None, mp_size=1, out_dim=1, in_dim=0):
-        if mp_group is not None:
-            self.gpu_index = dist.get_rank(group=mp_group)
-        else:
-            self.gpu_index = 0
-        self.out_dim = out_dim
-        self.in_dim = in_dim
-        self.mp_size = mp_size
-
-    def merge_assert(self, dim1, dim2):
-        assert dim1 > dim2, \
-            'Merging tensors is not allowed here! Please use deepspeed load_checkpoint\
-            for merging your checkpoints before replacing the transformer layer with\
-            inference-kernels'
-
-    def strided_copy(self,
-                     dst: Optional[torch.Tensor],
-                     src: Optional[torch.Tensor],
-                     num_splits: int,
-                     int8: bool = False,
-                     allocate_tensor: bool = False):
-        if src is None:
-            return src
-        src_shape = src.shape
-        dst_shape = dst.shape
-
-        outer_dim = 0 if int8 else -1
-
-        if allocate_tensor:
-            dst = torch.empty_like(dst)
-
-        src_split = torch.split(src.data, src.shape[outer_dim] // num_splits, dim=outer_dim)
-        if (len(src_shape) == 2 and len(dst_shape) == 2):
-            if src_shape[outer_dim] == dst_shape[self.out_dim]:
-                try:
-                    dst = dst.reshape(-1).data.copy_(src.data.reshape(-1)).reshape(src.shape)
-                except:
-                    print(dst.shape, src.shape)
-                    exit()
-                dst = torch.nn.parameter.Parameter(dst, requires_grad=False)
-                if hasattr(src, 'scale'):
-                    dst.scale = src.scale
-                return dst
-            self.merge_assert(src_shape[outer_dim], dst_shape[self.out_dim])
-            qkv_size = dst_shape[self.out_dim] // num_splits
-            qkv_split = [torch.split(src_s, qkv_size, dim=outer_dim) for src_s in src_split]
-            weight_split = [
-                torch.cat([qkv_s[i] for qkv_s in qkv_split], axis=outer_dim) for i in range(len(qkv_split[0]))
-            ]
-            dst = dst.reshape(-1).data.copy_(weight_split[self.gpu_index].contiguous().reshape(-1)).reshape(
-                weight_split[self.gpu_index].shape)
-        else:
-            if src_shape[0] == dst_shape[0]:
-                return torch.nn.parameter.Parameter(src)
-            qkv_size = dst_shape[0] // num_splits
-            qkv_split = [torch.split(src_s, qkv_size, dim=0) for src_s in src_split]
-            bias_split = [torch.cat([qkv_s[i] for qkv_s in qkv_split], axis=0) for i in range(len(qkv_split[0]))]
-            dst.data.copy_(bias_split[self.gpu_index].contiguous())
-
-        dst = torch.nn.parameter.Parameter(dst, requires_grad=False)
-        if hasattr(src, 'scale'):
-            dst.scale = src.scale
-        return dst
-
-    def copy(self, dst, src, int8=False, allocate_tensor=False):
-        if src is None:
-            return src
-        assert not dst.data.is_meta  # the torch.Tensor.copy_ method used below will silently fail on meta tensors
-        if allocate_tensor:
-            dst = torch.empty_like(dst)
-        outer_dim = 0 if int8 else 1
-        inner_dim = 1 if int8 else 0
-        src_shape = src.shape
-        dst_shape = dst.shape
-        if (len(src_shape) == 2 and len(dst_shape) == 2):
-
-            if src_shape[inner_dim] == dst_shape[self.in_dim] and src_shape[outer_dim] == dst_shape[self.out_dim]:
-                dst = dst.reshape(-1).data.copy_(src.data.reshape(-1)).reshape(src.shape)
-            else:
-                if src_shape[inner_dim] != dst_shape[self.in_dim]:
-                    self.merge_assert(src_shape[inner_dim], dst_shape[self.in_dim])
-                    dst.data.copy_(src[:, self.gpu_index * dst_shape[self.in_dim]: (self.gpu_index + 1) * dst_shape[self.in_dim]] if inner_dim == 1 else \
-                                   src[self.gpu_index * dst_shape[self.in_dim]: (self.gpu_index + 1) * dst_shape[self.in_dim], :])
-                else:
-                    self.merge_assert(src_shape[outer_dim], dst_shape[self.out_dim])
-                    dst.data.copy_(src[:, self.gpu_index * dst_shape[self.out_dim]: (self.gpu_index + 1) * dst_shape[self.out_dim]] if outer_dim == 1 else \
-                                   src[self.gpu_index * dst_shape[self.out_dim]: (self.gpu_index + 1) * dst_shape[self.out_dim], :])
-        else:
-            if src_shape[0] == dst_shape[0]:
-                dst = src if src.dtype == dst.dtype else dst.data.copy_(src)
-            else:
-                dst.data.copy_(src[self.gpu_index * dst_shape[-1]:(self.gpu_index + 1) * dst_shape[-1]])
-        dst = torch.nn.parameter.Parameter(dst, requires_grad=False)
-        if hasattr(src, 'scale'):
-            dst.scale = src.scale
-        return dst
-
-
-class Loading():
-
-    def is_load_module(module):
-        load_layers = [nn.Linear, nn.Embedding, nn.LayerNorm]
-        load_layer_names = [
-            "LPLayerNorm", "SharedEmbedding", "OPTLearnedPositionalEmbedding", "LlamaRMSNorm", "FalconLinear",
-            "MistralRMSNorm", "T5LayerNorm", "MixtralRMSNorm", "Phi3RotaryEmbedding", "Phi3SuScaledRotaryEmbedding",
-            "Phi3RMSNorm", "YuanRMSNorm", "YuanRotaryEmbedding", "Phi3LongRoPEScaledRotaryEmbedding", "Qwen2RMSNorm",
-            "DeepseekV2RMSNorm", "DeepseekV3RMSNorm", "DeepseekV2YarnRotaryEmbedding", "DeepseekV3YarnRotaryEmbedding",
-            "MoEGate"
-        ]
-        return module.__class__ in load_layers or module._get_name() in load_layer_names
-
-    def load_buffer(module, state_dict, prefix):
-        for name in module._buffers.keys():
-            if module._buffers[name].data.is_meta:
-                module._buffers[name] = torch.nn.parameter.Parameter(
-                    data=torch.empty_like(module._buffers[name].data, device="cpu"),
-                    requires_grad=module._buffers[name].data.requires_grad)
-            if prefix + name in state_dict.keys():
-                module._buffers[name].data.copy_(state_dict[prefix + name])
-
-    def load(module, state_dict, prefix, mp_group=None):
-        mp_replace = ReplaceWithTensorSlicing(mp_group=mp_group)
-        if hasattr(module, 'weight'):
-            if module.weight.data.is_meta:
-                # meta tensor cannot be casted or copied to, so we need to replace it with a normal tensor here
-                module.weight = torch.nn.parameter.Parameter(data=torch.empty_like(module.weight.data, device="cpu"),
-                                                             requires_grad=module.weight.data.requires_grad)
-                if 'query_key_value' in prefix:
-                    module.weight = mp_replace.strided_copy(module.weight.data,
-                                                            state_dict[prefix + 'weight'],
-                                                            num_splits=3)
-                else:
-                    module.weight = mp_replace.copy(module.weight.data, state_dict[prefix + 'weight'])
-        else:
-            if hasattr(module, 'norm') and hasattr(module.norm, 'weight'):
-                if module.norm.weight.data.is_meta:
-                    # meta tensor cannot be casted or copied to, so we need to replace it with a normal tensor here
-                    module.norm.weight = torch.nn.parameter.Parameter(
-                        data=torch.empty_like(module.norm.weight.data, device="cpu"),
-                        requires_grad=module.norm.weight.data.requires_grad)
-                module.norm.weight = mp_replace.copy(module.norm.weight.data, state_dict[prefix + 'weight'])
-
-        if prefix + 'bias' in state_dict.keys():
-            if hasattr(module, 'bias'):
-                if module.bias.data.is_meta:
-                    # meta tensor cannot be casted or copied to, so we need to replace it with a normal tensor here
-                    module.bias = torch.nn.parameter.Parameter(data=torch.empty_like(module.bias.data, device="cpu"),
-                                                               requires_grad=module.bias.data.requires_grad)
-                module.bias = mp_replace.copy(module.bias, state_dict[prefix + 'bias'])
-            else:
-                if hasattr(module, 'norm') and hasattr(module.norm, 'bias'):
-                    if module.norm.bias.data.is_meta:
-                        # meta tensor cannot be casted or copied to, so we need to replace it with a normal tensor here
-                        module.norm.bias = torch.nn.parameter.Parameter(
-                            data=torch.empty_like(module.norm.bias.data, device="cpu"),
-                            requires_grad=module.norm.bias.data.requires_grad)
-                    module.norm.bias = mp_replace.copy(module.norm.bias, state_dict[prefix + 'bias'])
 
 
 class AutoTP():
@@ -279,6 +99,21 @@ class AutoTP():
         policy_list.append(tuple([type(new_module), new_gems]))
         return policy_list
 
+    def kernel_supported(module_list):
+        policy = []
+        for plcy in replace_policies:
+            # instantiate a throw-away policy in order to populate the _orig_layer_class
+            _ = plcy(None)
+            if isinstance(plcy._orig_layer_class, list):
+                for orig_layer_class in plcy._orig_layer_class:
+                    policy.append(orig_layer_class)
+            elif plcy._orig_layer_class is not None:
+                policy.append(plcy._orig_layer_class)
+        for child in module_list:
+            if child.__class__ in policy:
+                return True
+        return False
+
     def tp_parser(model):
         policy_list = []
         module_list = []
@@ -288,8 +123,6 @@ class AutoTP():
         module_list = AutoTP.get_module_list(model)
         assert AutoTP.supported(model), "AutoTP not supported for model. Please use kernel injection since container policy for model exists." \
         if AutoTP.kernel_supported(module_list) else "AutoTP not supported for model. Please provide policy."
-        norm_layer_name_list = ['LayerNorm', 'layer_norm', 'ln_1', 'ln_2']
-        #ln_1 , ln_2 for Qwen
         for module in module_list:
             for key, submodule in module._modules.items():
                 if isinstance(submodule, nn.Linear):
@@ -311,7 +144,8 @@ class AutoTP():
                 gem_list = list(set(gem_list))
                 policy_list = AutoTP.update_policy_list(policy_list, module, gem_list)
                 gem_list = []
-        assert len(policy_list), "Not able to determine model policy automatically. Please provide policy."
+        assert len(policy_list), "AutoTP not supported for model. Please use kernel injection since container policy for model exists." \
+        if AutoTP.kernel_supported(module_list) else "Not able to determine model policy automatically. Please provide policy."
         return policy_list
 
     def set_tensor_parallel_config(self, mp_size, mp_group):
