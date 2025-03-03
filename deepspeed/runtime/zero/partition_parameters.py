@@ -20,9 +20,19 @@ import torch.distributed as dist
 from .linear import LinearModuleForZeroStage3, LinearFunctionForZeroStage3
 from .offload_constants import *
 
-from ..utils import see_memory_usage
-from deepspeed.utils import log_dist, init_distributed, logger
-from deepspeed.utils.debug import debug_param2name_id_shape, debug_param2name_id_shape_device, debug_module2name, debug_param2name, debug_param2name_id_shape_status, printflock, log_rank_file
+import deepspeed
+from ..utils import get_only_unique_item, see_memory_usage
+from deepspeed.runtime.zero.utils import assert_ints_same_as_other_ranks
+from deepspeed.utils import init_distributed, instrument_w_nvtx, logger
+from deepspeed.utils.debug import (debug_param2name_id_shape,
+                                   debug_param2name_id_shape_device,
+                                   debug_module2name,
+                                   debug_param2name,
+                                   debug_param2name_id,
+                                   debug_param2name_id_shape_status,
+                                   printflock,
+                                   log_rank_file)
+from deepspeed.utils.logging import logger
 
 from deepspeed.utils import groups
 import deepspeed

@@ -1250,8 +1250,6 @@ class DeepSpeedZeroOptimizer_Stage3(object):
             force=False)
 
         param_coordinator = self._get_param_coordinator(training=sub_module.training)
-        if param_coordinator.is_record_trace():
-            param_coordinator.record_parameters(sub_module)
         param_coordinator.release_sub_module(sub_module)
 
         see_memory_usage(
@@ -1263,7 +1261,6 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         param_coordinator.trace_prologue(sub_module)
         if param_coordinator.is_record_trace():
             param_coordinator.record_module(sub_module)
-            param_coordinator.record_parameters(sub_module)
         param_coordinator.fetch_sub_module(sub_module)
 
         self.param_coordinator.prefetch_next_sub_modules(sub_module,
