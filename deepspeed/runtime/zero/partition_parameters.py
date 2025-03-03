@@ -1067,6 +1067,13 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             assert isinstance(module, torch.nn.Module)
             self._convert_to_zero_parameters(module.parameters(recurse=True))
 
+    def _convert_to_zero_parameters(self, param_list):
+        for param in param_list:
+            if is_zero_param(param):
+                continue
+            self._convert_to_deepspeed_param(param)
+            param.partition()
+
         self.use_all_gather_into_tensor = dist.has_all_gather_into_tensor()
         if not self.use_all_gather_into_tensor:
             logger.info(f"all_gather_into_tensor API is not available in torch {torch.__version__}")
@@ -1457,6 +1464,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
             return wrapped
 
+        def convert_to_zero_parameters(param_list):
+            self._convert_to_zero_parameters(param_list)
+
         # Collectives for gathering and partitioning parameters
         param.all_gather = all_gather
         param.all_gather_coalesced = all_gather_coalesced
@@ -1473,6 +1483,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         param.ds_summary = types.MethodType(ds_summary, param)
 
         param.item = allgather_before(param.item)
+
+        param.convert_to_zero_parameters = convert_to_zero_parameters
 
         param.convert_to_zero_parameters = convert_to_zero_parameters
 

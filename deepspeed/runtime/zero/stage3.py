@@ -602,11 +602,14 @@ class FP16_DeepSpeedZeroOptimizer_Stage3(object):
             raise SystemError("Cannot use fp16 without CUDA.")
         self.optimizer = init_optimizer
 
-        if not all(is_zero_param(p) for p in module.parameters()):
-            group = None
-            if mpu:
-                group = mpu.get_data_parallel_group()
-            Init(module=module, data_parallel_group=group)
+        # Load pre-built or JIT compile (un)flatten ops
+        util_ops = UtilsBuilder().load()
+        self.flatten = util_ops.flatten
+        self.unflatten = util_ops.unflatten
+        self.dtype = self.optimizer.param_groups[0]['params'][0].dtype
+        self._global_grad_norm = 0.
+
+        self._convert_to_zero_parameters(module, mpu)
 
         for m in module.modules():
             _init_external_params(m)
@@ -849,12 +852,25 @@ class FP16_DeepSpeedZeroOptimizer_Stage3(object):
         if dist.get_rank(group=self.dp_process_group) == 0:
             see_memory_usage(f"After initializing ZeRO optimizer", force=False)
 
-    def _get_largest_partitioned_numel(self):
-        largest_partitioned_param_numel = 0
-        for partitioned_params_group in self.fp16_partitioned_groups:
-            for partitioned_param in partitioned_params_group:
-                if partitioned_param.numel() > largest_partitioned_param_numel:
-                    largest_partitioned_param_numel = partitioned_param.numel()
+    def _convert_to_zero_parameters(self, module, mpu):
+        non_zero_params = [p for p in module.parameters() if not is_zero_param(p)]
+        if non_zero_params:
+            zero_params = [p for p in module.parameters() if is_zero_param(p)]
+            if zero_params:
+                zero_params[0].convert_to_zero_parameters(param_list=non_zero_params)
+            else:
+                group = None
+                if mpu:
+                    group = mpu.get_data_parallel_group()
+                Init(module=module, data_parallel_group=group, dtype=self.dtype)
+
+    def _configure_tensor_swapping(self, offload_optimizer_config, aio_config):
+        nvme_swap_folder = os.path.join(
+            offload_optimizer_config[OFFLOAD_OPTIMIZER_NVME_PATH],
+            'zero_stage_3')
+        os.makedirs(nvme_swap_folder, exist_ok=True)
+        if torch.distributed.get_rank() == 0:
+            logger.info(f'Tensor Swapping: Adding optimizer tensors')
 
         return largest_partitioned_param_numel
 
