@@ -35,7 +35,7 @@ def _get_local_rank():
     return 0
 
 
-def _do_ref_write(tmpdir, index=0):
+def _do_ref_write(tmpdir, index=0, file_size=IO_SIZE):
     file_suffix = f'{_get_local_rank()}_{index}'
     ref_file = os.path.join(tmpdir, f'_py_random_{file_suffix}.pt')
     ref_buffer = os.urandom(file_size)
@@ -43,6 +43,11 @@ def _do_ref_write(tmpdir, index=0):
         f.write(ref_buffer)
 
     return ref_file, ref_buffer
+
+
+def _get_file_path(tmpdir, file_prefix, index=0):
+    file_suffix = f'{_get_local_rank()}_{index}'
+    return os.path.join(tmpdir, f'{file_prefix}_{file_suffix}.pt')
 
 
 def _get_test_write_file(tmpdir, index):
@@ -102,7 +107,7 @@ class TestRead(DistributedTest):
         _validate_handle_state(h, single_submit, overlap_events)
 
         ref_file, _ = _do_ref_write(tmpdir)
-        read_status = h.sync_pread(aio_buffer, ref_file)
+        read_status = h.sync_pread(aio_buffer, ref_file, 0)
         assert read_status == 1
 
         with open(ref_file, 'rb') as f:
@@ -130,7 +135,7 @@ class TestRead(DistributedTest):
         _validate_handle_state(h, single_submit, overlap_events)
 
         ref_file, _ = _do_ref_write(tmpdir)
-        read_status = h.async_pread(aio_buffer, ref_file)
+        read_status = h.async_pread(aio_buffer, ref_file, 0)
         assert read_status == 0
 
         wait_status = h.wait()
