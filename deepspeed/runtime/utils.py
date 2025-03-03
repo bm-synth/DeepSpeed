@@ -12,9 +12,9 @@ from collections.abc import Iterable
 import os
 import psutil
 import gc
-from math import sqrt
-
-from numpy import prod
+from math import ceil
+from math import floor
+from bisect import bisect_left, bisect_right
 
 import torch
 from torch._six import inf
@@ -735,6 +735,10 @@ def see_memory_usage(message, force=False):
 
     # get the peak memory to report correct data, so reset the counter for the next call
     get_accelerator().reset_peak_memory_stats()
+
+    # get the peak memory to report correct data, so reset the counter for the next call
+    if hasattr(torch.cuda, "reset_peak_memory_stats"):  # pytorch 1.4+
+        torch.cuda.reset_peak_memory_stats()
 
 
 def call_to_str(base, *args, **kwargs):
