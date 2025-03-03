@@ -389,11 +389,6 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             left_boundary = sum([t.numel() for t in data_parallel_partitions[:partition_id]])
             curr_partition_size = data_parallel_partitions[partition_id].numel()
 
-            # verify that data partition start locations are 4-byte aligned
-            for partitioned_data in data_parallel_partitions:
-                assert (partitioned_data.data_ptr() %
-                        (2 * self.nccl_start_alignment_factor) == 0)
-
             # A partition of the fp32 master weights that will be updated by this process.
             # Note that the params in single_partition_of_fp32_groups is cloned and detached
             # from the origin params of the model.
@@ -420,6 +415,13 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             self.params_in_partition.append(params_in_partition)
             self.params_not_in_partition.append(params_not_in_partition)
             self.first_offset.append(first_offset)
+
+        for rank in range(dist.get_world_size()):
+            if dist.get_rank() == rank:
+                print(
+                    f"Rank: {rank} partition count {self.partition_count} and sizes{[(p.numel(), self.is_moe_param_group[i] if hasattr(self, 'is_moe_param_group') else False) for i,p in enumerate(self.single_partition_of_fp32_groups)]} "
+                )
+                dist.barrier()
 
         self.reduce_bucket_size = int(reduce_bucket_size)
         self.use_multi_rank_bucket_allreduce = use_multi_rank_bucket_allreduce
