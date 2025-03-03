@@ -10,11 +10,11 @@ import sys
 import unittest
 
 sys.path.append('../DeepSpeedExamples/Megatron_GPT2')
-sys.path.append('../DeepSpeedExamples/BingBertSquad')
+
+import os
 
 # Import the test cases here.
 import Megatron_GPT2
-import BingBertSquad
 
 
 def pytest_hack(runner_result):
