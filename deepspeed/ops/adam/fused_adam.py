@@ -104,7 +104,7 @@ class FusedAdam(torch.optim.Optimizer):
         else:
             super(FusedAdam, self).zero_grad()
 
-    def step(self, closure=None, grads=None, output_params=None, scale=None, grad_norms=None):
+    def step(self, closure=None, grads=None, output_params=None, scale=None, grad_norms=None, grad_scaler=None):
         """Performs a single optimization step.
 
         Arguments:
@@ -127,6 +127,8 @@ class FusedAdam(torch.optim.Optimizer):
             bias_correction = 1 if group['bias_correction'] else 0
             beta1, beta2 = group['betas']
 
+            # assume same step across group now to simplify things
+            # per parameter step can be easily support by making it tensor, or pass list into kernel
             if 'step' not in group:
                 group['step'] = 0
 
@@ -172,12 +174,19 @@ class FusedAdam(torch.optim.Optimizer):
                 else:
                     raise RuntimeError('FusedAdam only support fp16, bf16 and fp32.')
 
-            if (len(g_16) > 0):
+            if len(g_16) > 0:
                 state['step'] += 1
                 multi_tensor_applier(self.multi_tensor_adam, self._dummy_overflow_buf, [g_16, p_16, m_16, v_16],
                                      group['lr'], beta1, beta2, group['eps'], state['step'], self.adam_w_mode,
                                      bias_correction, group['weight_decay'])
-            if (len(g_32) > 0):
+
+            if len(g_bf) > 0:
+                state['step'] += 1
+                multi_tensor_applier(self.multi_tensor_adam, self._dummy_overflow_buf, [g_bf, p_bf, m_bf, v_bf],
+                                     group['lr'], beta1, beta2, group['eps'], state['step'], self.adam_w_mode,
+                                     bias_correction, group['weight_decay'])
+
+            if len(g_32) > 0:
                 state['step'] += 1
                 multi_tensor_applier(self.multi_tensor_adam, self._dummy_overflow_buf, [g_32, p_32, m_32, v_32],
                                      group['lr'], beta1, beta2, group['eps'], state['step'], self.adam_w_mode,
