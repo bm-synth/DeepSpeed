@@ -341,9 +341,8 @@ class GPT2FuncTestCase(BaseTestCase):
             baseline_prefix += test_config["json"][0:-5]
             baseline_deepspeed_config = True
 
-        base_file = self.gen_output_name(test_config,
-                                         baseline_prefix,
-                                         baseline_config=baseline_deepspeed_config)
+        test_config["other_args"] = f"\"{cpu_optimizer_flag}\""
+        base_file = self.gen_output_name(test_config, baseline_prefix, baseline_config=baseline_deepspeed_config)
 
         # skip baseline run if it exists.
         if not self.has_loss_data(base_file):
@@ -354,7 +353,8 @@ class GPT2FuncTestCase(BaseTestCase):
 
         # DeepSpeed run...
         test_config["deepspeed"] = True
-        test_config["other_args"] = "--deepspeed-activation-checkpointing"
+        cpu_optimizer_flag = self.gen_cpu_optimizer_flag(test_config, False)
+        test_config["other_args"] = f"\"--deepspeed-activation-checkpointing {cpu_optimizer_flag}\""
         test_config["json"] = deepspeed_config
         print("{0}: DeepSpeed run.".format(self.id()))
         test_file = self.gen_output_name(test_config, prefix)
@@ -383,9 +383,7 @@ class GPT2FuncTestCase(BaseTestCase):
             baseline_deepspeed_config = True
 
         # baseline run...
-        base_file = self.gen_output_name(test_config,
-                                         baseline_prefix,
-                                         baseline_config=baseline_deepspeed_config)
+        base_file = self.gen_output_name(test_config, baseline_prefix, baseline_config=baseline_deepspeed_config)
 
         # skip baseline run if it exists.
         if not self.has_loss_data(base_file):

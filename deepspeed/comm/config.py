@@ -10,6 +10,7 @@ from .constants import *
 
 
 class CommsConfig(BaseModel):
+
     class Config:
         validate_all = True
         validate_assignment = True
@@ -26,6 +27,7 @@ class CommsLoggerConfig(CommsConfig):
 
 
 class DeepSpeedCommsConfig:
+
     def __init__(self, ds_config):
         self.comms_logger_enabled = 'comms_logger' in ds_config
 

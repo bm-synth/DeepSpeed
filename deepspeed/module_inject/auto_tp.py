@@ -12,27 +12,6 @@ from .replace_policy import replace_policies
 
 class AutoTP():
 
-    def __init__(self,
-                 module,
-                 all_reduce_linears,
-                 prefix,
-                 state_dict,
-                 linear_layer_setting,
-                 orig_layer_impl,
-                 keep_module_on_host=False):
-        self.module = module
-        self.all_reduce_linears = all_reduce_linears
-        self.prefix = prefix
-        self.state_dict = state_dict
-
-        self.mp_size = None
-        self.mp_group = None
-        self.linear_layer_setting = linear_layer_setting
-        self.orig_layer_impl = orig_layer_impl
-        self.linear_policies = None
-        self.conv_linear_layer = False
-        self.keep_module_on_host = keep_module_on_host
-
     def in_module_list(module, module_list):
         for item in module_list:
             if type(item).__name__ == type(module).__name__:
@@ -53,18 +32,7 @@ class AutoTP():
         return mlist
 
     def supported(model):
-        unsupported = [
-            'bloom',
-            'codegen',
-            'deberta',
-            'flaubert',
-            'fsmt',
-            'gpt2',
-            'led',
-            'longformer',
-            'xlm',
-            'xlnet'
-        ]
+        unsupported = ['bloom', 'codegen', 'deberta', 'flaubert', 'fsmt', 'gpt2', 'led', 'longformer', 'xlm', 'xlnet']
         model = str(model)
         key = re.search(r": (.*?)Model", model)
         if key is None:
@@ -81,8 +49,7 @@ class AutoTP():
         for key, submodule in module._modules.items():
             if isinstance(submodule, nn.Linear):
                 layer_list = layer_list + [parent + "." + key]
-            elif isinstance(submodule,
-                            nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
+            elif isinstance(submodule, nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
                 layer_list = layer_list + ["ln"]
             else:
                 layer_list = layer_list + AutoTP.get_layers(key, submodule)
@@ -127,9 +94,7 @@ class AutoTP():
             for key, submodule in module._modules.items():
                 if isinstance(submodule, nn.Linear):
                     layer_list = layer_list + ["." + key]
-                elif isinstance(
-                        submodule,
-                        nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
+                elif isinstance(submodule, nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
                     layer_list = layer_list + ["ln"]
                 else:
                     layer_list = layer_list + AutoTP.get_layers(key, submodule)

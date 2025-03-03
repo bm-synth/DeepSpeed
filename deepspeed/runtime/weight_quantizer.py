@@ -24,8 +24,7 @@ class WeightQuantization(object):
         data_scale = [float(1 << quantize_bits) / (2 * mx + 1e-5) for mx in max_d]
         data_int = [(g * s) for g, s in zip(data_groups, data_scale)]
         data_int = [
-            di.round().clamp(-(1 << (quantize_bits - 1)),
-                             (((1 << (quantize_bits - 1)) - 1))) for di in data_int
+            di.round().clamp(-(1 << (quantize_bits - 1)), (((1 << (quantize_bits - 1)) - 1))) for di in data_int
         ]
         data_int = torch.cat(data_int).reshape(data.shape)
         data_int = data_int.to(torch.int8)
@@ -50,11 +49,8 @@ class WeightQuantization(object):
             q_scale.append(data_scale)
             value_list[index] = data_int
             index += 1
-        q_scale = (
-            1 /
-            torch.cat(q_scale,
-                      dim=merge_dim).to(
-                          get_accelerator().current_device_name()).view(-1).unsqueeze(0))
+        q_scale = (1 /
+                   torch.cat(q_scale, dim=merge_dim).to(get_accelerator().current_device_name()).view(-1).unsqueeze(0))
         if "mlp.dense_4h_to_h.weight" in key:
             self.mlp4hh_scales.append(q_scale)
         elif "mlp.dense_h_to_4h.weight" in key:
@@ -68,10 +64,7 @@ class WeightQuantization(object):
     def merge_layer_scales(self, layer_scales):
         max_dim = max([s.shape[-1] for s in layer_scales])
         layer_scales = [
-            torch.cat((s,
-                       torch.zeros((1,
-                                    max_dim - s.shape[-1]),
-                                   device=get_accelerator().current_device_name())),
+            torch.cat((s, torch.zeros((1, max_dim - s.shape[-1]), device=get_accelerator().current_device_name())),
                       dim=-1) if s.shape[-1] < max_dim else s for s in layer_scales
         ]
         return torch.cat(layer_scales).unsqueeze(0)
@@ -133,8 +126,7 @@ class WeightQuantization(object):
                 else:
                     data_quantized, data_scale = self.quantize_data(keys[key], quantize_bits, groups)
                 keys[key].copy_(data_quantized)
-                layer_scales.append((1 / data_scale.to(
-                    get_accelerator().current_device_name()).view(-1).unsqueeze(0)))
+                layer_scales.append((1 / data_scale.to(get_accelerator().current_device_name()).view(-1).unsqueeze(0)))
             all_scales.append(self.merge_layer_scales(layer_scales))
             return layer
 

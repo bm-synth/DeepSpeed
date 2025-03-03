@@ -34,8 +34,7 @@ class DeepSpeedDiffusersAttentionFunction(Function):
     @staticmethod
     def forward(ctx, input, context, input_mask, config, attn_qkvw, attn_qw, attn_kw, attn_vw, attn_qkvb,
                 num_attention_heads_per_partition, norm_factor, hidden_size_per_partition, attn_ow, attn_ob,
-                do_out_bias, score_context_func, linear_func, pad_transform_func, triton_flash_attn_kernel,
-                rope_theta):
+                do_out_bias, score_context_func, linear_func, triton_flash_attn_kernel):
 
         def _transpose_for_context(x):
             x = x.permute(0, 2, 1, 3)
@@ -57,40 +56,8 @@ class DeepSpeedDiffusersAttentionFunction(Function):
             do_flash_attn = (head_size <= 128)
             scale = (1 / norm_factor) * (1 / norm_factor)
             if do_flash_attn and context == None:
-                qkv_out = linear_func(input,
-                                      attn_qkvw,
-                                      attn_qkvb if attn_qkvb is not None else attn_qkvw,
-                                      attn_qkvb is not None,
-                                      do_flash_attn,
-                                      config.heads)
-
-                context_layer = triton_flash_attn_kernel(qkv_out[0],
-                                                         qkv_out[1],
-                                                         qkv_out[2],
-                                                         scale,
-                                                         input.shape[-2] % 128 == 0)
-                context_layer = _transpose_for_context(context_layer[:,:,:,:head_size])
-
-            else:
-                do_flash_attn = False
-                if context is not None:
-                    query = torch.matmul(input, attn_qw)
-                    key = torch.matmul(context, attn_kw)
-                    value = torch.matmul(context, attn_vw)
-                else:
-                    qkv = torch.matmul(input, attn_qkvw)
-                    query, key, value = qkv.chunk(3, dim=-1)
-                    query = query.contiguous()
-                    key = key.contiguous()
-                    value = value.contiguous()
-                query, key, value = inference_cuda_module.pad_transform_fp16(query, key, value, config.heads, do_flash_attn)
-                attention_scores = (torch.matmul(query,
-                                                 key.transpose(-1,
-                                                               -2)) *
-                                    scale).softmax(dim=-1)
-                context_layer = _transpose_for_context(
-                    torch.matmul(attention_scores,
-                                 value))
+                qkv_out = linear_func(input, attn_qkvw, attn_qkvb if attn_qkvb is not None else attn_qkvw, attn_qkvb
+                                      is not None, do_flash_attn, config.heads)
 
                 context_layer = triton_flash_attn_kernel(qkv_out[0], qkv_out[1], qkv_out[2], scale,
                                                          input.shape[-2] % 128 == 0)
@@ -108,11 +75,12 @@ class DeepSpeedDiffusersAttentionFunction(Function):
                     query = query.contiguous()
                     key = key.contiguous()
                     value = value.contiguous()
-                query, key, value = pad_transform_func(query, key, value, config.heads, do_flash_attn)
+                query, key, value = inference_cuda_module.pad_transform_fp16(query, key, value, config.heads,
+                                                                             do_flash_attn)
                 attention_scores = (torch.matmul(query, key.transpose(-1, -2)) * scale).softmax(dim=-1)
                 context_layer = _transpose_for_context(torch.matmul(attention_scores, value))
 
-            output = linear_func(context_layer, attn_ow, attn_ob, do_out_bias, False, config.heads, False, rope_theta)
+            output = linear_func(context_layer, attn_ow, attn_ob, do_out_bias, False, config.heads)
             return output
 
         output = selfAttention_fp(input, context, input_mask)
@@ -215,11 +183,16 @@ class DeepSpeedDiffusersAttention(nn.Module):
                                               self.config.max_out_tokens, self.config.min_out_tokens)
 
     def forward(self, input, context=None, input_mask=None):
-        self.allocate_workspace(input.size())
-        output = DeepSpeedDiffusersAttentionFunction.apply(
-            input, context, input_mask, self.config, self.attn_qkvw, self.attn_qw, self.attn_kw, self.attn_vw,
-            self.attn_qkvb, self.num_attention_heads_per_partition, self.norm_factor, self.hidden_size_per_partition,
-            self.attn_ow, self.attn_ob, self.do_out_bias, self.score_context_func, self.linear_func,
-            self.pad_transform_func, self.triton_flash_attn_kernel, self.config.rope_theta)
+        if self.config.layer_id == 0:
+            self.allocate_workspace(self.config.hidden_size, self.config.heads,
+                                    input.size()[1],
+                                    input.size()[0], DeepSpeedDiffusersAttention.layer_id, self.config.mp_size, False,
+                                    0, self.config.max_out_tokens)
+        output = DeepSpeedDiffusersAttentionFunction.apply(input, context, input_mask, self.config, self.attn_qkvw,
+                                                           self.attn_qw, self.attn_kw, self.attn_vw, self.attn_qkvb,
+                                                           self.num_attention_heads_per_partition, self.norm_factor,
+                                                           self.hidden_size_per_partition, self.attn_ow, self.attn_ob,
+                                                           self.do_out_bias, self.score_context_func, self.linear_func,
+                                                           self.triton_flash_attn_kernel)
 
         return output

@@ -173,8 +173,7 @@ class DynamicLossScaler(LossScalerBase):
             if self.delayed_shift == 1 or self.cur_hysteresis == 1:
                 if (self.cur_scale == self.min_scale) and self.raise_error_at_min_scale:
                     raise Exception(
-                        "Current loss scale already at minimum - cannot decrease scale anymore. Exiting run."
-                    )
+                        "Current loss scale already at minimum - cannot decrease scale anymore. Exiting run.")
                 else:
                     next_scale = max(self.cur_scale / self.scale_factor, self.min_scale)
                     if dist.get_rank() == 0:

@@ -226,14 +226,7 @@ def run_forward(ds_config, seq_len, atol=1e-2, verbose=False, test_bsz=None):
 class TestCUDAForward(DistributedTest):
     world_size = 1
 
-    def test_forward(self,
-                     batch_size,
-                     hidden_size,
-                     seq_len,
-                     heads,
-                     num_layers,
-                     is_preln,
-                     use_fp16):
+    def test_forward(self, batch_size, hidden_size, seq_len, heads, num_layers, is_preln, use_fp16):
         # Only run fp16 test cases on devices with FP16 capability.
         if not get_accelerator().is_fp16_supported() and use_fp16 is True:
             return
@@ -264,14 +257,7 @@ class TestCUDAForward(DistributedTest):
 class TestCUDAForwardSmallBatchSize(DistributedTest):
     world_size = 1
 
-    def test_forward_with_small_bsz(self,
-                                    batch_size,
-                                    small_bsz,
-                                    hidden_size,
-                                    seq_len,
-                                    heads,
-                                    num_layers,
-                                    is_preln,
+    def test_forward_with_small_bsz(self, batch_size, small_bsz, hidden_size, seq_len, heads, num_layers, is_preln,
                                     use_fp16):
         # Only run fp16 test cases on devices with FP16 capability.
         if not get_accelerator().is_fp16_supported() and use_fp16 is True:
@@ -302,14 +288,7 @@ class TestCUDAForwardSmallBatchSize(DistributedTest):
 class TestCUDAForwardStochastic(DistributedTest):
     world_size = 1
 
-    def test_forward_stochastic(self,
-                                batch_size,
-                                hidden_size,
-                                seq_len,
-                                heads,
-                                num_layers,
-                                is_preln,
-                                use_fp16):
+    def test_forward_stochastic(self, batch_size, hidden_size, seq_len, heads, num_layers, is_preln, use_fp16):
         # Only run fp16 test cases on devices with FP16 capability.
         if not get_accelerator().is_fp16_supported() and use_fp16 is True:
             return

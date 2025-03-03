@@ -27,20 +27,14 @@ COPYRIGHT = [
 success = True
 failures = []
 for f in sys.argv[1:]:
-    for copyright_line in COPYRIGHT:
-        cmd = ["git", "grep", "--quiet"]
-        for line in copyright_line:
-            cmd.extend(["-e", line])
-        cmd.append(f)
-        res = subprocess.run(cmd, capture_output=True)
-        if res.returncode == 1:
-            success = False
-            failures.append(f)
-            break
-        elif res.returncode == 2:
-            err(f"Error invoking grep on {', '.join(sys.argv[1:])}:")
-            err(res.stderr.decode("utf-8"))
-            sys.exit(2)
+    res = subprocess.run(["git", "grep", "--quiet", "-e", r"Copyright .* DeepSpeed Team", f], capture_output=True)
+    if res.returncode == 1:
+        success = False
+        failures.append(f)
+    elif res.returncode == 2:
+        err(f"Error invoking grep on {', '.join(sys.argv[1:])}:")
+        err(res.stderr.decode("utf-8"))
+        sys.exit(2)
 
 if not success:
     err(f'{failures}: Missing license at top of file')

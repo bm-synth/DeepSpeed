@@ -85,45 +85,6 @@ def parse_args():
                         type=str,
                         help="redirect the stdout and stderr from each rank into different log files")
 
-    parser.add_argument("--bind_cores_to_rank",
-                        action="store_true",
-                        help="Bind each rank to different cores of the host. "
-                        "This improves host efficiency especially for CPU backend")
-
-    parser.add_argument("--bind_core_list",
-                        type=str,
-                        default=None,
-                        help="List of cores to bind to with comma separated list of "
-                        "numbers and range. i.e. 1,3-5,7 => [1,3,4,5,7].  When not "
-                        "specified, all cores on system would be used rank binding")
-
-    parser.add_argument("--module",
-                        action="store_true",
-                        help="Change each process to interpret the launch "
-                        "script as a Python module, executing with the same "
-                        "behavior as 'python -m'.")
-
-    parser.add_argument("--no_python",
-                        action="store_true",
-                        help="Skip prepending the training script with "
-                        "'python' - just execute it directly.")
-
-    parser.add_argument("--no_local_rank",
-                        action="store_true",
-                        help="Do not pass local_rank as an argument when calling "
-                        "the user's training script.")
-
-    parser.add_argument("--save_pid",
-                        type=int,
-                        default=0,
-                        help="main launching process pid, for internal pid tracking")
-
-    parser.add_argument(
-        "--enable_each_rank_log",
-        default="None",
-        type=str,
-        help="redirect the stdout and stderr from each rank into different log files")
-
     # positional
     parser.add_argument("training_script",
                         type=str,
@@ -171,9 +132,7 @@ def main():
     local_node = node_list[args.node_rank]
     local_gpu_ids = world_info[local_node]
     num_local_procs = len(local_gpu_ids)
-    logger.info(
-        f"nnodes={args.nnodes}, num_local_procs={num_local_procs}, node_rank={args.node_rank}"
-    )
+    logger.info(f"nnodes={args.nnodes}, num_local_procs={num_local_procs}, node_rank={args.node_rank}")
 
     global_rank_mapping = defaultdict(list)
     curr_global_rank = 0
@@ -213,8 +172,7 @@ def main():
             lines = file.readlines()
             lines = [line.rstrip() for line in lines]
             for line in lines:
-                if line.startswith('export FC_TASKROLE_NAME') or line.startswith(
-                        'export FC_TASK_INDEX'):
+                if line.startswith('export FC_TASKROLE_NAME') or line.startswith('export FC_TASK_INDEX'):
                     key_val = line.split()[1]
                     key, val = key_val.split('=')
                     current_env[key] = val
@@ -231,17 +189,13 @@ def main():
         if args.enable_each_rank_log != "None":
             # prepare the log path and the file name prefix
             if os.path.isfile(args.enable_each_rank_log):
-                raise ValueError(
-                    f"{args.enable_each_rank_log} should not be a file, it should be a directory."
-                )
+                raise ValueError(f"{args.enable_each_rank_log} should not be a file, it should be a directory.")
             if not os.path.exists(args.enable_each_rank_log):
                 try:
                     os.makedirs(args.enable_each_rank_log)
                 except Exception as e:
                     print(e)
-                    raise ValueError(
-                        f"unable to create directory {args.enable_each_rank_log} for each rank log."
-                    )
+                    raise ValueError(f"unable to create directory {args.enable_each_rank_log} for each rank log.")
             log_name_prefix = time.strftime("%Y%m%d%H%M%S", time.localtime())
 
         for local_rank in range(0, num_local_procs):
@@ -267,13 +221,9 @@ def main():
             cmd += args.training_script_args
 
             if args.enable_each_rank_log != "None":
-                log_file = os.path.join(args.enable_each_rank_log,
-                                        f"{log_name_prefix}_rank{dist_rank}.log")
+                log_file = os.path.join(args.enable_each_rank_log, f"{log_name_prefix}_rank{dist_rank}.log")
                 log_fd = open(log_file, 'w')
-                process = subprocess.Popen(cmd,
-                                           env=current_env,
-                                           stdout=log_fd,
-                                           stderr=log_fd)
+                process = subprocess.Popen(cmd, env=current_env, stdout=log_fd, stderr=log_fd)
             else:
                 process = subprocess.Popen(cmd, env=current_env)
 
@@ -289,7 +239,7 @@ def main():
             args.min_elastic_nodes = 1
         if args.max_elastic_nodes == -1:
             args.max_elastic_nodes = args.nnodes
-        assert args.max_elastic_nodes > 0 and  args.min_elastic_nodes > 0 , "Max and Min nodes should be positive"
+        assert args.max_elastic_nodes > 0 and args.min_elastic_nodes > 0, "Max and Min nodes should be positive"
 
         current_env["NCCL_ASYNC_ERROR_HANDLING"] = str(1)
 
@@ -309,8 +259,32 @@ def main():
             cmd.append(f"--local_rank={local_rank}")
         cmd += args.training_script_args
 
-        process = subprocess.Popen(cmd, env=current_env)
-        processes.append(process)
+        rdzv_configs: Dict[str, str] = {'timeout': 100}
+        run_id = os.environ.get("ELASTIC_RUN_ID", ELASTIC_TRAINING_ID_DEFAULT)
+
+        # Creating config for rendezvous class
+        rdzv_parameters = RendezvousParameters(backend='c10d',
+                                               endpoint=args.master_addr + ":" + str(args.master_port),
+                                               run_id=run_id,
+                                               min_nodes=args.min_elastic_nodes,
+                                               max_nodes=args.max_elastic_nodes,
+                                               **rdzv_configs)
+
+        spec = WorkerSpec(
+            role='trainer',
+            local_world_size=num_local_procs,
+            entrypoint=cmd[0],
+            args=cmd[1:],
+            rdzv_handler=rdzv_registry.get_rendezvous_handler(rdzv_parameters),
+            max_restarts=100,
+            monitor_interval=5,
+            redirects=Std.from_str("0"),
+            tee=Std.from_str("0"),
+            master_addr=None,
+            master_port=None,
+        )
+        agent = DSElasticAgent(spec, current_env)
+        agent.run()
 
     sig_names = {2: "SIGINT", 15: "SIGTERM"}
     last_return_code = None

@@ -78,9 +78,9 @@ class DeepSpeedMoEInferenceConfig(DeepSpeedInferenceConfig):
                  scale_attn_by_inverse_layer_idx=False):
         super(DeepSpeedMoEInferenceConfig,
               self).__init__(hidden_size, (intermediate_size if intermediate_size > 0 else 4 * hidden_size), heads,
-                             num_hidden_layers, layer_norm_eps, local_rank, mp_size, fp16, bf16, q_int8,
-                             pre_layer_norm, stochastic_mode, scale_attention, triangular_masking, local_attention,
-                             window_size, return_tuple)
+                             num_hidden_layers, layer_norm_eps, local_rank, mp_size, fp16, q_int8, pre_layer_norm,
+                             stochastic_mode, scale_attention, triangular_masking, local_attention, window_size,
+                             return_tuple)
         self.moe_experts = moe_experts
         self.k = k
         self.capacity_factor = capacity_factor
@@ -111,13 +111,18 @@ class DeepSpeedMLPFunction(Function):
 
     @staticmethod
     def forward(ctx, input, inter_w, inter_b, config, output_b, output_w, q_scales, q_groups, merge_count, mp_group,
-                async_op, gelu_gemm_func, vector_matmul_func):
+                async_op):
         if config.q_int8:
-            intermediate = gelu_gemm_func(input, inter_w, inter_b, config.epsilon, q_scales[2],
-                                          (q_groups * (2**merge_count)), config.pre_layer_norm)
-            output = vector_matmul_func(intermediate, output_w, q_scales[3], q_groups, (merge_count))
+            intermediate = inference_cuda_module.fused_gemm_gelu_int8(input, inter_w, inter_b, config.epsilon,
+                                                                      q_scales[2], (q_groups * (2**merge_count)),
+                                                                      config.pre_layer_norm)
+            output = inference_cuda_module.vector_matmul_int8(intermediate, output_w, q_scales[3], q_groups,
+                                                              (merge_count))
         else:
-            output = gelu_gemm_func(input, inter_w, inter_b, output_w, config.epsilon, config.pre_layer_norm, async_op)
+            mlp_gemm_func = inference_cuda_module.fused_gemm_gelu_fp16 if config.fp16 else \
+                                    inference_cuda_module.fused_gemm_gelu_fp32
+
+            output = mlp_gemm_func(input, inter_w, inter_b, output_w, config.epsilon, config.pre_layer_norm, async_op)
         if mp_group is not None and dist.get_world_size(group=mp_group) > 1:
             dist.all_reduce(output, group=mp_group, async_op=async_op)
 
@@ -153,8 +158,7 @@ class DeepSpeedMoEMLP(nn.Module):
 
     def forward(self, input, async_op=False):
         return DeepSpeedMLPFunction.apply(input, self.inter_w, self.inter_b, self.config, self.output_b, self.output_w,
-                                          self.q_scales, self.q_groups, self.merge_count, self.mp_group, async_op,
-                                          self.gelu_gemm_func, self.vector_matmul_func)
+                                          self.q_scales, self.q_groups, self.merge_count, self.mp_group, async_op)
 
 
 class DeepSpeedMoEInference(nn.Module):
@@ -202,11 +206,7 @@ class DeepSpeedMoEInference(nn.Module):
         self.config.specialized_mode = specialized_mode
 
         DeepSpeedMoEInference.layer_id += 1
-        self.attention = DeepSpeedSelfAttention(self.config,
-                                                mp_group,
-                                                quantize_scales,
-                                                quantize_groups,
-                                                merge_count)
+        self.attention = DeepSpeedSelfAttention(self.config, mp_group, quantize_scales, quantize_groups, merge_count)
         self.attn_nw = nn.Parameter(torch.Tensor(self.config.hidden_size))
         self.attn_nb = nn.Parameter(torch.Tensor(self.config.hidden_size))
 
@@ -228,7 +228,7 @@ class DeepSpeedMoEInference(nn.Module):
         self.moe_gate = TopKGate(self.config.hidden_size, self.config.global_experts, self.config.k,
                                  self.config.capacity_factor, self.config.eval_capacity_factor,
                                  self.config.min_capacity, self.config.noisy_gate_policy, self.config.drop_tokens,
-                                 self.config.use_rts, self.ep_group)
+                                 self.config.use_rts)
 
         self.ep_group = ep_group
         self.mp_group = mp_group
@@ -326,12 +326,12 @@ class DeepSpeedMoEInference(nn.Module):
                 res_coef_out = self.res_coef_func(attention_output, async_op=True)
 
             if self.expert_mp_group is not None:
-                world_size = dist.get_world_size(group=self.expert_mp_group)
-                gather_buffer = torch.empty(world_size * attention_output.numel(),
-                                            dtype=attention_output.dtype,
-                                            device=attention_output.device)
-                dist.all_gather_into_tensor(gather_buffer, attention_output, group=self.expert_mp_group)
-                attention_output = gather_buffer.view(-1, *attention_output.size()[1:])
+                tensor_list = [
+                    torch.empty_like(attention_output) for _ in range(dist.get_world_size(group=self.expert_mp_group))
+                ]
+                tensor_list[dist.get_rank(group=self.expert_mp_group)] = attention_output
+                dist.all_gather(tensor_list, attention_output, group=self.expert_mp_group)
+                attention_output = torch.cat(tensor_list).contiguous()
 
             ############## MoE Gating + Experts ###############
             dispatched_attention, combined_weights = self.moe_gate_einsum(attention_output)

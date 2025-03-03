@@ -111,7 +111,7 @@ def print_params(tag, model):
             print0("{} {}:{}".format(tag, n, p))
 
 
-data_loader = get_data_loader(model=model, total_samples=256, hidden_dim=hidden_dim, device=model.device)
+data_loader = get_data_loader(model=model, total_samples=1000, hidden_dim=hidden_dim, device=model.device)
 #print_params('pre-train', model)
 
 for n, batch in enumerate(data_loader):

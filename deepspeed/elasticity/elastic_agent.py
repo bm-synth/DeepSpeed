@@ -43,10 +43,7 @@ class DSElasticAgent(LocalElasticAgent):
         self.ds_env = env
 
     @staticmethod
-    def _set_master_addr_port(store: Store,
-                              master_addr: Optional[str],
-                              master_port: Optional[int],
-                              local_addr: Optional[str] = None):
+    def _set_master_addr_port(store: Store, master_addr: Optional[str], master_port: Optional[int]):
         if master_port is None:
             sock = get_free_port()
             with closing(sock):
@@ -160,8 +157,8 @@ class DSElasticAgent(LocalElasticAgent):
                          f" Waiting {self._exit_barrier_timeout} seconds for other agents to finish.")
                 self._exit_barrier()
                 return run_result
-            elif state in {WorkerState.UNHEALTHY, WorkerState.FAILED} or len(participants) > len(
-                    rdzv_handler._state_holder.state.participants):
+            elif state in {WorkerState.UNHEALTHY, WorkerState.FAILED
+                           } or len(participants) > len(rdzv_handler._state_holder.state.participants):
                 if self._remaining_restarts > 0:
                     log.info(f"[{role}] Worker group {state.name}. "
                              f"{self._remaining_restarts}/{spec.max_restarts} attempts left;"

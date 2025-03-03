@@ -78,8 +78,7 @@ class TestPipeModuleSequential(DistributedTest):
             pipe_model.compile()
         # Ensure all parameters are accounted for.
         my_params = sum(p.numel() for p in pipe_model.parameters())
-        total_pipe_params = torch.LongTensor([my_params
-                                              ]).to(get_accelerator().device_name())
+        total_pipe_params = torch.LongTensor([my_params]).to(get_accelerator().device_name())
         dist.all_reduce(total_pipe_params)
         total_pipe_params = total_pipe_params.item()
         assert total_pipe_params == base_params
@@ -87,13 +86,6 @@ class TestPipeModuleSequential(DistributedTest):
         pipe_model, _, _, _ = deepspeed.initialize(config=simple_config,
                                                    model=pipe_model,
                                                    model_parameters=[p for p in pipe_model.parameters()])
-
-        if activation_checkpoints:
-            deepspeed.checkpointing.configure(None,
-                                              deepspeed_config=pipe_model.config,
-                                              partition_activations=True,
-                                              contiguous_checkpointing=True,
-                                              num_checkpoints=9)
 
         if pipe_model.is_first_stage or pipe_model.is_last_stage:
             pipe_input = base_input.clone().detach().to(get_accelerator().device_name())

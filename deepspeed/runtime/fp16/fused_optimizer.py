@@ -110,16 +110,13 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         self.mpu = mpu
 
         self.overflow = False
-        self.overflow_checker = CheckOverflow(self.fp16_groups,
-                                              mpu=self.mpu,
-                                              deepspeed=deepspeed)
+        self.overflow_checker = CheckOverflow(self.fp16_groups, mpu=self.mpu, deepspeed=deepspeed)
         self.initialize_optimizer_states()
 
     def initialize_optimizer_states(self):
         for i, group in enumerate(self.fp16_groups):
-            self.fp32_groups_flat[i].grad = torch.zeros(
-                self.fp32_groups_flat[i].size(),
-                device=self.fp32_groups_flat[i].device)
+            self.fp32_groups_flat[i].grad = torch.zeros(self.fp32_groups_flat[i].size(),
+                                                        device=self.fp32_groups_flat[i].device)
 
         self.optimizer.step()
 
@@ -169,9 +166,7 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
         scaled_grad_norm = get_global_norm(norm_list=norm_groups)
 
-        combined_scale = self.unscale_and_clip_grads(grads_groups_flat,
-                                                     scaled_grad_norm,
-                                                     apply_scale=False)
+        combined_scale = self.unscale_and_clip_grads(grads_groups_flat, scaled_grad_norm, apply_scale=False)
 
         # Stash unscaled gradient norm
         self._global_grad_norm = scaled_global_grad_norm / self.cur_scale
@@ -248,9 +243,7 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
     def override_loss_scale(self, loss_scale):
         if loss_scale != self.external_loss_scale:
-            logger.info(
-                f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}'
-            )
+            logger.info(f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}')
         self.custom_loss_scaler = True
         self.external_loss_scale = loss_scale
 
@@ -393,9 +386,7 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         else:
             pg = groups._get_data_parallel_group()
         scaled_norm = all_groups_norm * 1.0 / float(dist.get_world_size(group=pg))
-        scaled_norm_tensor = torch.tensor(scaled_norm,
-                                          device=self.fp32_groups_flat[0].device,
-                                          dtype=torch.float)
+        scaled_norm_tensor = torch.tensor(scaled_norm, device=self.fp32_groups_flat[0].device, dtype=torch.float)
         dist.all_reduce(scaled_norm_tensor, group=pg)
         all_groups_norm = scaled_norm_tensor.item()
         #print(f"old = {all_groups_norm_old} and new = {all_groups_norm} at rank: {torch.distributed.get_rank()}")

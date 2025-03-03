@@ -100,23 +100,14 @@ def cifar_trainset(fp16=False):
     dist.barrier()
     if local_rank != 0:
         dist.barrier()
-    trainset = torchvision.datasets.CIFAR10(root='/blob/cifar10-data',
-                                            train=True,
-                                            download=True,
-                                            transform=transform)
+    trainset = torchvision.datasets.CIFAR10(root='/blob/cifar10-data', train=True, download=True, transform=transform)
     if local_rank == 0:
         dist.barrier()
     return trainset
 
 
-def train_cifar(model,
-                config,
-                num_steps=400,
-                average_dp_losses=True,
-                fp16=True,
-                seed=123):
-    with get_accelerator().random().fork_rng(
-            devices=[get_accelerator().current_device_name()]):
+def train_cifar(model, config, num_steps=400, average_dp_losses=True, fp16=True, seed=123):
+    with get_accelerator().random().fork_rng(devices=[get_accelerator().current_device_name()]):
         ds_utils.set_random_seed(seed)
 
         # disable dropout
@@ -125,11 +116,10 @@ def train_cifar(model,
         trainset = cifar_trainset(fp16=fp16)
         config['local_rank'] = dist.get_rank()
 
-        with no_child_process_in_deepspeed_io():
-            engine, _, _, _ = deepspeed.initialize(config=config,
-                                                   model=model,
-                                                   model_parameters=[p for p in model.parameters()],
-                                                   training_data=trainset)
+        engine, _, _, _ = deepspeed.initialize(config=config,
+                                               model=model,
+                                               model_parameters=[p for p in model.parameters()],
+                                               training_data=trainset)
 
         losses = []
         for step in range(num_steps):

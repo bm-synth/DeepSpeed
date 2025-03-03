@@ -41,12 +41,10 @@ def set_accelerator_visible():
         # CUDA_VISIBLE_DEVICES is not set, discover it using accelerator specific command instead
         import subprocess
         if get_accelerator().device_name() == 'cuda':
-            is_rocm_pytorch = hasattr(torch.version,
-                                      'hip') and torch.version.hip is not None
+            is_rocm_pytorch = hasattr(torch.version, 'hip') and torch.version.hip is not None
             if is_rocm_pytorch:
                 rocm_smi = subprocess.check_output(['rocm-smi', '--showid'])
-                gpu_ids = filter(lambda s: 'GPU' in s,
-                                 rocm_smi.decode('utf-8').strip().split('\n'))
+                gpu_ids = filter(lambda s: 'GPU' in s, rocm_smi.decode('utf-8').strip().split('\n'))
                 num_gpus = len(list(gpu_ids))
             else:
                 nvidia_smi = subprocess.check_output(['nvidia-smi', '--list-gpus'])
@@ -130,8 +128,7 @@ class DistributedTest(ABC):
         return test_kwargs
 
     def _launch_procs(self, num_procs):
-        if get_accelerator().is_available(
-        ) and get_accelerator().device_count() < num_procs:
+        if get_accelerator().is_available() and get_accelerator().device_count() < num_procs:
             pytest.skip(
                 f"Skipping test because not enough GPUs are available: {num_procs} required, {get_accelerator().device_count()} available"
             )
@@ -163,11 +160,9 @@ class DistributedTest(ABC):
                 p.terminate()
                 pytest.fail(f'Worker {rank} hung.', pytrace=False)
             if p.exitcode < 0:
-                pytest.fail(f'Worker {rank} killed by signal {-p.exitcode}',
-                            pytrace=False)
+                pytest.fail(f'Worker {rank} killed by signal {-p.exitcode}', pytrace=False)
             if p.exitcode > 0:
-                pytest.fail(f'Worker {rank} exited with code {p.exitcode}',
-                            pytrace=False)
+                pytest.fail(f'Worker {rank} exited with code {p.exitcode}', pytrace=False)
 
         if not skip_msg.empty():
             # This assumed all skip messages are the same, it may be useful to
@@ -294,21 +289,10 @@ def distributed_test(world_size=2, backend='nccl'):
                     pytest.fail(f'Worker {rank} exited with code {p.exitcode}',
                                 pytrace=False)
 
-        def run_func_decorator(*func_args, **func_kwargs):
-            """Entry point for @distributed_test(). """
-
-            if isinstance(world_size, int):
-                dist_launcher(world_size, *func_args, **func_kwargs)
-            elif isinstance(world_size, list):
-                for procs in world_size:
-                    dist_launcher(procs, *func_args, **func_kwargs)
-                    time.sleep(0.5)
-            else:
-                raise TypeError(f'world_size must be an integer or a list of integers.')
-
-        return run_func_decorator
-
-    return dist_wrap
+    def __init__(self):
+        assert isinstance(self.world_size, int), "Only one world size is allowed for distributed fixtures"
+        self.__name__ = type(self).__name__
+        _pytestfixturefunction = FixtureFunctionMarker(scope="function", params=None, name=self.__name__)
 
 
 class DistributedTest(DistributedExec):

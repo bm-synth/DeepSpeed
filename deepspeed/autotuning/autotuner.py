@@ -248,8 +248,8 @@ class Autotuner:
         return self.autotuning_config.mp_size
 
     def max_train_micro_batch_size_per_gpu(self):
-        if self.max_train_batch_size() and self.max_train_batch_size(
-        ) > 0:  # if the user specifies a max_train_batch_size
+        if self.max_train_batch_size(
+        ) and self.max_train_batch_size() > 0:  # if the user specifies a max_train_batch_size
             max_train_micro_batch_size = self.max_train_batch_size() * self.mp_size() // (
                 self.exp_num_gpus * self.exp_num_nodes)  # gradient accumulation steps >=1
             return min(self.autotuning_config.max_train_micro_batch_size_per_gpu, max_train_micro_batch_size)
@@ -349,10 +349,8 @@ class Autotuner:
             if model_info and "hidden_size" in model_info:
                 hs = model_info["hidden_size"]
                 template_config[ZERO_OPTIMIZATION]['reduce_bucket_size'] = hs * hs
-                template_config[ZERO_OPTIMIZATION][
-                    'stage3_prefetch_bucket_size'] = 0.9 * hs * hs
-                template_config[ZERO_OPTIMIZATION][
-                    'stage3_param_persistence_threshold'] = 10 * hs
+                template_config[ZERO_OPTIMIZATION]['stage3_prefetch_bucket_size'] = 0.9 * hs * hs
+                template_config[ZERO_OPTIMIZATION]['stage3_param_persistence_threshold'] = 10 * hs
             prefix = "z3_"
         else:
             return exps
@@ -382,11 +380,9 @@ class Autotuner:
             # if the config does not use offloading, remove the offloading section
             config_zero = config.get(ZERO_OPTIMIZATION, None)
             if config_zero:
-                if OFFLOAD_OPTIMIZER not in config_zero and OFFLOAD_OPTIMIZER in exp_config[
-                        ZERO_OPTIMIZATION]:
+                if OFFLOAD_OPTIMIZER not in config_zero and OFFLOAD_OPTIMIZER in exp_config[ZERO_OPTIMIZATION]:
                     del exp_config[ZERO_OPTIMIZATION][OFFLOAD_OPTIMIZER]
-                if OFFLOAD_PARAM not in config_zero and OFFLOAD_PARAM in exp_config[
-                        ZERO_OPTIMIZATION]:
+                if OFFLOAD_PARAM not in config_zero and OFFLOAD_PARAM in exp_config[ZERO_OPTIMIZATION]:
                     del exp_config[ZERO_OPTIMIZATION][OFFLOAD_PARAM]
             # set gradient accumulation steps according to max_train_batch_size_per_gpu
             mbs = exp_config[TRAIN_MICRO_BATCH_SIZE_PER_GPU]
@@ -434,9 +430,7 @@ class Autotuner:
         )
 
         #TODO: FIX THIS
-        stage = self.user_config.get(ZERO_OPTIMIZATION,
-                                     {}).get(ZERO_OPTIMIZATION_STAGE,
-                                             "all")
+        stage = self.user_config.get(ZERO_OPTIMIZATION, {}).get(ZERO_OPTIMIZATION_STAGE, "all")
         stage = "all"
         user_zero_stages = [stage] if not isinstance(stage, list) else stage
         logger.info(f"User-defined zero stages are {stage}.")
@@ -445,8 +439,7 @@ class Autotuner:
         max_mbs = 0
         metric_val = 0
 
-        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(
-            ZeroStageEnum.disabled) + self.activation_mem
+        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(ZeroStageEnum.disabled) + self.activation_mem
         if self.gpu_mem > required_gpu_mem:
             if "all" in user_zero_stages or ZeroStageEnum.disabled in user_zero_stages:
                 logger.info(
@@ -508,15 +501,16 @@ class Autotuner:
                 f"The model is not runable with ZERO stage {ZeroStageEnum.gradients} (which requires at least {memory_to_string(required_gpu_mem, postfix='B')} memory with mbs = 1)"
             )
 
-        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(
-            ZeroStageEnum.weights) + self.activation_mem
+        required_gpu_mem = self.get_instantiation_memory_required_per_gpu(ZeroStageEnum.weights) + self.activation_mem
         if self.gpu_mem > required_gpu_mem:
             if "all" in user_zero_stages or ZeroStageEnum.weights in user_zero_stages:
                 logger.info(
                     f"The model might be runable with ZERO 3 (which requires at least {memory_to_string(required_gpu_mem, postfix='B')} memory), adding DEFAULT_TUNING_SPACE_ZERO_3 to the global tuning space"
                 )
-                _, _, next_metric_val = self.tune_space(
-                    DEFAULT_TUNING_SPACE_ZERO_3, prev_max_mbs = max_mbs, prev_best_mbs=mbs, prev_best_metric_val=metric_val)
+                _, _, next_metric_val = self.tune_space(DEFAULT_TUNING_SPACE_ZERO_3,
+                                                        prev_max_mbs=max_mbs,
+                                                        prev_best_mbs=mbs,
+                                                        prev_best_metric_val=metric_val)
                 if has_mlflow:
                     mlflow.log_metric(f"z3{self.metric()}", next_metric_val)
         else:
@@ -971,8 +965,8 @@ class Autotuner:
                     low = mid + 1
                     self.update_records(tuning_space_name, exp, metric_val, 1)
                     used_micro_batch_sizes.append(mid)
-                    if prev_metric_val and ((metric_val - prev_metric_val) /
-                                            prev_metric_val) < METRIC_PERCENT_DIFF_CONST:
+                    if prev_metric_val and (
+                        (metric_val - prev_metric_val) / prev_metric_val) < METRIC_PERCENT_DIFF_CONST:
                         logger.info(f"performance plateaus at mbs = {low}")
                         break
                     prev_metric_val = metric_val
@@ -1033,8 +1027,8 @@ class Autotuner:
         # NUM_GPUS=$(( ${NUM_WORKERS} * ${NUM_GPUS_PER_WORKER} ))
         # DP_SIZE=$(( ${NUM_GPUS} / (${PP_SIZE} * ${MP_SIZE}) ))
         # GRAD_ACC_STEPS=$(( ${TARGET_GLOBAL_BATCH_SIZE} / (${BATCH_SIZE} * ${DP_SIZE}) ))
-        if self.max_train_batch_size() and self.max_train_batch_size(
-        ) > 0:  # if the user specifies a max_train_batch_size
+        if self.max_train_batch_size(
+        ) and self.max_train_batch_size() > 0:  # if the user specifies a max_train_batch_size
             max_train_batch_size_per_gpu = self.max_train_batch_size() * self.mp_size() // (self.exp_num_gpus *
                                                                                             self.exp_num_nodes)
         else:
@@ -1115,8 +1109,6 @@ class Autotuner:
             result = subprocess.Popen(self.optimal_cmd)
             result.wait()
 
-            logger.info(
-                f"Done running with the optimal DeepSpeed configuration using {self.optimal_cmd}"
-            )
+            logger.info(f"Done running with the optimal DeepSpeed configuration using {self.optimal_cmd}")
         else:
             logger.info(f"No optimal DeepSpeed configuration found by autotuning.")

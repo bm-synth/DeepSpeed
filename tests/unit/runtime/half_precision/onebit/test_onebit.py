@@ -32,9 +32,6 @@ if rocm_version[0] > 4:
     pytest.skip("NCCL-based 1-bit compression is not yet supported w. ROCm 5 until cupy supports ROCm 5",
                 allow_module_level=True)
 
-if get_accelerator().device_name() == 'hpu':
-    pytest.skip("1-bit compression is not supported by HPU.", allow_module_level=True)
-
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16], ids=["fp32", "fp16"])
 class TestOneBitAdamBasic(DistributedTest):
@@ -390,10 +387,18 @@ class TestOneBitAdamFP16Pipeline(DistributedTest):
         topo = PipeTopo(**topo_config)
         steps = 100
 
-        # TODO: Add correctness tests/asserts comparing with baseline?
-        test_net = AlexNetPipe()
+        # Allocate model for consistent initial weights.
+        init_net = AlexNetPipe()
+
+        test_net = copy.deepcopy(init_net)
         test_model = PipelineModule(layers=test_net.to_layers(), topology=topo, loss_fn=nn.CrossEntropyLoss())
-        test_losses = train_cifar(test_model, config=config_dict, num_steps=steps, fp16=config_dict['fp16']['enabled'])
+
+        test_losses = train_cifar(
+            test_model,
+            config=config_dict,
+            num_steps=steps,
+            fp16=config_dict["fp16"]["enabled"],
+        )
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16], ids=["fp32", "fp16"])
@@ -760,10 +765,18 @@ class TestZeroOneAdamFP16Pipeline(DistributedTest):
         topo = PipeTopo(**topo_config)
         steps = 100
 
-        # TODO: Add correctness tests/asserts comparing with baseline?
-        test_net = AlexNetPipe()
+        # Allocate model for consistent initial weights.
+        init_net = AlexNetPipe()
+
+        test_net = copy.deepcopy(init_net)
         test_model = PipelineModule(layers=test_net.to_layers(), topology=topo, loss_fn=nn.CrossEntropyLoss())
-        test_losses = train_cifar(test_model, config=config_dict, num_steps=steps, fp16=config_dict['fp16']['enabled'])
+
+        test_losses = train_cifar(
+            test_model,
+            config=config_dict,
+            num_steps=steps,
+            fp16=config_dict["fp16"]["enabled"],
+        )
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16], ids=["fp32", "fp16"])
@@ -1153,10 +1166,18 @@ class TestOneBitLambFP16Pipeline(DistributedTest):
         topo = PipeTopo(**topo_config)
         steps = 100
 
-        # TODO: Add correctness tests/asserts comparing with baseline?
-        test_net = AlexNetPipe()
+        # Allocate model for consistent initial weights.
+        init_net = AlexNetPipe()
+
+        test_net = copy.deepcopy(init_net)
         test_model = PipelineModule(layers=test_net.to_layers(), topology=topo, loss_fn=nn.CrossEntropyLoss())
-        test_losses = train_cifar(test_model, config=config_dict, num_steps=steps, fp16=config_dict['fp16']['enabled'])
+
+        test_losses = train_cifar(
+            test_model,
+            config=config_dict,
+            num_steps=steps,
+            fp16=config_dict["fp16"]["enabled"],
+        )
 
 
 @pytest.mark.sequential

@@ -16,7 +16,9 @@ from deepspeed.compression.helper import convert_conv1d_to_linear
 from deepspeed.accelerator import get_accelerator
 from unit.common import DistributedTest
 
-pytestmark = pytest.mark.skipif(not required_torch_version(min_version=1.5),
+TORCH_MAJOR = int(torch.__version__.split('.')[0])
+TORCH_MINOR = int(torch.__version__.split('.')[1])
+pytestmark = pytest.mark.skipif(TORCH_MAJOR < 1 or (TORCH_MAJOR == 1 and TORCH_MINOR < 5),
                                 reason='Megatron-LM package requires Pytorch version 1.5 or above')
 
 
@@ -96,6 +98,7 @@ def create_conv1d_model():
 
 
 class TestCompression(DistributedTest):
+
     def setup_method(self, method):
         reset_random()
 

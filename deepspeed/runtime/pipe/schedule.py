@@ -212,18 +212,14 @@ class TrainSchedule(PipeSchedule):
 
             # Exchange activations
             if is_forward:
-                if self._valid_micro_batch(prev_micro_batch_id) and self._valid_stage(
-                        self.prev_stage):
+                if self._valid_micro_batch(prev_micro_batch_id) and self._valid_stage(self.prev_stage):
                     cmds.append(SendGrad(prev_buffer))
-                if self._valid_micro_batch(micro_batch_id) and self._valid_stage(
-                        self.prev_stage):
+                if self._valid_micro_batch(micro_batch_id) and self._valid_stage(self.prev_stage):
                     cmds.append(RecvActivation(curr_buffer))
             else:
-                if self._valid_micro_batch(micro_batch_id) and self._valid_stage(
-                        self.next_stage):
+                if self._valid_micro_batch(micro_batch_id) and self._valid_stage(self.next_stage):
                     cmds.append(RecvGrad(curr_buffer))
-                if self._valid_micro_batch(prev_micro_batch_id) and self._valid_stage(
-                        self.next_stage):
+                if self._valid_micro_batch(prev_micro_batch_id) and self._valid_stage(self.next_stage):
                     cmds.append(SendActivation(prev_buffer))
 
             # First/last stage loads

@@ -390,9 +390,7 @@ def run_experiment(exp: dict, reservations, user_script, user_args):
 
     clean_up(exp, reservations)
 
-    logger.info(
-        f"Done running exp_id = {exp['exp_id']}, exp_name = {exp['name']}, with resource = {include_str}"
-    )
+    logger.info(f"Done running exp_id = {exp['exp_id']}, exp_name = {exp['name']}, with resource = {include_str}")
 
 
 PDSH_MAX_FAN_OUT = 1024

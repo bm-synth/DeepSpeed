@@ -49,8 +49,7 @@ class SparseAttnBuilder(OpBuilder):
             self.warning(f"{self.NAME} cuda is not available from torch")
         else:
             major, minor = torch.version.cuda.split('.')[:2]
-            cuda_compatible = (int(major) == 10
-                               and int(minor) >= 1) or (int(major) >= 11)
+            cuda_compatible = (int(major) == 10 and int(minor) >= 1) or (int(major) >= 11)
             if not cuda_compatible:
                 self.warning(f"{self.NAME} requires CUDA version 10.1+")
 
@@ -58,25 +57,14 @@ class SparseAttnBuilder(OpBuilder):
         TORCH_MINOR = int(torch.__version__.split('.')[1])
         torch_compatible = (TORCH_MAJOR == 1 and TORCH_MINOR >= 5)
         if not torch_compatible:
-            if verbose:
-                self.warning(
-                    f'{self.NAME} requires a torch version >= 1.5 and < 2.0 but detected {TORCH_MAJOR}.{TORCH_MINOR}')
-        try:
-            import triton
-        except ImportError:
-            # auto-install of triton is broken on some systems, reverting to manual install for now
-            # see this issue: https://github.com/deepspeedai/DeepSpeed/issues/1710
-            if verbose:
-                self.warning(f"please install triton==1.0.0 if you want to use sparse attention")
-            return False
+            self.warning(f'{self.NAME} requires a torch version >= 1.5 but detected {TORCH_MAJOR}.{TORCH_MINOR}')
 
         try:
             import triton
         except ImportError:
             # auto-install of triton is broken on some systems, reverting to manual install for now
             # see this issue: https://github.com/microsoft/DeepSpeed/issues/1710
-            self.warning(
-                f"please install triton==1.0.0 if you want to use sparse attention")
+            self.warning(f"please install triton==1.0.0 if you want to use sparse attention")
             return False
 
         if pkg_version:
@@ -87,9 +75,7 @@ class SparseAttnBuilder(OpBuilder):
             triton_mismatch = installed_triton != "1.0.0"
 
         if triton_mismatch:
-            self.warning(
-                f"using untested triton version ({installed_triton}), only 1.0.0 is known to be compatible"
-            )
+            self.warning(f"using untested triton version ({installed_triton}), only 1.0.0 is known to be compatible")
             return False
 
         return super().is_compatible(verbose) and torch_compatible and cuda_compatible

@@ -160,9 +160,7 @@ class TestConfigLoad(DistributedTest):
     def test_dict(self, base_config):
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=base_config,
-                                              model=model,
-                                              model_parameters=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=base_config, model=model, model_parameters=model.parameters())
 
     def test_json(self, base_config, tmpdir):
         config_path = os.path.join(tmpdir, "config.json")
@@ -170,9 +168,7 @@ class TestConfigLoad(DistributedTest):
             json.dump(base_config, fp)
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=config_path,
-                                              model=model,
-                                              model_parameters=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=config_path, model=model, model_parameters=model.parameters())
 
     def test_hjson(self, base_config, tmpdir):
         config_path = os.path.join(tmpdir, "config.json")
@@ -180,9 +176,7 @@ class TestConfigLoad(DistributedTest):
             hjson.dump(base_config, fp)
         hidden_dim = 10
         model = SimpleModel(hidden_dim)
-        model, _, _, _ = deepspeed.initialize(config=config_path,
-                                              model=model,
-                                              model_parameters=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=config_path, model=model, model_parameters=model.parameters())
 
 
 class TestDeprecatedDeepScaleConfig(DistributedTest):

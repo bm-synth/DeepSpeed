@@ -107,9 +107,7 @@ class FP16_UnfusedOptimizer(DeepSpeedOptimizer):
         self.mpu = mpu
 
         self.overflow = False
-        self.overflow_checker = CheckOverflow(self.fp16_groups,
-                                              mpu=self.mpu,
-                                              deepspeed=deepspeed)
+        self.overflow_checker = CheckOverflow(self.fp16_groups, mpu=self.mpu, deepspeed=deepspeed)
 
         self.initialize_optimizer_states()
 
@@ -189,9 +187,7 @@ class FP16_UnfusedOptimizer(DeepSpeedOptimizer):
 
     def override_loss_scale(self, loss_scale):
         if loss_scale != self.external_loss_scale:
-            logger.info(
-                f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}'
-            )
+            logger.info(f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}')
         self.custom_loss_scaler = True
         self.external_loss_scale = loss_scale
 

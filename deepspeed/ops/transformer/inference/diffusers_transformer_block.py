@@ -67,8 +67,7 @@ class DeepSpeedDiffusersTransformerBlock(nn.Module):
             self.attn_1.do_out_bias = False
             self.attn_1_bias = self.attn_1.attn_ob
         else:
-            self.attn_1_bias = nn.Parameter(torch.zeros_like(self.norm2_g),
-                                            requires_grad=False)
+            self.attn_1_bias = nn.Parameter(torch.zeros_like(self.norm2_g), requires_grad=False)
 
         # Pull the bias in if we can
         if isinstance(self.attn_2, DeepSpeedDiffusersAttention):
@@ -89,27 +88,14 @@ class DeepSpeedDiffusersTransformerBlock(nn.Module):
         if "encoder_hidden_states" in kwargs and kwargs["encoder_hidden_states"] != None:
             context = kwargs["encoder_hidden_states"]
 
-        # In v0.11.0 of diffusers, the kwarg was changed from 'context' to 'encoder_hidden_states'
-        # This is so we can support older and newer versions of diffusers
-        if "encoder_hidden_states" in kwargs and kwargs["encoder_hidden_states"] is not None:
-            context = kwargs["encoder_hidden_states"]
-
-        out_norm_1 = self.layer_norm(hidden_states, self.norm1_g, self.norm1_b, self.norm1_eps)
+        out_norm_1 = self.transformer_cuda_module.layer_norm(hidden_states, self.norm1_g, self.norm1_b, self.norm1_eps)
         out_attn_1 = self.attn_1(out_norm_1)
 
-        out_norm_2, out_attn_1 = self.transformer_cuda_module.layer_norm_residual_store_pre_ln_res(out_attn_1,
-                                                                 self.attn_1_bias,
-                                                                 hidden_states,
-                                                                 self.norm2_g,
-                                                                 self.norm2_b,
-                                                                 self.norm2_eps)
+        out_norm_2, out_attn_1 = self.transformer_cuda_module.layer_norm_residual_store_pre_ln_res(
+            out_attn_1, self.attn_1_bias, hidden_states, self.norm2_g, self.norm2_b, self.norm2_eps)
         out_attn_2 = self.attn_2(out_norm_2, context=context)
-        out_norm_3, out_attn_2 = self.transformer_cuda_module.layer_norm_residual_store_pre_ln_res(out_attn_2,
-                                                                 self.attn_2_bias,
-                                                                 out_attn_1,
-                                                                 self.norm3_g,
-                                                                 self.norm3_b,
-                                                                 self.norm3_eps)
+        out_norm_3, out_attn_2 = self.transformer_cuda_module.layer_norm_residual_store_pre_ln_res(
+            out_attn_2, self.attn_2_bias, out_attn_1, self.norm3_g, self.norm3_b, self.norm3_eps)
 
         out_ff1 = nn.functional.linear(out_norm_3, self.ff1_w)
         out_geglu = self.gated_activation(out_ff1, self.ff1_b, ActivationFuncType.GATED_GELU)

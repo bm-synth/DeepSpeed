@@ -58,167 +58,6 @@ def _ensure_divisibility(numerator, denominator):
     assert numerator % denominator == 0, '{} is not divisible by {}'.format(numerator, denominator)
 
 
-# ======== Start: Tensor Parallel Group Attributes ========
-
-# Intra-layer model parallel group that the current rank belongs to.
-_TENSOR_MODEL_PARALLEL_GROUP = None
-
-# Model parallel group (both intra- and pipeline) that the current rank belongs to.
-_MODEL_PARALLEL_GROUP = None
-# Data parallel group that the current rank belongs to.
-_DATA_PARALLEL_GROUP = None
-
-# These values enable us to change the mpu sizes on the fly.
-_MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE = None
-_MPU_TENSOR_MODEL_PARALLEL_RANK = None
-
-
-def initialize(ep_size=1, mpu=None):
-    """
-    Process groups initialization supporting expert (E), data (D), and model (M) parallelism. DeepSpeed considers
-    the following scenarios w.r.t. process group creation.
-
-    * S1: There is no expert parallelism or model parallelism, only data (D)::
-
-        model = my_model(args)
-        engine = deepspeed.initialize(model) # initialize groups without mpu
-
-    * S2: There is expert parallelism but no model parallelism (E+D)::
-
-        deepspeed.utils.groups.initialize(ep_size) # groups will be initialized here
-        model = my_model(args)
-        engine = deepspeed.initialize(model)
-
-    * S3: There is model parallelism but no expert parallelism (M)::
-
-        mpu.init() # client initializes it's model parallel unit
-        model = my_model(args)
-        engine = deepspeed.initialize(model, mpu=mpu) # init w. mpu but ep_size = dp_world_size
-
-    * S4: There is model, data, and expert parallelism (E+D+M)::
-
-        mpu.init() # client initializes it's model parallel unit
-        deepspeed.utils.groups.initialize(ep_size, mpu) # initialize expert groups wrt mpu
-        model = my_model(args)
-        engine = deepspeed.initialize(model, mpu=mpu) # passing mpu is optional in this case
-
-    Arguments:
-        ep_size (int, optional): default=1, expert parallel size
-        mpu (module, optional): default=None, model parallel unit (e.g., from Megatron)
-            that descibes model/data parallel ranks.
-
-    """
-    if mpu is not None:
-        log_dist(message="initializing deepspeed groups using mpu", ranks=[0])
-        initialize_model_and_expert_parallel(ep_size, mpu)
-    else:
-        log_dist(message="initializing deepspeed groups", ranks=[0])
-        initialize_model_parallel(1)
-        initialize_expert_parallel(ep_size)
-
-    global _DATA_PARALLEL_GROUP
-    global _MODEL_PARALLEL_GROUP
-    global _TENSOR_MODEL_PARALLEL_GROUP
-
-    if _TENSOR_MODEL_PARALLEL_GROUP is not None:
-        return
-
-    if data_parallel_size is None:
-        data_parallel_size = dist.get_world_size() // tensor_model_parallel_size
-
-    mesh_device = dist.initialize_mesh_device((data_parallel_size, tensor_model_parallel_size),
-                                              ("data_parallel", "tensor_parallel"))
-    _TENSOR_MODEL_PARALLEL_GROUP = mesh_device.get_group(mesh_dim="tensor_parallel")
-    _DATA_PARALLEL_GROUP = mesh_device.get_group(mesh_dim="data_parallel")
-
-    # They are always equal only in 2D (DP + TP) parallelism.
-    # _MODEL_PARALLEL_GROUP is assigned the same value as _TENSOR_MODEL_PARALLEL_GROUP
-    # to allow for future potential changes.
-    _MODEL_PARALLEL_GROUP = _TENSOR_MODEL_PARALLEL_GROUP
-
-    return _DATA_PARALLEL_GROUP, _MODEL_PARALLEL_GROUP
-
-
-def get_tensor_model_parallel_group():
-    """Get the tensor model parallel group the caller rank belongs to."""
-
-    assert _TENSOR_MODEL_PARALLEL_GROUP is not None, \
-        'intra_layer_model parallel group is not initialized'
-    return _TENSOR_MODEL_PARALLEL_GROUP
-
-
-def get_model_parallel_group():
-    """Get the model parallel group the caller rank belongs to."""
-
-    assert _MODEL_PARALLEL_GROUP is not None, \
-        'model parallel group is not initialized'
-    return _MODEL_PARALLEL_GROUP
-
-
-def get_data_parallel_group():
-    """Get the data parallel group the caller rank belongs to."""
-    assert _DATA_PARALLEL_GROUP is not None, \
-        'data parallel group is not initialized'
-    return _DATA_PARALLEL_GROUP
-
-
-def set_tensor_model_parallel_world_size(world_size):
-    """Set the tensor model parallel size"""
-    global _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
-    _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE = world_size
-
-
-def get_tensor_model_parallel_world_size():
-    """Return world size for the tensor model parallel group."""
-    global _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
-    if _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE is not None:
-        return _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
-    return dist.get_world_size(group=get_tensor_model_parallel_group())
-
-
-def get_model_parallel_world_size():
-    return get_tensor_model_parallel_world_size()
-
-
-def set_tensor_model_parallel_rank(rank):
-    """Set tensor model parallel rank."""
-    global _MPU_TENSOR_MODEL_PARALLEL_RANK
-    _MPU_TENSOR_MODEL_PARALLEL_RANK = rank
-
-
-def get_tensor_model_parallel_rank():
-    """Return my rank for the tensor model parallel group."""
-    global _MPU_TENSOR_MODEL_PARALLEL_RANK
-    if _MPU_TENSOR_MODEL_PARALLEL_RANK is not None:
-        return _MPU_TENSOR_MODEL_PARALLEL_RANK
-    return dist.get_rank(group=get_tensor_model_parallel_group())
-
-
-def get_model_parallel_rank():
-    return get_tensor_model_parallel_rank()
-
-
-def get_tensor_model_parallel_src_rank():
-    """Calculate the global rank corresponding to the first local rank
-    in the tensor model parallel group."""
-    global_rank = dist.get_rank()
-    local_world_size = get_tensor_model_parallel_world_size()
-    return (global_rank // local_world_size) * local_world_size
-
-
-def get_data_parallel_world_size():
-    """Return world size for the data parallel group."""
-    return dist.get_world_size(group=get_data_parallel_group())
-
-
-def get_data_parallel_rank():
-    """Return my rank for the data parallel group."""
-    return dist.get_rank(group=get_data_parallel_group())
-
-
-# ======== End: Tensor Parallel Group Attributes ========
-
-
 # Not currently used. Helper function to create a model (tensor) parallel group.
 def _create_model_parallel(model_parallel_size_):
     """
@@ -285,9 +124,7 @@ def _create_expert_and_data_parallel(expert_parallel_size_):
     """
     assert dist.is_initialized()
 
-    log_dist(
-        f'Creating expert and data parallel groups with size {expert_parallel_size_}',
-        ranks=[0])
+    log_dist(f'Creating expert and data parallel groups with size {expert_parallel_size_}', ranks=[0])
     world_size = dist.get_world_size()
     pp_world_size = 1 if mpu is None else bwc_pipeline_parallel_world_size(mpu)
     rank = dist.get_rank()
@@ -303,42 +140,24 @@ def _create_expert_and_data_parallel(expert_parallel_size_):
 
     # Only create group if it does not already exist
     if group_name not in _EXPERT_DATA_PARALLEL_GROUP:
-        for pp_stage_start in range(0, world_size, pp_stride):
-            for i in range(expert_parallel_size_):
-                if use_data_before_expert_parallel_:
-                    ranks = range(pp_stage_start + i * ep_stride, pp_stage_start + (i + 1) * ep_stride)
-                else:
-                    ranks = range(pp_stage_start + i, pp_stage_start + pp_stride, expert_parallel_size_)
-                group = dist.new_group(ranks)
-                log_dist(
-                    f'Creating expert data parallel process group named {group_name} '
-                    f'with ranks: {list(ranks)}', [0])
-                if rank in ranks:
-                    _EXPERT_DATA_PARALLEL_GROUP[group_name] = group
+        for i in range(expert_parallel_size_):
+            ranks = range(i, world_size, expert_parallel_size_)
+            group = dist.new_group(ranks)
+            log_dist(f'Creating expert data parallel process group named {group_name} with ranks: {list(ranks)}', [0])
+            if i == (rank % expert_parallel_size_):
+                _EXPERT_DATA_PARALLEL_GROUP[group_name] = group
 
     # Build the expert parallel groups.
     global _EXPERT_PARALLEL_GROUP
 
     # Only create group if it does not already exist
     if group_name not in _EXPERT_PARALLEL_GROUP:
-        if use_data_before_expert_parallel_:
-            for pp_stage_start in range(0, world_size, pp_stride):
-                for i in range(ep_stride):
-                    ranks = range(pp_stage_start + i, pp_stage_start + pp_stride, ep_stride)
-                    group = dist.new_group(ranks)
-                    log_dist(
-                        f'creating expert parallel process group named {group_name} '
-                        f'with ranks: {list(ranks)}', [0])
-                    if rank in ranks:
-                        _EXPERT_PARALLEL_GROUP[group_name] = group
-        else:
-            for i in range(world_size // expert_parallel_size_):
-                ranks = range(i * expert_parallel_size_, (i + 1) * expert_parallel_size_)
-                group = dist.new_group(ranks)
-                log_dist(f'creating expert parallel process group named {group_name} '
-                         f'with ranks: {list(ranks)}', [0])
-                if rank in ranks:
-                    _EXPERT_PARALLEL_GROUP[group_name] = group
+        for i in range(world_size // expert_parallel_size_):
+            ranks = range(i * expert_parallel_size_, (i + 1) * expert_parallel_size_)
+            group = dist.new_group(ranks)
+            log_dist(f'creating expert parallel process group named {group_name} with ranks: {list(ranks)}', [0])
+            if i == (rank // expert_parallel_size_):
+                _EXPERT_PARALLEL_GROUP[group_name] = group
 
 
 def _get_expert_parallel_ranks(world_size, model_parallel_size_, expert_parallel_size_):

@@ -159,42 +159,13 @@ class DeepSpeedTransformerFunction(Function):
             input_mask = torch.cat((input_mask, torch.ones((inp_size[0], input_mask.shape[1], input_mask.shape[2], \
                                             (16 - (inp_size[1] % 16))), device=input_mask.device, dtype=input_mask.dtype) * -10000), 3)
 
-        (output,
-         inp_norm,
-         qkv_tf,
-         soft_inp,
-         ctx_bufB,
-         attn_o_inp,
-         add_res,
-         ff1_inp,
-         gelu_inp,
-         ff2_inp,
-         attn_prob_dropout_mask,
-         attn_output_dropout_mask,
-         layer_output_dropout_mask,
-         attn_layer_norm_var,
-         attn_layer_norm_mean,
-         layer_norm_var,
-         layer_norm_mean) = forward_func(config.layer_id,
-                                         input,
-                                         input_mask,
-                                         attn_qkvw,
-                                         attn_qkvb,
-                                         attn_ow,
-                                         attn_ob,
-                                         attn_nw,
-                                         attn_nb,
-                                         inter_w,
-                                         inter_b,
-                                         output_w,
-                                         output_b,
-                                         norm_w,
-                                         norm_b,
-                                         config.training and config.is_grad_enabled,
-                                         config.pre_layer_norm,
-                                         config.attn_dropout_checkpoint,
-                                         config.normalize_invertible,
-                                         config.gelu_checkpoint)
+        (output, inp_norm, qkv_tf, soft_inp, ctx_bufB, attn_o_inp, add_res, ff1_inp, gelu_inp, ff2_inp,
+         attn_prob_dropout_mask, attn_output_dropout_mask, layer_output_dropout_mask, attn_layer_norm_var,
+         attn_layer_norm_mean, layer_norm_var, layer_norm_mean) = forward_func(
+             config.layer_id, input, input_mask, attn_qkvw, attn_qkvb, attn_ow, attn_ob, attn_nw, attn_nb, inter_w,
+             inter_b, output_w, output_b, norm_w, norm_b, config.training and config.is_grad_enabled,
+             config.pre_layer_norm, config.attn_dropout_checkpoint, config.normalize_invertible,
+             config.gelu_checkpoint)
 
         # For testing only.
         if grads is not None:
@@ -398,21 +369,11 @@ class DeepSpeedTransformerLayer(nn.Module):
         cuda_module = stochastic_transformer_cuda_module if self.config.stochastic_mode else transformer_cuda_module
         create_layer_func = cuda_module.create_transformer_layer_fp16 if self.config.fp16 else cuda_module.create_transformer_layer_fp32
 
-        create_layer_func(self.config.layer_id,
-                          self.config.batch_size,
-                          self.config.hidden_size,
-                          self.config.heads,
-                          self.config.intermediate_size,
-                          self.config.attn_dropout_ratio,
-                          self.config.hidden_dropout_ratio,
-                          self.config.layer_norm_eps,
-                          self.config.seed,
-                          self.config.pre_layer_norm,
-                          self.config.test_gemm,
-                          self.config.attn_dropout_checkpoint,
-                          self.config.normalize_invertible,
-                          self.config.gelu_checkpoint,
-                          self.config.stochastic_mode)
+        create_layer_func(self.config.layer_id, self.config.batch_size, self.config.hidden_size, self.config.heads,
+                          self.config.intermediate_size, self.config.attn_dropout_ratio,
+                          self.config.hidden_dropout_ratio, self.config.layer_norm_eps, self.config.seed,
+                          self.config.pre_layer_norm, self.config.test_gemm, self.config.attn_dropout_checkpoint,
+                          self.config.normalize_invertible, self.config.gelu_checkpoint, self.config.stochastic_mode)
 
     def init_transformer_weights(self, adjust_init_range=False):
         num_layers = self.config.num_hidden_layers
@@ -446,21 +407,7 @@ class DeepSpeedTransformerLayer(nn.Module):
                 grads=None):
         self.config.is_grad_enabled = torch.is_grad_enabled()
         self.config.training = self.training
-        return DeepSpeedTransformerFunction.apply(hidden_states,
-                                                  attention_mask,
-                                                  self,
-                                                  grads,
-                                                  self.config.layer_id,
-                                                  self.attn_qkvw,
-                                                  self.attn_qkvb,
-                                                  self.attn_ow,
-                                                  self.attn_ob,
-                                                  self.attn_nw,
-                                                  self.attn_nb,
-                                                  self.inter_w,
-                                                  self.inter_b,
-                                                  self.output_w,
-                                                  self.output_b,
-                                                  self.norm_w,
-                                                  self.norm_b,
-                                                  self.config)
+        return DeepSpeedTransformerFunction.apply(hidden_states, attention_mask, self, grads, self.config.layer_id,
+                                                  self.attn_qkvw, self.attn_qkvb, self.attn_ow, self.attn_ob,
+                                                  self.attn_nw, self.attn_nb, self.inter_w, self.inter_b,
+                                                  self.output_w, self.output_b, self.norm_w, self.norm_b, self.config)

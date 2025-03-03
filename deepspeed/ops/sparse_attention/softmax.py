@@ -33,29 +33,11 @@ def num_warps(n):
     return 16
 
 
-@triton.heuristics({
-    'num_warps': lambda *args,
-    **meta: num_warps(args[6] * meta['BLOCK'])
-})
-@triton.heuristics({
-    'TN': lambda *args,
-    **meta: next_power_of_2(args[6] * meta['BLOCK'])
-})
+@triton.heuristics({'num_warps': lambda *args, **meta: num_warps(args[6] * meta['BLOCK'])})
+@triton.heuristics({'TN': lambda *args, **meta: next_power_of_2(args[6] * meta['BLOCK'])})
 @triton.jit
-def _forward(X,
-             scale,
-             LUT,
-             RPE,
-             KP_M,
-             ATTN_M,
-             sizemax,
-             stride_zx,
-             stride_zrpe,
-             stride_hrpe,
-             stride_srpe,
-             stride_zkpm,
-             stride_zattnm,
-             **meta):
+def _forward(X, scale, LUT, RPE, KP_M, ATTN_M, sizemax, stride_zx, stride_zrpe, stride_hrpe, stride_srpe, stride_zkpm,
+             stride_zattnm, **meta):
     TN = meta['TN']
     BLOCK = meta['BLOCK']
     pidhm = tl.program_id(0)
@@ -107,14 +89,8 @@ def _forward(X,
     tl.store(px, x, mask=check)
 
 
-@triton.heuristics({
-    'num_warps': lambda *args,
-    **meta: num_warps(args[4] * meta['BLOCK'])
-})
-@triton.heuristics({
-    'TN': lambda *args,
-    **meta: next_power_of_2(args[4]) * meta['BLOCK']
-})
+@triton.heuristics({'num_warps': lambda *args, **meta: num_warps(args[4] * meta['BLOCK'])})
+@triton.heuristics({'TN': lambda *args, **meta: next_power_of_2(args[4]) * meta['BLOCK']})
 @triton.jit
 def _backward(X, scale, DX, LUT, sizemax, stride_zx, stride_zdx, **meta):
     pidhm = tl.program_id(0)
@@ -173,21 +149,8 @@ class _sparse_softmax(torch.autograd.Function):
         return lut, int(sizes.max())
 
     @staticmethod
-    def forward(ctx,
-                x,
-                scale,
-                rpe,
-                key_padding_mask,
-                attn_mask,
-                kp_mask_mode,
-                attn_mask_mode,
-                spdims,
-                block,
-                lut,
-                num_blocks,
-                maxlut,
-                bench,
-                time):
+    def forward(ctx, x, scale, rpe, key_padding_mask, attn_mask, kp_mask_mode, attn_mask_mode, spdims, block, lut,
+                num_blocks, maxlut, bench, time):
 
         apply_scale = False if scale == 1.0 else True
 
@@ -256,14 +219,7 @@ class _sparse_softmax(torch.autograd.Function):
         # run kernel
         M = x.shape[0]
         grid = lambda opt: [ctx.spdims[0] * ctx.spdims[1] * ctx.block, M]
-        _backward[grid](x,
-                        ctx.scale,
-                        dx,
-                        lut,
-                        ctx.maxlut,
-                        x.stride(0),
-                        dx.stride(0),
-                        BLOCK=ctx.block)
+        _backward[grid](x, ctx.scale, dx, lut, ctx.maxlut, x.stride(0), dx.stride(0), BLOCK=ctx.block)
         return dx, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
@@ -275,6 +231,7 @@ class Softmax:
 
     For more details about sparsity config, please see `Generative Modeling with Sparse Transformers`: https://arxiv.org/abs/1904.10509
     """
+
     def sparse_softmax(*args, **kwargs):
         return _sparse_softmax.apply(*args, **kwargs)
 

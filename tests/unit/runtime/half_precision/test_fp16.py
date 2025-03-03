@@ -21,9 +21,6 @@ except ImportError:
     _amp_available = False
 amp_available = pytest.mark.skipif(not _amp_available, reason="apex/amp is not installed")
 
-if torch.half not in get_accelerator().supported_dtypes():
-    pytest.skip(f"fp16 not supported, valid dtype: {get_accelerator().supported_dtypes()}", allow_module_level=True)
-
 
 class TestLambFP32GradClip(DistributedTest):
     world_size = 2
@@ -158,8 +155,6 @@ class TestAdamwFP16Basic(DistributedTest):
     world_size = 1
 
     def test(self):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
         config_dict = {"train_batch_size": 1, "steps_per_print": 1, "fp16": {"enabled": True}}
         hidden_dim = 10
 
@@ -187,9 +182,7 @@ class TestFP16OptimizerForMoE(DistributedTest):
 
         def mock_unscale_and_clip_grads(total_norm, apply_scale=True):
             torch_norm_tensor = get_accelerator().FloatTensor([total_norm])
-            all_gather_results = [
-                torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())
-            ]
+            all_gather_results = [torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())]
             dist.all_gather(all_gather_results, torch_norm_tensor)
             assert len(set([x.item() for x in all_gather_results])) == 1
             return 1.0
@@ -219,9 +212,7 @@ class TestFP16OptimizerForMoE(DistributedTest):
 
         def mock_unscale_and_clip_grads(grads_groups_flat, total_norm, apply_scale=True):
             torch_norm_tensor = get_accelerator().FloatTensor([total_norm])
-            all_gather_results = [
-                torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())
-            ]
+            all_gather_results = [torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())]
             dist.all_gather(all_gather_results, torch_norm_tensor)
             assert len(set([x.item() for x in all_gather_results])) == 1
             return 1.0
@@ -269,9 +260,7 @@ class TestFP16OptimizerForMoE(DistributedTest):
 
         def mock_unscale_and_clip_grads(total_norm, apply_scale=True):
             torch_norm_tensor = get_accelerator().FloatTensor([total_norm])
-            all_gather_results = [
-                torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())
-            ]
+            all_gather_results = [torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())]
             dist.all_gather(all_gather_results, torch_norm_tensor)
             assert len(set([x.item() for x in all_gather_results])) == 1
             return 1.0
@@ -295,8 +284,6 @@ class TestAdamwFP16EmptyGrad(DistributedTest):
     world_size = 1
 
     def test(self):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
         config_dict = {"train_batch_size": 1, "steps_per_print": 1, "fp16": {"enabled": True}}
         hidden_dim = 10
 
@@ -356,7 +343,7 @@ class TestAdamFP16ZeroOneCycleCompatibility(DistributedTest):
 
         model = SimpleModel(hidden_dim)
         model, _, _, _ = deepspeed.initialize(config=config_dict, model=model, model_parameters=model.parameters())
-        data_loader = random_dataloader(model=model, total_samples=10, hidden_dim=hidden_dim, device=model.device)
+        data_loader = random_dataloader(model=model, total_samples=50, hidden_dim=hidden_dim, device=model.device)
         for n, batch in enumerate(data_loader):
             loss = model(batch[0], batch[1])
             model.backward(loss)
@@ -497,13 +484,7 @@ class TestAmp(DistributedTest):
     world_size = 2
 
     def test_adam_basic(self):
-        config_dict = {
-            "train_batch_size": 2,
-            "steps_per_print": 1,
-            "amp": {
-                "enabled": True
-            }
-        }
+        config_dict = {"train_batch_size": 2, "steps_per_print": 1, "amp": {"enabled": True}}
         hidden_dim = 10
 
         model = SimpleModel(hidden_dim)

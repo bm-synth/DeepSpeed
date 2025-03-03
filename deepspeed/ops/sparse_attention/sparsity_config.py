@@ -443,8 +443,7 @@ class BigBirdSparsityConfig(SparsityConfig):
         self.num_global_blocks = num_global_blocks
 
         if (attention != 'unidirectional' and attention != 'bidirectional'):
-            raise NotImplementedError(
-                'only \"uni/bi-directional\" attentions are supported for now!')
+            raise NotImplementedError('only \"uni/bi-directional\" attentions are supported for now!')
         self.attention = attention
 
     def set_random_layout(self, h, layout):
@@ -466,10 +465,7 @@ class BigBirdSparsityConfig(SparsityConfig):
             )
 
         for row in range(0, num_blocks):
-            sample_range = range(
-                0,
-                num_blocks) if self.attention == 'bidirectional' else range(0,
-                                                                            row + 1)
+            sample_range = range(0, num_blocks) if self.attention == 'bidirectional' else range(0, row + 1)
             rnd_cols = random.sample(sample_range, self.num_random_blocks)
             layout[h, row, rnd_cols] = 1
         return layout
@@ -679,11 +675,8 @@ class LocalSlidingWindowSparsityConfig(SparsityConfig):
     """Configuration class to store `Local Sliding Window` sparsity configuration - a purely-local sliding window attention.
     This class extends parent class of `SparsityConfig` and customizes it for `Local` sparsity.
     """
-    def __init__(self,
-                 num_heads,
-                 block=16,
-                 num_sliding_window_blocks=3,
-                 attention='unidirectional'):
+
+    def __init__(self, num_heads, block=16, num_sliding_window_blocks=3, attention='unidirectional'):
         """Initialize the Local Sliding Window Sparsity Pattern Config.
         For usage example please see, TODO DeepSpeed Sparse Transformer Tutorial
         Arguments:
@@ -715,8 +708,7 @@ class LocalSlidingWindowSparsityConfig(SparsityConfig):
         w = self.num_sliding_window_blocks // 2
         for row in range(0, num_blocks):
             start = max(0, row - w)
-            end = min(row + w + 1,
-                      num_blocks) if self.attention == "bidirectional" else row + 1
+            end = min(row + w + 1, num_blocks) if self.attention == "bidirectional" else row + 1
             layout[h, row, start:end] = 1
         return layout
 

@@ -25,26 +25,19 @@ class TestSimpleMoE(DistributedTest):
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
-        config_dict = {
-            "train_micro_batch_size_per_gpu": 1,
-            "steps_per_print": 1,
-            "optimizer": {
-                "type": "Adam",
-                "params": {
-                    "lr": 0.00015
-                }
-            },
-            "fp16": {
-                "enabled": True
-            },
-            "zero_optimization": {
-                "stage": zero_stage
-            }
-        }
-        # should automatically create moe param groups in deepspeed backend
+        config_dict = {"train_batch_size": 8, "steps_per_print": 1, "fp16": {"enabled": True}}
         hidden_dim = 16
-        model = SimpleMoEModel(hidden_dim=hidden_dim, ep_size=1)
-        model, optimizer, _, _ = deepspeed.initialize(config=config_dict, model=model)
+
+        # E+D -- ep_size = 2
+        # E only -- ep_size = 4
+        model = SimpleMoEModel(hidden_dim, ep_size=ep_size, use_residual=use_residual)
+        optimizer = torch.optim.AdamW(params=model.parameters())
+        model, _, _, _ = deepspeed.initialize(config=config_dict,
+                                              model=model,
+                                              optimizer=optimizer,
+                                              dist_init_required=False)
+        #dist_init_required=False -- parameterize to True/False?
+
         data_loader = sequence_dataloader(model=model, total_samples=50, hidden_dim=hidden_dim, device=model.device)
 
         for n, batch in enumerate(data_loader):

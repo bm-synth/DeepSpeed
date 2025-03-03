@@ -78,7 +78,7 @@ class DeepSpeedInferenceConfig(TransformerConfig):
         super(DeepSpeedInferenceConfig,
               self).__init__(hidden_size, (intermediate_size if intermediate_size > 0 else 4 * hidden_size), heads,
                              num_hidden_layers)
-        self.dtype = dtype
+        self.fp16 = fp16
         self.pre_layer_norm = pre_layer_norm
         self.norm_type = norm_type
         self.local_rank = local_rank

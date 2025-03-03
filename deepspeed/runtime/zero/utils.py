@@ -37,12 +37,7 @@ class ZeRORuntimeException(Exception):
     pass
 
 
-ZERO_SUPPORTED_OPTIMIZERS = [
-    torch.optim.Adam,
-    torch.optim.AdamW,
-    FusedAdam,
-    DeepSpeedCPUAdam
-]
+ZERO_SUPPORTED_OPTIMIZERS = [torch.optim.Adam, torch.optim.AdamW, FusedAdam, DeepSpeedCPUAdam]
 
 # Add apex FusedAdam to supported list if apex is installed
 try:
@@ -55,9 +50,7 @@ except ImportError:
 
 def is_zero_supported_optimizer(optimizer):
     if dist.get_rank() == 0:
-        logger.info(
-            f'Checking ZeRO support for optimizer={optimizer.__class__.__name__} type={type(optimizer)}'
-        )
+        logger.info(f'Checking ZeRO support for optimizer={optimizer.__class__.__name__} type={type(optimizer)}')
     return type(optimizer) in ZERO_SUPPORTED_OPTIMIZERS
 
 

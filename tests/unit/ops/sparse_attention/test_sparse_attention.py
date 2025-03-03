@@ -16,8 +16,7 @@ from deepspeed.ops.op_builder import SparseAttnBuilder
 from unit.util import skip_on_arch, skip_on_cuda
 
 if not deepspeed.ops.__compatible_ops__[SparseAttnBuilder.NAME]:
-    pytest.skip("sparse attention op is not compatible on this system",
-                allow_module_level=True)
+    pytest.skip("sparse attention op is not compatible on this system", allow_module_level=True)
 
 
 def test_sparse_attention_module_availability():
@@ -239,13 +238,7 @@ def init_softmax_inputs(Z, H, M, N, scale, rho, block, dtype, dense_x=True, layo
     if layout is None:
         layout = make_layout(rho, (H, M // block, N // block))
     if dense_x:
-        x = torch.rand((Z,
-                        H,
-                        M,
-                        N),
-                       dtype=dtype,
-                       requires_grad=True,
-                       device=get_accelerator().device_name())
+        x = torch.rand((Z, H, M, N), dtype=dtype, requires_grad=True, device=get_accelerator().device_name())
     else:
         x = torch.rand((Z, layout.sum(), block, block),
                        dtype=dtype,
@@ -341,20 +334,8 @@ def init_matmul_inputs(Z, H, M, N, K, rho, mode, trans_a, trans_b, block, dtype,
     BS0 = N if trans_b else K
     BS1 = K if trans_b else N
     shape = {'sdd': (M, N), 'dsd': (AS0, AS1), 'dds': (BS0, BS1)}[mode]
-    x = torch.rand((Z,
-                    H,
-                    AS0,
-                    AS1),
-                   dtype=dtype,
-                   requires_grad=True,
-                   device=get_accelerator().device_name())
-    w = torch.rand((Z,
-                    H,
-                    BS0,
-                    BS1),
-                   dtype=dtype,
-                   requires_grad=True,
-                   device=get_accelerator().device_name())
+    x = torch.rand((Z, H, AS0, AS1), dtype=dtype, requires_grad=True, device=get_accelerator().device_name())
+    w = torch.rand((Z, H, BS0, BS1), dtype=dtype, requires_grad=True, device=get_accelerator().device_name())
     dy = torch.rand((Z, H, M, N), dtype=dtype, device=get_accelerator().device_name())
     if layout is None:
         layout = make_layout(rho, (H, shape[0] // block, shape[1] // block))

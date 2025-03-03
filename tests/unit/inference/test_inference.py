@@ -62,19 +62,18 @@ _gpt_models = [
 ]
 _opt_models = [
     "facebook/opt-125m",  # 125m, 1.7B, ..., 175B variants have the same model architecture.
-    "facebook/opt-350m",  # 350m applies layer norm after attention layer which is different than other variants.
+    "facebook/opt-350m",  # 350m applies layer norm after attnention layer which is different than other variants.
 ]
 _all_models = HfApi().list_models()
 
 test_models = set(_bert_models + _roberta_models + _gpt_models + _opt_models)
 test_tasks = [
-    "fill-mask",
-    "question-answering",
-    "text-classification",
-    "token-classification",
-    "text-generation",
-    "text2text-generation",
+    "fill-mask", "question-answering", "text-classification", "token-classification", "text-generation",
+    "text2text-generation", "summarization", "translation"
 ]
+pytest.all_models = {task: [m.modelId for m in _all_models if m.pipeline_tag == task] for task in test_tasks}
+
+_model_w_tasks = itertools.product(*[test_models, test_tasks])
 
 
 @dataclass
@@ -199,8 +198,7 @@ def invalid_model_task_config(model_w_task, dtype, enable_cuda_graph):
         msg = f"Not a valid model / task combination: {model} / {task}"
     elif enable_cuda_graph and (torch_info["cuda_version"] == "0.0"):
         msg = "CUDA not detected, cannot use CUDA Graph"
-    elif enable_cuda_graph and pkg_version.parse(
-            torch.__version__) < pkg_version.parse("1.10"):
+    elif enable_cuda_graph and pkg_version.parse(torch.__version__) < pkg_version.parse("1.10"):
         msg = "CUDA Graph is only available in torch versions >= 1.10"
     elif "gpt-j-6B" in model:
         if dtype != torch.half:
@@ -295,11 +293,6 @@ def summarization_assert(x, y):
     return set(res["summary_text"] for res in x) == set(res["summary_text"] for res in y)
 
 
-def text2text_generation_assert(x, y):
-    return set(res["generated_text"] for res in x) == set(res["generated_text"]
-                                                          for res in y)
-
-
 @pytest.fixture
 def assert_fn(model_w_task):
     model, task = model_w_task
@@ -318,6 +311,7 @@ def assert_fn(model_w_task):
 
 
 def check_injection(model):
+
     def verify_injection(module):
         for child in module.children():
             if isinstance(child, nn.ModuleList):
@@ -417,19 +411,11 @@ class TestModelTask(DistributedTest):
 
 
 @pytest.mark.seq_inference
-@pytest.mark.parametrize("model_w_task",
-                         [("EleutherAI/gpt-neo-1.3B",
-                           "text-generation"),
-                          ("EleutherAI/gpt-neox-20b",
-                           "text-generation"),
-                          ("bigscience/bloom-3b",
-                           "text-generation"),
-                          ("EleutherAI/gpt-j-6B",
-                           "text-generation")],
-                         ids=["gpt-neo",
-                              "gpt-neox",
-                              "bloom",
-                              "gpt-j"])
+@pytest.mark.parametrize("model_w_task", [("EleutherAI/gpt-neo-1.3B", "text-generation"),
+                                          ("EleutherAI/gpt-neox-20b", "text-generation"),
+                                          ("bigscience/bloom-3b", "text-generation"),
+                                          ("EleutherAI/gpt-j-6B", "text-generation")],
+                         ids=["gpt-neo", "gpt-neox", "bloom", "gpt-j"])
 class TestMPSize(DistributedTest):
     world_size = 2
 
@@ -474,21 +460,14 @@ class TestMPSize(DistributedTest):
 @pytest.mark.parametrize(
     "model_w_task, injection_policy",
     [
-        (("google/t5-v1_1-small",
-          "text2text-generation"),
-         {
-             T5Block: ('SelfAttention.o',
-                       'EncDecAttention.o',
-                       'DenseReluDense.wo')
-         }),
-        (("roberta-large",
-          "fill-mask"),
-         {
-             RobertaLayer: ('output.dense')
-         }),
+        (("google/t5-v1_1-small", "text2text-generation"), {
+            T5Block: ('SelfAttention.o', 'EncDecAttention.o', 'DenseReluDense.wo')
+        }),
+        (("roberta-large", "fill-mask"), {
+            RobertaLayer: ('output.dense')
+        }),
     ],
-    ids=["t5",
-         "roberta"],
+    ids=["t5", "roberta"],
 )
 @pytest.mark.parametrize("dtype", [torch.float], ids=["fp32"])
 @pytest.mark.parametrize("enable_cuda_graph", [False], ids=["noCG"])
@@ -535,8 +514,7 @@ class TestInjectionPolicy(DistributedTest):
 @pytest.mark.parametrize(
     "model_w_task",
     [
-        ("Helsinki-NLP/opus-mt-en-de",
-         "translation"),
+        ("Helsinki-NLP/opus-mt-en-de", "translation"),
     ],
     ids=[
         "marian",
@@ -569,9 +547,7 @@ class TestAutoTensorParallelism(DistributedTest):
         pipe = pipeline(task, model=model, device=torch.device("cpu"), framework="pt")
         bs_output = pipe(query, **inf_kwargs)
 
-        pipe.model = deepspeed.init_inference(pipe.model,
-                                              mp_size=world_size,
-                                              dtype=dtype)
+        pipe.model = deepspeed.init_inference(pipe.model, mp_size=world_size, dtype=dtype)
         # Switch device to GPU so that input tensors are not on CPU
         pipe.device = torch.device(get_accelerator().device_name(local_rank))
         ds_output = pipe(query, **inf_kwargs)
@@ -586,8 +562,8 @@ class TestAutoTensorParallelism(DistributedTest):
     "model_family, model_name",
     (
         ["gpt2", "EleutherAI/gpt-neo-2.7B"],
-        #["gpt2", "EleutherAI/gpt-j-6b"], # Causing OOM for this test
-        ["gpt2", "openai-community/gpt2-xl"],
+        ["gpt2", "EleutherAI/gpt-j-6B"],
+        ["gpt2", "gpt2-xl"],
     ),
 )
 @pytest.mark.parametrize("task", ["lambada_standard"])
@@ -630,8 +606,7 @@ class TestLMCorrectness(DistributedTest):
             lm._device = device
         else:
             lm = lm_eval.models.get_model(model_family).create_from_arg_string(
-                f"pretrained={model_name}",
-                {"device": get_accelerator().device_name()})
+                f"pretrained={model_name}", {"device": get_accelerator().device_name()})
 
         get_accelerator().synchronize()
         start = time.time()

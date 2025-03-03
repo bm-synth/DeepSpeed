@@ -18,15 +18,8 @@ from deepspeed.utils import instrument_w_nvtx
 from deepspeed.utils import logger
 
 
-def _torch_reduce_scatter_fn(input_tensor: Tensor,
-                             output_tensor: Tensor,
-                             group=None,
-                             async_op=False,
-                             prof=False):
-    return instrument_w_nvtx(dist.reduce_scatter_fn)(output_tensor,
-                                                     input_tensor,
-                                                     group=group,
-                                                     async_op=async_op)
+def _torch_reduce_scatter_fn(input_tensor: Tensor, output_tensor: Tensor, group=None, async_op=False, prof=False):
+    return instrument_w_nvtx(dist.reduce_scatter_fn)(output_tensor, input_tensor, group=group, async_op=async_op)
 
 
 @instrument_w_nvtx

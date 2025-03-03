@@ -39,6 +39,7 @@ class DummyOptim():
     Dummy optimizer presents model parameters as a param group, this is
     primarily used to allow ZeRO-3 without an optimizer
     """
+
     def __init__(self, params):
         self.param_groups = []
         self.param_groups.append({'params': params})
@@ -171,11 +172,8 @@ def move_to_device(item, device, criterion_func):
 
 class CheckOverflow(object):
     '''Checks for overflow in gradient across parallel process'''
-    def __init__(self,
-                 param_groups=None,
-                 mpu=None,
-                 zero_reduce_scatter=False,
-                 deepspeed=None):
+
+    def __init__(self, param_groups=None, mpu=None, zero_reduce_scatter=False, deepspeed=None):
         self.mpu = mpu
         self.params = [] if param_groups else None
         self.zero_reduce_scatter = zero_reduce_scatter
@@ -199,11 +197,7 @@ class CheckOverflow(object):
             # Only need to check groups.get_largest_expert_parallel_group()
             dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=groups._get_max_expert_parallel_group())
         if self.mpu is not None:
-            overflow_gpu = torch.cuda.ByteTensor([overflow])
-            torch.distributed.all_reduce(overflow_gpu,
-                                         op=torch.distributed.ReduceOp.MAX,
-                                         group=self.mpu.get_model_parallel_group())
-            overflow = overflow_gpu[0].item()
+            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=self.mpu.get_model_parallel_group())
         elif reduce_overflow:
             cuda_overflow = torch.cuda.FloatTensor([overflow])
             dist.all_reduce(cuda_overflow, op=torch.distributed.ReduceOp.MAX)
@@ -255,23 +249,13 @@ class CheckOverflow(object):
             dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=dist.get_world_group())
         elif self.mpu is not None:
             if self.deepspeed is not None:
-                using_pipeline = hasattr(self.deepspeed,
-                                         'pipeline_enable_backward_allreduce')
-                if (using_pipeline
-                        and self.deepspeed.pipeline_enable_backward_allreduce is False
-                    ) or (not using_pipeline
-                          and self.deepspeed.enable_backward_allreduce is False):
-                    torch.distributed.all_reduce(
-                        overflow_gpu,
-                        op=torch.distributed.ReduceOp.MAX,
-                        group=self.mpu.get_data_parallel_group())
-            torch.distributed.all_reduce(overflow_gpu,
-                                         op=torch.distributed.ReduceOp.MAX,
-                                         group=self.mpu.get_model_parallel_group())
+                using_pipeline = hasattr(self.deepspeed, 'pipeline_enable_backward_allreduce')
+                if (using_pipeline and self.deepspeed.pipeline_enable_backward_allreduce is False) or (
+                        not using_pipeline and self.deepspeed.enable_backward_allreduce is False):
+                    dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=self.mpu.get_data_parallel_group())
+            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=self.mpu.get_model_parallel_group())
         elif self.deepspeed is not None and self.deepspeed.enable_backward_allreduce is False:
-            torch.distributed.all_reduce(overflow_gpu,
-                                         op=torch.distributed.ReduceOp.MAX,
-                                         group=torch.distributed.group.WORLD)
+            dist.all_reduce(overflow_gpu, op=dist.ReduceOp.MAX, group=dist.get_world_group())
 
         overflow = overflow_gpu[0].item()
         return bool(overflow)
@@ -352,14 +336,15 @@ def clip_grad_norm_(parameters, max_norm, norm_type=2, mpu=None):
         total_norm_cuda = get_accelerator().FloatTensor([float(total_norm)])
         # Take max across all GPUs.
         if mpu is not None:
-            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=mpu.get_model_parallel_group())
+            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=mpu.get_model_parallel_group())
+        total_norm = total_norm_cuda[0].item()
     else:
         total_norm = 0
         for p in parameters:
             if mpu is not None:
                 if (mpu.get_model_parallel_rank() == 0) or is_model_parallel_parameter(p):
-                    param_norm = p.grad.data.detach().float().norm(norm_type)
-                    all_norms.append(param_norm)
+                    param_norm = p.grad.data.norm(norm_type)
+                    total_norm += param_norm.item()**norm_type
             else:
                 param_norm = p.grad.data.detach().float().norm(norm_type)
                 all_norms.append(param_norm)
@@ -371,8 +356,8 @@ def clip_grad_norm_(parameters, max_norm, norm_type=2, mpu=None):
         # Sum across all model parallel GPUs.
         total_norm_cuda = get_accelerator().FloatTensor([float(total_norm)])
         if mpu is not None:
-            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=mpu.get_model_parallel_group())
-        total_norm = total_norm.pow(1. / norm_type)
+            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.SUM, group=mpu.get_model_parallel_group())
+        total_norm = total_norm_cuda[0].item()**(1. / norm_type)
 
     # Need to average total_norm across different GPUs due to the presence of moe params
     pg = groups._get_data_parallel_group()
@@ -610,19 +595,13 @@ def partition_balanced(weights, num_parts):
     prefix_sum = np.zeros((n + 1))
     prefix_sum[1:] = np.cumsum(weights)
 
-    dp_max[0, 0] = 0
-    dp_cost[0, 0] = 0
-    for i in range(1, n + 1):
-        for j in range(1, min(i, m) + 1):
-            for k in range(i):
-                max_sum = max(dp_max[k, j - 1], prefix_sum[i] - prefix_sum[k])
-                min_sum = min(dp_min[k, j - 1], prefix_sum[i] - prefix_sum[k])
-                cost = max_sum - min_sum
-                if dp_cost[i, j] >= cost:
-                    dp_cost[i, j] = cost
-                    dp_max[i, j] = max_sum
-                    dp_min[i, j] = min_sum
-                    position[i, j] = k
+        # Find the end index of partition p
+        parts[p] = bisect_left(weights, bsum, lo=step - chunksize, hi=min(step, num_items))
+        # Nothing more to partition, return early
+        if parts[p] == num_items:
+            # See if the current partition is overweight.
+            part_size = weights[-1] - weights[parts[p - 1]]
+            return parts, part_size < bottleneck
 
     parts = [n]
     for i in reversed(range(1, m + 1)):
@@ -686,16 +665,23 @@ class PartitionedTensor:
         # Allocate the full tensor as a flat buffer.
         full_numel = prod(self.full_size())
         flat_tensor = torch.zeros([full_numel], dtype=self.local_data.dtype, device=device)
-        if self.even_split:
-            # Collect the full tensor
-            dist.all_gather_into_tensor(flat_tensor, self.local_data, group=self.group)
-        else:
-            for part_id in range(self.num_parts):
-                part_size = self.partition[part_id + 1] - self.partition[part_id]
-                buf = flat_tensor.narrow(0, start=self.partition[part_id], length=part_size)
-                if part_id == self.rank:
-                    buf.copy_(self.local_data)
-                dist.broadcast(buf, part_id, self.group)
+
+        # Prepare all-gather buffer
+        partition_tensors = []
+        for part_id in range(self.num_parts):
+            part_size = self.partition[part_id + 1] - self.partition[part_id]
+            buf = flat_tensor.narrow(0, start=self.partition[part_id], length=part_size)
+            if part_id == self.rank:
+                buf.copy_(self.local_data)
+            partition_tensors.append(buf)
+
+        # Collect the full tensor
+        dist.all_gather(partition_tensors, partition_tensors[self.rank], group=self.group)
+
+        for i in range(len(partition_tensors)):
+            partition_tensors[i].data = torch.zeros(1)
+            partition_tensors[i] = None
+
         return flat_tensor.view(self.full_size()).clone().detach()
 
     def to_meta(self):
@@ -763,9 +749,7 @@ def memory_status(msg, print_rank=-1, reset_max=False):
     max_cached /= 1024**3
 
     print(
-        f'RANK={rank} MEMSTATS',
-        msg,
-        f'device={get_accelerator().current_device_name()} '
+        f'RANK={rank} MEMSTATS', msg, f'device={get_accelerator().current_device_name()} '
         f'current alloc={new_alloced:0.4f}GB (delta={delta_alloced:0.4f}GB max={max_alloced:0.4f}GB) '
         f'current cache={new_cached:0.4f}GB (delta={delta_cached:0.4f}GB max={max_cached:0.4f}GB)')
 
@@ -791,8 +775,7 @@ def see_memory_usage(message, force=False):
 
     # Print message except when distributed but not rank 0
     logger.info(message)
-    logger.info(
-        f"MA {round(get_accelerator().memory_allocated() / (1024 * 1024 * 1024),2 )} GB \
+    logger.info(f"MA {round(get_accelerator().memory_allocated() / (1024 * 1024 * 1024),2 )} GB \
         Max_MA {round(get_accelerator().max_memory_allocated() / (1024 * 1024 * 1024),2)} GB \
         CA {round(torch_memory_reserved() / (1024 * 1024 * 1024),2)} GB \
         Max_CA {round(torch_max_memory_reserved() / (1024 * 1024 * 1024))} GB ")
@@ -800,9 +783,6 @@ def see_memory_usage(message, force=False):
     vm_stats = psutil.virtual_memory()
     used_GB = round(((vm_stats.total - vm_stats.available) / (1024**3)), 2)
     logger.info(f'CPU Virtual Memory:  used = {used_GB} GB, percent = {vm_stats.percent}%')
-
-    # get the peak memory to report correct data, so reset the counter for the next call
-    get_accelerator().reset_peak_memory_stats()
 
     # get the peak memory to report correct data, so reset the counter for the next call
     get_accelerator().reset_peak_memory_stats()
@@ -881,32 +861,22 @@ def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None):
         total_norm = max(t.data.abs().max() for t in input_tensors)
         total_norm_cuda = get_accelerator().FloatTensor([float(total_norm)])
         if mpu is not None:
-            torch.distributed.all_reduce(total_norm_cuda,
-                                         op=torch.distributed.ReduceOp.MAX,
-                                         group=mpu.get_model_parallel_group())
+            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=mpu.get_model_parallel_group())
             total_norm = total_norm_cuda[0].item()
     else:
-        total_norm = sum(
-            [t.data.float().norm(norm_type).item()**norm_type for t in input_tensors])
+        total_norm = sum([t.data.float().norm(norm_type).item()**norm_type for t in input_tensors])
         total_norm_cuda = get_accelerator().FloatTensor([float(total_norm)])
         if mpu is not None:
-            torch.distributed.all_reduce(total_norm_cuda,
-                                         op=torch.distributed.ReduceOp.SUM,
-                                         group=mpu.get_model_parallel_group())
+            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.SUM, group=mpu.get_model_parallel_group())
         total_norm = total_norm_cuda[0].item()**(1. / norm_type)
 
-    if total_norm == float(
-            'inf') or total_norm == -float('inf') or total_norm != total_norm:
+    if total_norm == float('inf') or total_norm == -float('inf') or total_norm != total_norm:
         total_norm = -1
 
     return total_norm
 
 
-def clip_tensors_by_global_norm(input_tensors,
-                                max_norm=1.0,
-                                global_norm=None,
-                                mpu=None,
-                                eps=1e-6):
+def clip_tensors_by_global_norm(input_tensors, max_norm=1.0, global_norm=None, mpu=None, eps=1e-6):
     """Clip list of tensors by global norm.
     Args:
         input_tensors: List of tensors to be clipped
@@ -934,9 +904,7 @@ def align_dense_tensors(tensor_list, alignment):
 
     if remaining:
         elements_to_add = alignment - remaining
-        pad_tensor = torch.zeros(elements_to_add,
-                                 device=tensor_list[0].device,
-                                 dtype=tensor_list[0].dtype)
+        pad_tensor = torch.zeros(elements_to_add, device=tensor_list[0].device, dtype=tensor_list[0].dtype)
         padded_tensor_list = tensor_list + [pad_tensor]
     else:
         padded_tensor_list = tensor_list
@@ -944,19 +912,13 @@ def align_dense_tensors(tensor_list, alignment):
     return padded_tensor_list
 
 
-def all_gather_dp_groups(partitioned_param_groups,
-                         dp_process_group,
-                         start_alignment_factor,
-                         allgather_bucket_size):
+def all_gather_dp_groups(partitioned_param_groups, dp_process_group, start_alignment_factor, allgather_bucket_size):
     for group_id, partitioned_params in enumerate(partitioned_param_groups):
         # Sequential AllGather Best of both worlds
         partition_id = dist.get_rank(group=dp_process_group[group_id])
         dp_world_size = dist.get_world_size(group=dp_process_group[group_id])
 
-        num_shards = max(
-            1,
-            partitioned_params[partition_id].numel() * dp_world_size //
-            allgather_bucket_size)
+        num_shards = max(1, partitioned_params[partition_id].numel() * dp_world_size // allgather_bucket_size)
 
         shard_size = partitioned_params[partition_id].numel() // num_shards
 
@@ -970,16 +932,11 @@ def all_gather_dp_groups(partitioned_param_groups,
         for shard_id in range(num_shards):
 
             if shard_id == (num_shards - 1):
-                num_elements = partitioned_params[partition_id].numel(
-                ) - shard_id * shard_size
+                num_elements = partitioned_params[partition_id].numel() - shard_id * shard_size
 
             shard_list = []
             for dp_id in range(dp_world_size):
-                curr_shard = partitioned_params[dp_id].narrow(0,
-                                                              shard_id * shard_size,
-                                                              num_elements).detach()
+                curr_shard = partitioned_params[dp_id].narrow(0, shard_id * shard_size, num_elements).detach()
                 shard_list.append(curr_shard)
 
-            dist.all_gather(shard_list,
-                            shard_list[partition_id],
-                            dp_process_group[group_id])
+            dist.all_gather(shard_list, shard_list[partition_id], dp_process_group[group_id])

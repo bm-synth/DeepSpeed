@@ -75,7 +75,7 @@ class LayerSpec:
 
 class TiedLayerSpec(LayerSpec):
 
-    def __init__(self, key, typename, *module_args, forward_fn=None, tied_weight_attr=['weight'], **module_kwargs):
+    def __init__(self, key, typename, *module_args, forward_fn=None, tied_weight_attr='weight', **module_kwargs):
         super().__init__(typename, *module_args, **module_kwargs)
         self.key = key
         self.forward_fn = forward_fn
@@ -117,6 +117,7 @@ class PipelineModule(nn.Module):
         activation_checkpoint_func (callable, optional): The function to use for activation checkpointing. Defaults to ``deepspeed.checkpointing.checkpoint``.
         checkpointable_layers(list, optional): Checkpointable layers may not be checkpointed. Defaults to None which does not additional filtering.
     """
+
     def __init__(self,
                  layers,
                  num_stages=None,
@@ -357,9 +358,7 @@ class PipelineModule(nn.Module):
         else:
             num_layers = len(self.forward_funcs)
             x = forward_input
-            for start_idx, is_checkpointable_result in \
-                zip(range(0, num_layers, self.activation_checkpoint_interval), self.is_checkpointable_results):
-
+            for start_idx in range(0, num_layers, self.activation_checkpoint_interval):
                 end_idx = min(start_idx + self.activation_checkpoint_interval, num_layers)
 
                 funcs = self.forward_funcs[start_idx:end_idx]
@@ -368,7 +367,7 @@ class PipelineModule(nn.Module):
                 if not isinstance(x, tuple):
                     x = (x, )
 
-                if is_checkpointable_result:
+                if self._is_checkpointable(funcs):
                     x = self.activation_checkpoint_func(exec_range_func(start_idx, end_idx), *x)
                 else:
                     x = exec_range_func(start_idx, end_idx)(*x)
@@ -395,8 +394,7 @@ class PipelineModule(nn.Module):
             binary_weights = [0] * len(self._layer_specs)
             for idx in self._find_layer_type(layertype):
                 binary_weights[idx] = 1
-            self.parts = ds_utils.partition_balanced(weights=binary_weights,
-                                                     num_parts=num_stages)
+            self.parts = ds_utils.partition_balanced(weights=binary_weights, num_parts=num_stages)
         elif method == 'profile':
             raise NotImplementedError(f'Partitioning method {method} not implemented.')
         else:
@@ -452,12 +450,11 @@ class PipelineModule(nn.Module):
 
     def _synchronize_tied_weights(self):
         for key, comm in self.tied_comms.items():
-            for attr_name in comm['weight_attr']:
-                dist.broadcast(
-                    getattr(comm['module'], attr_name),
-                    src=min(comm['ranks']),
-                    group=comm['group'],
-                )
+            dist.broadcast(
+                getattr(comm['module'], comm['weight_attr']),
+                src=min(comm['ranks']),
+                group=comm['group'],
+            )
 
     def _index_tied_modules(self):
         ''' Build communication structures for tied modules. '''
@@ -611,10 +608,7 @@ class PipelineModule(nn.Module):
             # It is expected that the garbage collector will reclaim the cloned tensor storage to avoid memory bloat.
             # See https://pytorch.org/docs/stable/notes/serialization.html#preserve-storage-sharing
             orig_state_dict = layer.state_dict()
-            final_state_dict = type(orig_state_dict)(
-                {k: v.clone()
-                 for k,
-                 v in orig_state_dict.items()})
+            final_state_dict = type(orig_state_dict)({k: v.clone() for k, v in orig_state_dict.items()})
             checkpoint_engine.save(final_state_dict, model_ckpt_path)
 
     def load_state_dir(self, load_dir, checkpoint_engine, strict=True):
@@ -628,10 +622,9 @@ class PipelineModule(nn.Module):
             mp_rank = self._grid.get_slice_parallel_rank()
             mp_world_size = self._grid.get_slice_parallel_world_size()
 
-            sd_loader = SDLoaderFactory.get_sd_loader(
-                model_ckpt_list,
-                version=2.0,
-                checkpoint_engine=checkpoint_engine)
+            sd_loader = SDLoaderFactory.get_sd_loader(model_ckpt_list,
+                                                      version=2.0,
+                                                      checkpoint_engine=checkpoint_engine)
             load_path, checkpoint, _ = sd_loader.load(mp_world_size, mp_rank, module_key=None, is_pipe_parallel=True)
 
             layer.load_state_dict(checkpoint, strict=strict)
@@ -648,8 +641,7 @@ class PipelineModule(nn.Module):
         # Some layers like torch.nn.Embedding will not receive grads if checkpointed, which breaks things.
         # I presume it's related to the discrete inputs that cannot require_grad? Need to revisit.
         if self.__class__.__name__ in ('GPTModelPipe', 'GPT2ModelPipe'):
-            return all('ParallelTransformerLayerPipe' in f.__class__.__name__
-                       for f in funcs)
+            return all('ParallelTransformerLayerPipe' in f.__class__.__name__ for f in funcs)
         if self.checkpointable_layers is not None:
             return all(f.__class__.__name__ in self.checkpointable_layers for f in funcs)
 

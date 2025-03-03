@@ -61,8 +61,8 @@ class BaseTestCase(unittest.TestCase):
             test_config["mp"], test_config["gpus"], test_config["nodes"], test_config["bs"], test_config["steps"],
             test_config["layers"], test_config["hidden_size"], test_config["seq_length"], test_config["heads"],
             ckpt_num, other_args, ds_flag)
-        cmd = shlex.split(cmd)
+
         self.ensure_directory_exists(output)
         with open(output, "w") as f:
             print(cmd)
-            subprocess.run(cmd, check=False, executable='/bin/bash', stdout=f, stderr=f)
+            subprocess.run(cmd, shell=True, check=False, executable='/bin/bash', stdout=f, stderr=f)

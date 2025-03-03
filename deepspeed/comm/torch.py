@@ -101,13 +101,8 @@ class TorchBackend(Backend):
         so no need to wrap all the functions. We can keep adding wrappers as
         needed.
     """
-    def __init__(self,
-                 backend,
-                 timeout,
-                 init_method,
-                 rank=-1,
-                 world_size=-1,
-                 name='torch'):
+
+    def __init__(self, backend, timeout, init_method, rank=-1, world_size=-1, name='torch'):
         super(TorchBackend, self).__init__()
         self.shm_comm_op = build_shm_op()
         self.has_all_reduce_coalesced = has_all_reduce_coalesced()
@@ -131,167 +126,39 @@ class TorchBackend(Backend):
                                                  world_size=world_size)
         self.using_mpi = torch.distributed.get_backend() == 'mpi'
 
-    @classmethod
-    @disable_compiler_collective
-    def get_reduce_scatter_function(self):
-        if hasattr(torch.distributed, "reduce_scatter_tensor"):
-            return torch.distributed.reduce_scatter_tensor
-        elif hasattr(torch.distributed, "_reduce_scatter_base"):
-            return torch.distributed._reduce_scatter_base
-        return None
-
-    def has_all_gather_into_tensor(self):
-        return self.all_gather_function is not None
-
-    def has_reduce_scatter_tensor(self):
-        return self.reduce_scatter_function is not None
-
-    def init_process_group(self, backend, timeout, init_method, rank, world_size):
-        if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group(backend,
-                                                 timeout=timeout,
-                                                 init_method=init_method,
-                                                 rank=rank,
-                                                 world_size=world_size)
-        self.using_mpi = torch.distributed.get_backend() == 'mpi'
-
-    @disable_compiler_collective
     def all_reduce(self, tensor, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
         op = self._reduce_op(op)
         return torch.distributed.all_reduce(tensor=tensor, op=op, group=group, async_op=async_op)
 
-    def inference_all_reduce(self, tensor, op, group=None):
-        if not hasattr(torch.ops, 'deepspeed') or not hasattr(torch.ops.deepspeed, 'inference_all_reduce_'):
-            op = self._reduce_op(op)
-            return torch.distributed.all_reduce(tensor=tensor, op=op, group=group, async_op=False)
-        else:
-            return torch.ops.deepspeed.inference_all_reduce_(tensor)
-
-    @disable_compiler_collective
-    def all_reduce_coalesced(self, tensors, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
-        """ proxy func to torch.distributed.all_reduce_coalesced,
-        which is included in PyTorch 1.13 and above
-        """
-        if not self.has_all_reduce_coalesced:
-            raise RuntimeError(f"Current torch version does not have all_reduce_coalesced "
-                               f"api (torch.__version__: {torch.__version__})")
-        op = self._reduce_op(op)
-        return torch.distributed.all_reduce_coalesced(tensors=tensors, op=op, group=group, async_op=async_op)
-
-    @disable_compiler_collective
     def reduce(self, tensor, dst, op=ReduceOp.SUM, group=None, async_op=False):
-        if DS_COMM_REDUCE_OFF:
-            if int(os.getenv('RANK', '0')) == 0:
-                utils.logger.warning("REDUCE is OFF")
-            return Noop()
         return torch.distributed.reduce(tensor=tensor, dst=dst, op=self._reduce_op(op), group=group, async_op=async_op)
 
-    @disable_compiler_collective
     def reduce_scatter(self, output, input_list, op=ReduceOp.SUM, group=None, async_op=False):
-        if DS_COMM_REDUCE_SCATTER_OFF:
-            if int(os.getenv('RANK', '0')) == 0:
-                utils.logger.warning("REDUCE SCATTER  is OFF")
-            return Noop()
-        else:
-            return torch.distributed.reduce_scatter(output=output,
-                                                    input_list=input_list,
-                                                    op=self._reduce_op(op),
-                                                    group=group,
-                                                    async_op=async_op)
-
-    @disable_compiler_collective
-    def broadcast(self, tensor, src, group=None, async_op=False):
-        if DS_COMM_BROADCAST_OFF:
-            if int(os.getenv('RANK', '0')) == 0:
-                utils.logger.warning("BROADCAST  is OFF")
-            return Noop()
-        else:
-            return torch.distributed.broadcast(tensor=tensor, src=src, group=group, async_op=async_op)
-
-    @disable_compiler_collective
-    def broadcast_object_list(self, object_list, src, group=None, device=None):
-        return torch.distributed.broadcast_object_list(object_list=object_list, src=src, group=group, device=device)
-
-    @disable_compiler_collective
-    def all_gather(self, tensor_list, tensor, group=None, async_op=False):
-        if DS_COMM_ALL_GATHER_OFF:
-            if int(os.getenv('RANK', '0')) == 0:
-                utils.logger.warning("All Gather is OFF")
-            return Noop()
-        else:
-            return torch.distributed.all_gather(tensor_list=tensor_list, tensor=tensor, group=group, async_op=async_op)
-
-    @disable_compiler_collective
-    def all_gather_into_tensor(self, output_tensor, input_tensor, group=None, async_op=False):
-        if self.has_all_gather_into_tensor():
-            return self.all_gather_function(output_tensor=output_tensor,
-                                            input_tensor=input_tensor,
-                                            group=group,
-                                            async_op=async_op)
-
-    @disable_compiler_collective
-    def all_gather_base(self, output_tensor, input_tensor, group=None, async_op=False):
-        if DS_COMM_ALL_GATHER_OFF:
-            if int(os.getenv('RANK', '0')) == 0:
-                utils.logger.warning("All Gather is OFF")
-            return Noop()
-        else:
-            if self.has_allgather_base:
-                return torch.distributed.distributed_c10d._all_gather_base(output_tensor=output_tensor,
-                                                                           input_tensor=input_tensor,
-                                                                           group=group,
-                                                                           async_op=async_op)
-            else:
-                utils.logger.warning("unable to find torch.distributed._all_gather_base. will fall back to "
-                                     "torch.distributed.reduce_scatter which will result in suboptimal performance. "
-                                     "please consider upgrading your pytorch installation.")
-                pass
-
-    @disable_compiler_collective
-    def all_gather_coalesced(self, output_tensors, input_tensors, group=None, async_op=False):
-        """"""
-        assert len(output_tensors) == len(input_tensors), ""
-        if hasattr(torch.distributed.distributed_c10d, '_all_gather_base_coalesced'):
-            # customized PyTorch
-            return torch.distributed.distributed_c10d._all_gather_base_coalesced(output_tensors,
-                                                                                 input_tensors,
-                                                                                 group=group,
-                                                                                 async_op=async_op)
-        elif has_coalescing_manager():
-            reqs = []
-            with get_coalescing_manager(group, input_tensors[0].device, reqs, async_op):
-                for output, input in zip(output_tensors, input_tensors):
-                    handle = torch.distributed.distributed_c10d.all_gather_into_tensor(output,
-                                                                                       input,
-                                                                                       group=group,
-                                                                                       async_op=True)
-                    reqs.append(handle)
-            if async_op:
-                return reqs[-1]
-            else:
-                reqs[-1].wait()
-
-    @disable_compiler_collective
-    def reduce_scatter_tensor(self, output_tensor, input_tensor, op=ReduceOp.SUM, group=None, async_op=False):
-        if self.has_reduce_scatter_tensor():
-            return self.reduce_scatter_function(output_tensor,
-                                                input_tensor,
+        return torch.distributed.reduce_scatter(output=output,
+                                                input_list=input_list,
                                                 op=self._reduce_op(op),
                                                 group=group,
                                                 async_op=async_op)
+
+    def broadcast(self, tensor, src, group=None, async_op=False):
+        return torch.distributed.broadcast(tensor=tensor, src=src, group=group, async_op=async_op)
+
+    def all_gather(self, tensor_list, tensor, group=None, async_op=False):
+        return torch.distributed.all_gather(tensor_list=tensor_list, tensor=tensor, group=group, async_op=async_op)
+
+    def all_gather_base(self, output_tensor, input_tensor, group=None, async_op=False):
+        if self.has_allgather_base:
+            return torch.distributed.distributed_c10d._all_gather_base(output_tensor=output_tensor,
+                                                                       input_tensor=input_tensor,
+                                                                       group=group,
+                                                                       async_op=async_op)
         else:
-            utils.logger.warning(
-                "unable to find torch.distributed._all_gather_base. will fall back to "
-                "torch.distributed.reduce_scatter which will result in suboptimal performance. "
-                "please consider upgrading your pytorch installation.")
+            utils.logger.warning("unable to find torch.distributed._all_gather_base. will fall back to "
+                                 "torch.distributed.reduce_scatter which will result in suboptimal performance. "
+                                 "please consider upgrading your pytorch installation.")
             pass
 
-    def reduce_scatter_base(self,
-                            output_tensor,
-                            input_tensor,
-                            op=ReduceOp.SUM,
-                            group=None,
-                            async_op=False):
+    def reduce_scatter_base(self, output_tensor, input_tensor, op=ReduceOp.SUM, group=None, async_op=False):
         if self.has_reduce_scatter_base:
             return torch.distributed._reduce_scatter_base(output_tensor,
                                                           input_tensor,
@@ -299,10 +166,9 @@ class TorchBackend(Backend):
                                                           group=group,
                                                           async_op=async_op)
         else:
-            utils.logger.warning(
-                "unable to find torch.distributed._reduce_scatter_base. will fall back to "
-                "torch.distributed.reduce_scatter which will result in suboptimal performance. "
-                "please consider upgrading your pytorch installation.")
+            utils.logger.warning("unable to find torch.distributed._reduce_scatter_base. will fall back to "
+                                 "torch.distributed.reduce_scatter which will result in suboptimal performance. "
+                                 "please consider upgrading your pytorch installation.")
             pass
 
     @disable_compiler_collective
@@ -356,25 +222,15 @@ class TorchBackend(Backend):
                                          group=group,
                                          async_op=async_op)
 
-    def barrier(self,
-                group=torch.distributed.GroupMember.WORLD,
-                async_op=False,
-                device_ids=None):
+    def barrier(self, group=torch.distributed.GroupMember.WORLD, async_op=False, device_ids=None):
         if group is None:
             group = torch.distributed.GroupMember.WORLD
-        return torch.distributed.barrier(group=group,
-                                         async_op=async_op,
-                                         device_ids=device_ids)
+        return torch.distributed.barrier(group=group, async_op=async_op, device_ids=device_ids)
 
-    def monitored_barrier(self,
-                          group=torch.distributed.GroupMember.WORLD,
-                          timeout=None,
-                          wait_all_ranks=False):
+    def monitored_barrier(self, group=torch.distributed.GroupMember.WORLD, timeout=None, wait_all_ranks=False):
         if group is None:
             group = torch.distributed.GroupMember.WORLD
-        return torch.distributed.monitored_barrier(group=group,
-                                                   timeout=timeout,
-                                                   wait_all_ranks=wait_all_ranks)
+        return torch.distributed.monitored_barrier(group=group, timeout=timeout, wait_all_ranks=wait_all_ranks)
 
     def get_rank(self, group=None):
         return torch.distributed.get_rank(group=group)

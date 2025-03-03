@@ -8,6 +8,7 @@ from ..features.cuda_graph import CUDAGraph
 
 
 class DSVAE(CUDAGraph, torch.nn.Module):
+
     def __init__(self, vae, enable_cuda_graph=True):
         super().__init__(enable_cuda_graph=enable_cuda_graph)
         self.vae = vae
@@ -46,7 +47,7 @@ class DSVAE(CUDAGraph, torch.nn.Module):
         self.static_decoder_inputs = inputs
         self.static_decoder_kwargs = kwargs
 
-        with get_accelerator().capture_to_graph(self._decoder_cuda_graph):
+        with torch.cuda.graph(self._decoder_cuda_graph):
             self.static_decoder_output = self._decode(*self.static_decoder_inputs, **self.static_decoder_kwargs)
 
         self.decoder_cuda_graph_created = True
@@ -89,7 +90,7 @@ class DSVAE(CUDAGraph, torch.nn.Module):
         self.static_encoder_inputs = inputs
         self.static_encoder_kwargs = kwargs
 
-        with get_accelerator().capture_to_graph(self._encoder_cuda_graph):
+        with torch.cuda.graph(self._encoder_cuda_graph):
             self.static_encoder_output = self._encode(*self.static_encoder_inputs, **self.static_encoder_kwargs)
 
         self.encoder_cuda_graph_created = True

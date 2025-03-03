@@ -176,7 +176,7 @@ class TestZeroToFP32(DistributedTest):
 
         class MyModel(torch.nn.Module):
 
-            def __init__(self, hidden_dim, n_layers, freeze_params):
+            def __init__(self, hidden_dim, n_layers):
                 super().__init__()
                 # to reproduce https://github.com/deepspeedai/DeepSpeed/pull/1372 it is important that
                 # the number of total elements is uneven:
@@ -204,9 +204,6 @@ class TestZeroToFP32(DistributedTest):
         model = MyModel(hidden_dim=hidden_dim, n_layers=n_layers, freeze_params=freeze_params)
 
         model, _, _, _ = deepspeed.initialize(config=config_dict, model=model, model_parameters=model.parameters())
-        # Flush zero stage 3 cache
-        model.empty_partition_cache()
-
         data_loader = random_dataloader(model=model, total_samples=16, hidden_dim=hidden_dim, device=model.device)
 
         for i, batch in enumerate(data_loader):
@@ -229,8 +226,7 @@ class TestZeroToFP32(DistributedTest):
                 orig_state_dict[name] = param.detach().cpu()
 
         if zero_stage == 3:
-            with deepspeed.zero.GatheredParameters(model.parameters(),
-                                                   modifier_rank=None):
+            with deepspeed.zero.GatheredParameters(model.parameters(), modifier_rank=None):
                 fp32_model = load_state_dict_from_zero_checkpoint(model.module, tmpdir)
                 fp32_state_dict = fp32_model.state_dict()
         else:
@@ -271,7 +267,7 @@ class TestZeroToFP32(DistributedTest):
 
         class MyModel(torch.nn.Module):
 
-            def __init__(self, hidden_dim, n_layers, freeze_params):
+            def __init__(self, hidden_dim, n_layers):
                 super().__init__()
                 self.ll = torch.nn.ModuleList(torch.nn.Linear(hidden_dim, hidden_dim) for i in range(n_layers))
                 self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
@@ -303,14 +299,10 @@ class TestZeroToFP32(DistributedTest):
         ]
         optim = torch.optim.SGD(optim_groups, lr=0.1)
 
-        model, _, _, _ = deepspeed.initialize(
-            model=model,
-            model_parameters=model.parameters(),
-            optimizer=optim,
-            config=config_dict,
-        )
-        model.empty_partition_cache()
-
+        model, _, _, _ = deepspeed.initialize(model=model,
+                                              model_parameters=model.parameters(),
+                                              optimizer=optim,
+                                              config=config_dict)
         data_loader = random_dataloader(model=model, total_samples=16, hidden_dim=hidden_dim, device=model.device)
 
         for i, batch in enumerate(data_loader):
@@ -335,8 +327,7 @@ class TestZeroToFP32(DistributedTest):
                 orig_state_dict[name] = param.detach().cpu()
 
         if zero_stage == 3:
-            with deepspeed.zero.GatheredParameters(model.parameters(),
-                                                   modifier_rank=None):
+            with deepspeed.zero.GatheredParameters(model.parameters(), modifier_rank=None):
                 fp32_model = load_state_dict_from_zero_checkpoint(model.module, tmpdir)
                 fp32_state_dict = fp32_model.state_dict()
         else:
@@ -385,7 +376,7 @@ class TestIncorectAllgatherBucketSize(DistributedTest):
                 model, _, _, _ = deepspeed.initialize(config=config_dict,
                                                       model=model,
                                                       model_parameters=model.parameters())
-            assert ("allgather_bucket_size must be a multiple of nccl_start_alignment_factor" in str(assertinfo))
+            assert "allgather_bucket_size must be a multiple of nccl_start_alignment_factor" in str(assertinfo)
 
 
 class TestPartitionNcclAlignment(DistributedTest):
@@ -472,14 +463,9 @@ class EltwiseMultiplicationTestNetwork_Dict(Module):
         self.loss = L1Loss(reduction="none")
 
     def forward(self, x: Tensor, y: Tensor, use_module_trace: bool, param_prefetching: bool) -> Dict[str, Tensor]:
-        _assert_partition_status(
-            self,
-            {
-                ZeroParamStatus.NOT_AVAILABLE,
-                ZeroParamStatus.INFLIGHT,
-                ZeroParamStatus.AVAILABLE,
-            } if use_module_trace else {ZeroParamStatus.NOT_AVAILABLE},
-        )
+        _assert_partition_status(self,
+                                 {ZeroParamStatus.NOT_AVAILABLE, ZeroParamStatus.INFLIGHT, ZeroParamStatus.AVAILABLE}
+                                 if use_module_trace else {ZeroParamStatus.NOT_AVAILABLE})
 
         pre_layer_expected_states = {
             ZeroParamStatus.INFLIGHT if param_prefetching else ZeroParamStatus.NOT_AVAILABLE,
@@ -504,14 +490,9 @@ class EltwiseMultiplicationTestNetwork_Dict(Module):
 
         loss = self.loss(y_hat, y)
 
-        _assert_partition_status(
-            self,
-            {
-                ZeroParamStatus.NOT_AVAILABLE,
-                ZeroParamStatus.INFLIGHT,
-                ZeroParamStatus.AVAILABLE,
-            } if use_module_trace else {ZeroParamStatus.NOT_AVAILABLE},
-        )
+        _assert_partition_status(self,
+                                 {ZeroParamStatus.NOT_AVAILABLE, ZeroParamStatus.INFLIGHT, ZeroParamStatus.AVAILABLE}
+                                 if use_module_trace else {ZeroParamStatus.NOT_AVAILABLE})
 
         return {
             "hidden1": hidden1,
@@ -713,11 +694,9 @@ class TestZero3ParamPartitioningBase(DistributedTest):
             weight.ds_tensor.data = torch.full_like(weight.ds_tensor.data, (i + 1) * (1 + dist.get_rank()))
 
         def create_tensor(vals, dtype: torch.dtype = None) -> Tensor:
-            return torch.as_tensor(
-                vals,
-                dtype=dtype or (torch.float16 if fp16_enabled else torch.float32),
-                device=ds_engine.device,
-            )
+            return torch.as_tensor(vals,
+                                   dtype=dtype or (torch.float16 if fp16_enabled else torch.float32),
+                                   device=ds_engine.device)
 
         expected_hidden1 = create_tensor([
             [1, 1, 1, 1, 1],
@@ -738,16 +717,8 @@ class TestZero3ParamPartitioningBase(DistributedTest):
 
         for train_iter in range(3):
             activations = ds_engine(
-                x=torch.ones(
-                    (m, n),
-                    dtype=torch.float16 if fp16_enabled else torch.float32,
-                    device=ds_engine.device,
-                ),
-                y=torch.ones(
-                    (m, n),
-                    dtype=torch.float16 if fp16_enabled else torch.float32,
-                    device=ds_engine.device,
-                ),
+                x=torch.ones((m, n), dtype=torch.float16 if fp16_enabled else torch.float32, device=ds_engine.device),
+                y=torch.ones((m, n), dtype=torch.float16 if fp16_enabled else torch.float32, device=ds_engine.device),
                 use_module_trace=train_iter > 0,
                 param_prefetching=prefetching and train_iter > 0,
             )
@@ -782,33 +753,21 @@ class TestZero3ParamPartitioningBase(DistributedTest):
 
             grad_multiplier = 1 if zero_grad else (train_iter + 1)
             if dist.get_rank() == 0:
-                assert torch.allclose(
-                    dloss_wrt_layer3.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor([2] * 8,
-                                                    torch.float))
-                assert torch.allclose(
-                    dloss_wrt_layer2.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor([3 * 1] * 8,
-                                                    torch.float))
-                assert torch.allclose(
-                    dloss_wrt_layer1.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor([3 * 2 * 1] * 8,
-                                                    torch.float))
+                assert torch.allclose(dloss_wrt_layer3.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor([2] * 8, torch.float))
+                assert torch.allclose(dloss_wrt_layer2.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor([3 * 1] * 8, torch.float))
+                assert torch.allclose(dloss_wrt_layer1.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor([3 * 2 * 1] * 8, torch.float))
             elif dist.get_rank() == 1:
                 # parameters dont split evenly across ranks so rank 1 has a zero-padded
                 # partition
-                assert torch.allclose(
-                    dloss_wrt_layer3.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor(([8] * 7) + [0],
-                                                    torch.float))
-                assert torch.allclose(
-                    dloss_wrt_layer2.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor(([6 * 2] * 7) + [0],
-                                                    torch.float))
-                assert torch.allclose(
-                    dloss_wrt_layer1.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor(([6 * 4 * 1] * 7) + [0],
-                                                    torch.float))
+                assert torch.allclose(dloss_wrt_layer3.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor(([8] * 7) + [0], torch.float))
+                assert torch.allclose(dloss_wrt_layer2.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor(([6 * 2] * 7) + [0], torch.float))
+                assert torch.allclose(dloss_wrt_layer1.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor(([6 * 4 * 1] * 7) + [0], torch.float))
             else:
                 raise RuntimeError("test has world size of two")
 
@@ -829,7 +788,7 @@ class TestZero3ParamPartitioningBase(DistributedTest):
 class TestZero3ParamPartitioningLargeParam(DistributedTest):
     world_size = 4
 
-    def test(self, init_context_manager: bool, reduce_scatter: bool, param_sz: int = 8100) -> None:
+    def test(self, init_context_manager: bool, param_sz: int = 8100) -> None:
 
         class LargeParamModel(Module):
 
@@ -866,10 +825,6 @@ class TestZero3ParamPartitioningLargeParam(DistributedTest):
                 }
             },
         }
-        if get_accelerator().is_fp16_supported():
-            ds_config["fp16"] = {"enabled": True, "loss_scale": 1.0}
-        elif get_accelerator().is_bf16_supported():
-            ds_config["bf16"] = {"enabled": True}
         with deepspeed.zero.Init(mem_efficient_linear=False, enabled=init_context_manager):
             model = LargeParamModel()
         ds_engine = _ds_initialize_for_param_partitioning_testing(model, ds_config)
@@ -880,17 +835,14 @@ class TestZero3ParamPartitioningLargeParam(DistributedTest):
             partition_sz = math.ceil(param_sz / self.world_size)
             for rank_idx, start_idx in enumerate(range(0, param_sz, partition_sz)):
                 activation_from_partition = activation[start_idx:start_idx + partition_sz]
-                assert torch.allclose(
-                    activation_from_partition,
-                    torch.full_like(activation_from_partition, rank_idx),
-                )
+                assert torch.allclose(activation_from_partition, torch.full_like(activation_from_partition, rank_idx))
 
             ds_engine.backward(activation.sum())
             ds_engine.allreduce_gradients()
 
             avgd_gradients = ds_engine.optimizer.averaged_gradients
             assert set(avgd_gradients.keys()) == {0}, "should only have one parameter group"
-            (weight_gradient, ) = avgd_gradients[0]
+            weight_gradient, = avgd_gradients[0]
             expected_weight_gradient = (train_iter + 1) * torch.full_like(weight_gradient, 1)
 
             assert torch.allclose(weight_gradient, expected_weight_gradient)
@@ -901,6 +853,8 @@ class TestZero3ParamPartitioningManyParams(DistributedTest):
     world_size = 2
 
     def test(self, init_context_manager: bool, param_sz: int = 100, n_layers: int = 100) -> None:
+
+    def test(self, param_sz: int, n_layers: int, init_context_manager: bool) -> None:
 
         class ManyParamModel(Module):
 
@@ -957,11 +911,12 @@ class TestZero3ParamPartitioningManyParams(DistributedTest):
 
         dtype = preferred_dtype()
         for _ in range(3):  # test multiple iterations to cover prefetching
-            activations: List[Tensor] = ds_engine(torch.ones((param_sz, ), dtype=dtype, device=ds_engine.device))
+            activations: List[Tensor] = ds_engine(
+                torch.ones((param_sz, ), dtype=torch.float16, device=ds_engine.device))
             assert len(activations) == n_layers
 
             partition_sz = math.ceil(param_sz / self.world_size)
-            expected_activations = torch.empty(param_sz, dtype=dtype, device=ds_engine.device)
+            expected_activations = torch.empty(param_sz, dtype=torch.float16, device=ds_engine.device)
             for start_idx in range(0, param_sz, partition_sz):
                 expected_activations[start_idx:start_idx + partition_sz] = dist.get_rank()
 
@@ -1023,10 +978,7 @@ class TestZero3InitForParentWeightInitialization(DistributedTest):
             model = ModelWhereParentInitializesChildWeights()
 
         assert model.linear.weight.ds_tensor.numel() == math.ceil(12 / self.world_size)
-        assert torch.allclose(
-            model.linear.weight.ds_tensor,
-            torch.full_like(model.linear.weight.ds_tensor, 1),
-        )
+        assert torch.allclose(model.linear.weight.ds_tensor, torch.full_like(model.linear.weight.ds_tensor, 1))
 
 
 """
@@ -1161,31 +1113,21 @@ class TestZero3ParamPartitioningBaseBF16(DistributedTest):
 
             grad_multiplier = 1 if zero_grad else (train_iter + 1)
             if dist.get_rank() == 0:
-                assert torch.allclose(
-                    dloss_wrt_layer3.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor([2] * 8).to(expected_grad_dtype))
-                assert torch.allclose(
-                    dloss_wrt_layer2.to(get_accelerator().device_name()),
-                    grad_multiplier * create_tensor([3 * 1] * 8).to(expected_grad_dtype))
-                assert torch.allclose(
-                    dloss_wrt_layer1.to(get_accelerator().device_name()),
-                    grad_multiplier *
-                    create_tensor([3 * 2 * 1] * 8).to(expected_grad_dtype))
+                assert torch.allclose(dloss_wrt_layer3.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor([2] * 8).to(expected_grad_dtype))
+                assert torch.allclose(dloss_wrt_layer2.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor([3 * 1] * 8).to(expected_grad_dtype))
+                assert torch.allclose(dloss_wrt_layer1.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor([3 * 2 * 1] * 8).to(expected_grad_dtype))
             elif dist.get_rank() == 1:
                 # parameters dont split evenly across ranks so rank 1 has a zero-padded
                 # partition
-                assert torch.allclose(
-                    dloss_wrt_layer3.to(get_accelerator().device_name()),
-                    grad_multiplier *
-                    create_tensor(([8] * 7) + [0]).to(expected_grad_dtype))
-                assert torch.allclose(
-                    dloss_wrt_layer2.to(get_accelerator().device_name()),
-                    grad_multiplier *
-                    create_tensor(([6 * 2] * 7) + [0]).to(expected_grad_dtype))
-                assert torch.allclose(
-                    dloss_wrt_layer1.to(get_accelerator().device_name()),
-                    grad_multiplier *
-                    create_tensor(([6 * 4 * 1] * 7) + [0]).to(expected_grad_dtype))
+                assert torch.allclose(dloss_wrt_layer3.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor(([8] * 7) + [0]).to(expected_grad_dtype))
+                assert torch.allclose(dloss_wrt_layer2.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor(([6 * 2] * 7) + [0]).to(expected_grad_dtype))
+                assert torch.allclose(dloss_wrt_layer1.to(get_accelerator().device_name()),
+                                      grad_multiplier * create_tensor(([6 * 4 * 1] * 7) + [0]).to(expected_grad_dtype))
             else:
                 raise RuntimeError("test has world size of two")
 
@@ -1535,6 +1477,7 @@ class TestZeroFrozenWeights(DistributedTest):
         hidden_dim = 10
 
         class MyModel(torch.nn.Module):
+
             def __init__(self, hidden_dim):
                 super(MyModel, self).__init__()
                 self.l1 = torch.nn.Linear(hidden_dim, hidden_dim)
@@ -1557,13 +1500,8 @@ class TestZeroFrozenWeights(DistributedTest):
         with deepspeed.zero.Init(config_dict_or_path=config_dict):
             model = MyModel(hidden_dim)
 
-        model, _, _, _ = deepspeed.initialize(model=model,
-                                              model_parameters=model.parameters(),
-                                              config=config_dict)
-        data_loader = random_dataloader(model=model,
-                                        total_samples=50,
-                                        hidden_dim=hidden_dim,
-                                        device=model.device)
+        model, _, _, _ = deepspeed.initialize(model=model, model_parameters=model.parameters(), config=config_dict)
+        data_loader = random_dataloader(model=model, total_samples=50, hidden_dim=hidden_dim, device=model.device)
         dist.barrier()
         for n, batch in enumerate(data_loader):
             loss = model(batch[0], batch[1])
@@ -1600,13 +1538,9 @@ class TestZeroOffloadOptim(DistributedTest):
 
         if force_ds_optim:
             with pytest.raises(ZeRORuntimeException):
-                model, _, _, _ = deepspeed.initialize(model=model,
-                                                      optimizer=optimizer,
-                                                      config=config_dict)
+                model, _, _, _ = deepspeed.initialize(model=model, optimizer=optimizer, config=config_dict)
         else:
-            model, _, _, _ = deepspeed.initialize(model=model,
-                                                  optimizer=optimizer,
-                                                  config=config_dict)
+            model, _, _, _ = deepspeed.initialize(model=model, optimizer=optimizer, config=config_dict)
 
 
 @pytest.mark.parametrize('training', [True, False])

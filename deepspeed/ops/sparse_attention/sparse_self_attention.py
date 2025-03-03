@@ -56,8 +56,7 @@ class SparseSelfAttention(nn.Module):
 
         if (L % self.sparsity_config.block != 0):
             raise ValueError(
-                f'Sequence Length, {L}, needs to be dividable by Block size {self.sparsity_config.block}!'
-            )
+                f'Sequence Length, {L}, needs to be dividable by Block size {self.sparsity_config.block}!')
 
         num_blocks = L // self.sparsity_config.block
         return self.master_layout[..., :num_blocks, :num_blocks].cpu()  # layout needs to be a CPU tensor
@@ -68,11 +67,7 @@ class SparseSelfAttention(nn.Module):
         from deepspeed.ops.sparse_attention.softmax import Softmax
         if L not in SparseSelfAttention.ops:
             sparsity_layout = self.get_layout(L)
-            sparse_dot_sdd_nt = MatMul(sparsity_layout,
-                                       self.sparsity_config.block,
-                                       'sdd',
-                                       trans_a=False,
-                                       trans_b=True)
+            sparse_dot_sdd_nt = MatMul(sparsity_layout, self.sparsity_config.block, 'sdd', trans_a=False, trans_b=True)
 
             sparse_dot_dsd_nn = MatMul(sparsity_layout,
                                        self.sparsity_config.block,

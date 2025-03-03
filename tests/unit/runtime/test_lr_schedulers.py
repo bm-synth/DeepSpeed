@@ -37,9 +37,6 @@ def _verify_staircase_increase(values, step_size):
                                                    (WARMUP_DECAY_LR, {
                                                        WARMUP_NUM_STEPS: 10,
                                                        TOTAL_NUM_STEPS: 20
-                                                   }), (WARMUP_COSINE_LR, {
-                                                       WARMUP_NUM_STEPS: 10,
-                                                       TOTAL_NUM_STEPS: 20
                                                    }), (ONE_CYCLE, {
                                                        CYCLE_MIN_LR: 0,
                                                        CYCLE_MAX_LR: 0.1

@@ -5,6 +5,7 @@ import deepspeed.comm as dist
 
 
 class csvMonitor(Monitor):
+
     def __init__(self, csv_config):
         super().__init__(csv_config)
         self.filenames = []

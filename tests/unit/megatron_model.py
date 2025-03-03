@@ -42,10 +42,7 @@ def get_gpt2_model(args_others, mp_size=1):
     from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
     from megatron import mpu
     i = get_accelerator().current_device_name()
-    model = torchDDP(model,
-                     device_ids=[i],
-                     output_device=i,
-                     process_group=mpu.get_data_parallel_group())
+    model = torchDDP(model, device_ids=[i], output_device=i, process_group=mpu.get_data_parallel_group())
 
     return model
 
@@ -74,9 +71,7 @@ class MockGPT2ModelPipe(PipelineModule):
 
             def forward(self, args):
                 # hardcode attn mask for testing, PP requires the attn_mask to be stashed
-                attention_mask = torch.tensor(
-                    [[True]],
-                    device=get_accelerator().current_device_name())
+                attention_mask = torch.tensor([[True]], device=get_accelerator().current_device_name())
                 return super().forward(args, attention_mask)
 
         layers = []
