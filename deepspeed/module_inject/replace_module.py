@@ -8,16 +8,12 @@ import torch
 import tqdm
 import deepspeed
 import deepspeed.ops.transformer as transformer_inference
-from deepspeed.ops.transformer.inference.diffusers_attention import DeepSpeedDiffusersAttention
-from deepspeed.ops.transformer.inference.diffusers_transformer_block import DeepSpeedDiffusersTransformerBlock
-from deepspeed.ops.transformer.inference.diffusers_2d_transformer import Diffusers2DTransformerConfig
-from deepspeed.accelerator import get_accelerator
-from .replace_policy import replace_policies, generic_policies
-from .auto_tp import AutoTP, ReplaceWithTensorSlicing, Loading
-from .layers import TensorParallelOcShardConv2d, TensorParallelIcShardConv2d
-from deepspeed.module_inject.layers import is_autotp_training_mode
+from .replace_policy import HFBertLayerPolicy, HFGPT2LayerPolicy, HFGPTJLayerPolicy
+from .replace_policy import replace_policies
+from ..constants import INFERENCE_GENERIC_MODE, INFERENCE_SPECIALIZED_MODE
+from ..runtime.weight_quantizer import WeightQuantization
+from torch import nn
 from deepspeed import comm as dist
-from deepspeed.module_inject.tp_shard import set_num_kv_heads, set_n_embd, set_num_attention_heads, set_tp_grain_size
 
 from .load_checkpoint import load_model_with_checkpoint
 import time
