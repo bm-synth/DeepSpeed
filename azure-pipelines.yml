@@ -75,17 +75,29 @@ jobs:
   #  condition: always()
 
 
-  #BingBert logs
-  #- task: PublishPipelineArtifact@1
-  #  inputs:
-  #    targetPath: '$(Build.SourcesDirectory)/tests/model/bing_bert/pretrain_test/'
-  #    artifactName: BingBert_pretrain_logs
-  #  displayName: 'BingBert pretrain logs'
-  #  condition: always()
+- job: Code_Quality_Checks
+  pool:
+    vmImage: 'ubuntu-latest'
+  variables:
+    conda_env: 'ds_codetest'
 
-  #- task: PublishPipelineArtifact@1
-  #  inputs:
-  #    targetPath: '$(Build.SourcesDirectory)/tests/model/bing_bert/checkpoint_test_logs/'
-  #    artifactName: BingBert_checkpoint_logs
-  #  displayName: 'BingBert checkpoint logs'
-  #  condition: always()
+  steps:
+  - bash: echo "##vso[task.prependpath]$CONDA/bin"
+    displayName: Add conda to PATH
+
+  - script: |
+      conda create --force --yes -n $(conda_env) python=3.7
+      source activate $(conda_env)
+    displayName: 'Create code test environment'
+
+  - script: |
+      source activate $(conda_env)
+      pip install pre-commit
+      pre-commit run --all-files
+    displayName: 'Formatting checks'
+
+  - script: |
+      source activate $(conda_env)
+      pip install pylint
+      pylint --exit-zero deepspeed/
+    displayName: 'Code linter'
