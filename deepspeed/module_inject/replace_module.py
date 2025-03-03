@@ -70,13 +70,11 @@ def replace_transformer_layer(orig_layer_impl,
             training=training)
         new_module = deepspeed.DeepSpeedTransformerLayer(transformer_config)
 
-    linear_layer_setting = None
-    '''
-        linear_layer_setting (tuple of modules) [Optional]: shows which two classes are used for linear layers and embedding layers
-    '''
-    micro_batch_size = -1
-    seed = -1
-    local_rank = -1
+        if inference:
+            hidden_size, num_attention_heads = policy.get_hidden_heads()
+            assert num_attention_heads % mp_size == 0,\
+                "To run the model parallel across the GPUs, the attention_heads require to be divisible by the world_size!" +\
+                "This is because the attention computation is partitioned evenly among the parallel GPUs."
 
     mp_replace = ReplaceWithTensorSlicing(mp_group=config.tensor_parallel.tp_group,
                                           mp_size=config.tensor_parallel.tp_size)  #, out_dim=0, in_dim=1)

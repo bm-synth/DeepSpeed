@@ -82,17 +82,7 @@ class InferenceEngine(Module):
         self.quantize_merge_count = 1
         self.quantization_scales = None
 
-        # these are not needed in the config as we are creating them ourselves in the inference engine
-        self.ep_group = None  # config.moe.ep_group
-        self.expert_mp_group = None  # config.moe.ep_mp_group
-
-        self.cuda_graph_created = False
-        self.checkpoint_engine = TorchCheckpointEngine()
-        quantization_setting = None
-        self._init_quantization_setting(
-            quantization_setting)  # todo: update with the new quant config for weight quant
-        self.model_profile_enabled = False
-        self._model_times = []
+        self._check_quantize_setting(quantization_setting)
 
         if not self.injection_dict and config.replace_with_kernel_inject:
             # This is a hack to remove the prepare_mask function on HF side for BLOOM architecture
@@ -113,41 +103,23 @@ class InferenceEngine(Module):
             self._convert_to_dtype(config)
 
         if self.mpu:
-            config.tensor_parallel.tp_size = dist.get_world_size(group=self.mpu.get_model_parallel_group())
+            self.mp_world_size = dist.get_world_size(
+                group=self.mpu.get_model_parallel_group())
             self.mp_group = self.mpu.get_model_parallel_group()
-        elif config.tensor_parallel.tp_size > 1:
-            self._create_model_parallel_group(config)
-            config.tensor_parallel.tp_group = self.mp_group
+        elif self.mp_world_size > 1 and not dist.is_initialized():
+            self._create_model_parallel_group()
 
-        if isinstance(self.module, torch.nn.Module):
-            moe, _ = has_moe_layers(self.module)
-        else:
-            moe = False
-
-        if moe and dist.get_world_size() > 1:
-            self._create_ep_parallel_group(config.moe.moe_experts)
-
-        # We only support three modes: 1) user specified policy for tensor-parallelism, 2) kernel injection (replace_with_kernel_inject), and 3) automatic tensor parallelism if tp_size > 1.
+        # apply injection policy
         if self.injection_dict:
             # 1. User specified Tensor Parallelism
             assert not config.replace_with_kernel_inject, "Cannot use both user specified injection policy and kernel injection"
             for client_module, injection_policy in self.injection_dict.items():
 
-                assert issubclass(client_module,
-                                  torch.nn.Module), f"{client_module} is not a subclass of torch.nn.Module"
+        self.module.to(torch.cuda.current_device())
 
-                # construct the tuple and pass that instead of a string or dict.
-                if isinstance(injection_policy, str):
-                    config.injection_policy_tuple = (injection_policy, )
-                else:
-                    config.injection_policy_tuple = injection_policy
-
-                layer_names = [name for name, _ in self.module.named_modules()]
-                for policy in config.injection_policy_tuple:
-                    if not any(name.endswith(policy) for name in layer_names):
-                        raise ValueError(f"Injection policy layer'{policy}' not valid.")
-
-                self._apply_injection_policy(config, client_module)
+        if self.mp_world_size > 1:
+            self.model_orig_fwd = self.module.forward
+            self.module.forward = self.forward
         else:
             if config.replace_with_kernel_inject:
                 # 2. DeepSpeed Kernel Injection
@@ -226,11 +198,6 @@ class InferenceEngine(Module):
 
         ranks = [i for i in range(self.mp_world_size)]
         self.mp_group = dist.new_group(ranks)
-
-        self.module.to(torch.cuda.current_device())
-        for p in self.module.parameters():
-            if torch.is_tensor(p):
-                dist.broadcast(p, 0)
 
     def _check_quantize_setting(self, quantization_setting):
         self.quatize_bits = 8
