@@ -1342,6 +1342,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
     def __partition_grads(self,
                           params_to_release: List[Parameter],
                           grad_partitions: List[Tensor]) -> None:
+        offload_fp32_gradients = {}
+        offload_fp32_offsets = {}
         for param, grad_partition in zip(params_to_release, grad_partitions):
             if param.partition_numel() * dist.get_rank(
                     self.dp_process_group) > param.ds_numel:
@@ -1357,10 +1359,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         if allocate_grads_in_partition:
             self.grads_in_partition = []
 
-            for i, group in enumerate(self.fp16_groups):
-                total_size = 0
-                for param_in_partition in group:
-                    total_size += param_in_partition.ds_tensor.ds_numel
+            # offload the gradient partition if applicable
+            if self.offload_optimizer:
+                i, dest_offset, _ = self.grad_position[self.get_param_id(param)]
 
                 see_memory_usage(
                     f"group {i} before creating {total_size} reduced gradients into partition",
