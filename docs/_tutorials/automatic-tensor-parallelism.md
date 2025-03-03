@@ -109,6 +109,7 @@ The following results were collected using V100 SXM2 32GB GPUs.
 The following results were collected using V100 SXM2 32GB GPUs.
 
 ### Max New Tokens = 50
+
 | Test       | Memory Allocated per GPU   | Max Batch Size   | Max Throughput per GPU   |
 | ---------- | -------------------------- | ---------------- | ------------------------ |
 | No TP      | 23.94 GB                   | 64               | 18.84 TFlops             |
@@ -116,6 +117,7 @@ The following results were collected using V100 SXM2 32GB GPUs.
 | 4 GPU TP   | 6.36 GB                    | 664              | 27.63 TFlops             |
 
 ### Max New Tokens = 1024
+
 | Test       | Memory Allocated per GPU   | Max Batch Size   | Max Throughput per GPU   |
 | ---------- | -------------------------- | ---------------- | ------------------------ |
 | No TP      | 23.94 GB                   | 2                | 1.65 TFlops              |
@@ -141,8 +143,6 @@ The following model families have been successfully tested with automatic tensor
 - electra
 - ernie
 - esm
-- falcon
-- glm
 - gpt-j
 - gpt-neo
 - gpt-neox

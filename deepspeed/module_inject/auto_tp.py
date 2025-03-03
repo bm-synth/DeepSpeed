@@ -233,7 +233,18 @@ class AutoTP():
         return mlist
 
     def supported(model):
-        unsupported = ['deberta', 'flaubert', 'fsmt', 'gpt2', 'led', 'longformer', 'xlm', 'xlnet']
+        unsupported = [
+            'bloom',
+            'codegen',
+            'deberta',
+            'flaubert',
+            'fsmt',
+            'gpt2',
+            'led',
+            'longformer',
+            'xlm',
+            'xlnet'
+        ]
         model = str(model)
         key = re.search(r": (.*?)Model", model)
         if key is None:
@@ -300,8 +311,7 @@ class AutoTP():
                 gem_list = list(set(gem_list))
                 policy_list = AutoTP.update_policy_list(policy_list, module, gem_list)
                 gem_list = []
-        assert len(policy_list), "AutoTP not supported for model. Please use kernel injection since container policy for model exists." \
-        if AutoTP.kernel_supported(module_list) else "Not able to determine model policy automatically. Please provide policy."
+        assert len(policy_list), "Not able to determine model policy automatically. Please provide policy."
         return policy_list
 
     def set_tensor_parallel_config(self, mp_size, mp_group):
