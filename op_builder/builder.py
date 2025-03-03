@@ -552,16 +552,16 @@ class OpBuilder(ABC):
             return '-D__SCALAR__'
 
         try:
-            cpu_info = get_cpu_info()
+            result = subprocess.check_output('lscpu', shell=True)
+            result = result.decode('utf-8').strip().lower()
         except Exception as e:
-            self.warning(f"{self.name} attempted to use 'py-cpuinfo' but failed (exception type: {type(e)}, {e}), "
-                         "falling back to 'lscpu' to get this information.")
-            cpu_info = self._backup_cpuinfo()
-            if cpu_info is None:
-                return '-D__SCALAR__'
+            print(
+                f"{WARNING} {self.name} SIMD_WIDTH cannot be recognized due to {str(e)}!"
+            )
+            return '-D__SCALAR__'
 
-        if cpu_info['arch'] == 'X86_64':
-            if 'avx512' in cpu_info['flags'] or 'avx512f' in cpu_info['flags']:
+        if 'genuineintel' in result:
+            if 'avx512' in result:
                 return '-D__AVX512__'
             elif 'avx2' in cpu_info['flags']:
                 return '-D__AVX256__'
