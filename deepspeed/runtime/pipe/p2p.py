@@ -9,9 +9,7 @@ import typing
 import torch
 from deepspeed import comm as dist
 
-# To query whether we have send/recv support
-from packaging.version import Version
-from deepspeed.git_version_info import torch_info
+from deepspeed.utils.torch import required_torch_version
 from deepspeed.accelerator import get_accelerator
 
 _groups = None
