@@ -22,8 +22,115 @@ from deepspeed.module_inject.tp_shard import set_num_kv_heads, set_n_embd, set_n
 from .load_checkpoint import load_model_with_checkpoint
 import time
 
-from .utils import policy_to_ds_container
-import gc
+class LinearAllreduce(nn.Module):
+    def __init__(self, weight, bias=None, mp_group=None):
+        super(LinearAllreduce, self).__init__()
+        self.weight = weight
+        self.bias = bias
+        self.mp_group = mp_group
+
+    def forward(self, input):
+        output = torch.matmul(input, self.weight)
+        if self.mp_group is not None:
+            torch.distributed.all_reduce(output, group=self.mp_group)
+        if self.bias is not None:
+            output += self.bias
+        return output
+
+
+class LinearLayer(nn.Module):
+    def __init__(self, weight, bias=None):
+        super(LinearLayer, self).__init__()
+        self.weight = weight
+        self.bias = bias
+
+    def forward(self, input):
+        output = torch.matmul(input, self.weight)
+        if self.bias is not None:
+            output += self.bias
+        return output
+
+
+class ReplaceWithTensorSlicing:
+    def __init__(self, mp_group=None):
+        if mp_group is not None:
+            self.gpu_index = torch.distributed.get_rank(group=mp_group)
+        else:
+            self.gpu_index = 0
+
+    def merge_assert(self, dim1, dim2):
+        assert dim1 > dim2, \
+            'Merging tensors is not allowed here! Please use deepspeed load_checkpoint\
+            for merging your checkpoints before replacing the transformer layer with\
+            inference-kernels'
+
+    def qkv_copy(self, dst, src):
+        if src is None:
+            return src
+        src_shape = src.shape
+        dst_shape = dst.shape
+
+        src_split = torch.split(src.data, src.shape[-1] // 3, dim=-1)
+
+        if (len(src_shape) == 2 and len(dst_shape) == 2):
+            if src_shape[1] == dst_shape[1]:
+                return src
+
+            self.merge_assert(src_shape[1], dst_shape[1])
+            qkv_size = dst_shape[1] // 3
+            qkv_split = [torch.split(src_s, qkv_size, dim=1) for src_s in src_split]
+
+            weight_split = [
+                torch.cat([qkv_s[i] for qkv_s in qkv_split],
+                          axis=1) for i in range(len(qkv_split[0]))
+            ]
+            dst.data.copy_(weight_split[self.gpu_index].to(
+                torch.cuda.current_device()).contiguous())
+        else:
+            if src_shape[0] == dst_shape[0]:
+                return src
+
+            qkv_size = dst_shape[0] // 3
+            qkv_split = [torch.split(src_s, qkv_size, dim=0) for src_s in src_split]
+            bias_split = [
+                torch.cat([qkv_s[i] for qkv_s in qkv_split],
+                          axis=0) for i in range(len(qkv_split[0]))
+            ]
+            dst.data.copy_(bias_split[self.gpu_index].to(
+                torch.cuda.current_device()).contiguous())
+
+        return dst
+
+    def copy(self, dst, src):
+        if src is None:
+            return src
+
+        src_shape = src.shape
+        dst_shape = dst.shape
+
+        if (len(src_shape) == 2 and len(dst_shape) == 2):
+
+            if src_shape[0] == dst_shape[0] and src_shape[1] == dst_shape[1]:
+                return src
+
+            if src_shape[0] != dst_shape[0]:
+                self.merge_assert(src_shape[0], dst_shape[0])
+                weight_split = torch.split(src, dst_shape[0])
+            else:
+                self.merge_assert(src_shape[1], dst_shape[1])
+                weight_split = torch.split(src.data, dst_shape[1], dim=1)
+
+            dst.data.copy_(weight_split[self.gpu_index].to(
+                torch.cuda.current_device()).contiguous())
+        else:
+            if src_shape[0] == dst_shape[0]:
+                return src
+
+            bias_split = torch.split(src.data, dst_shape[-1])
+            dst.data.copy_(bias_split[self.gpu_index].to(
+                torch.cuda.current_device()).contiguous())
+
+        return dst
 
 
 def replace_transformer_layer(orig_layer_impl,
