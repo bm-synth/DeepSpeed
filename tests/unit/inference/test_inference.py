@@ -56,91 +56,24 @@ _gpt_models = [
     "openai-community/gpt2",
     "distilbert/distilgpt2",
     "Norod78/hebrew-bad_wiki-gpt_neo-tiny",
-    "EleutherAI/gpt-j-6B",  # bring back this model as we did not catch an error before by merging some changes! TODO: we need to fix the OOM issue later!
+    "EleutherAI/gpt-j-6b",
+    "EleutherAI/pythia-70m-deduped",
     "bigscience/bloom-560m",
 ]
 _opt_models = [
     "facebook/opt-125m",  # 125m, 1.7B, ..., 175B variants have the same model architecture.
     "facebook/opt-350m",  # 350m applies layer norm after attention layer which is different than other variants.
 ]
-_all_models = HfApi().list_models()
-
-test_models = set(_bert_models + _roberta_models + _gpt_models + _opt_models)
-test_tasks = [
+_test_models = set(_bert_models + _roberta_models + _gpt_models + _opt_models)
+_test_tasks = [
     "fill-mask", "question-answering", "text-classification", "token-classification", "text-generation",
     "text2text-generation", "summarization", "translation"
 ]
-pytest.all_models = {task: [m.modelId for m in _all_models if m.pipeline_tag == task] for task in test_tasks}
-
-_model_w_tasks = itertools.product(*[test_models, test_tasks])
-
-
-@dataclass
-class ModelInfo:
-    id: str
-    pipeline_tag: str
-    tags: List[str]
-
-
-def _hf_model_list() -> List[ModelInfo]:
-    """ Caches HF model list to avoid repeated API calls """
-
-    cache_dir = os.getenv("HF_HOME", "~/.cache/huggingface")
-    cache_file_path = os.path.join(cache_dir, "DS_model_cache.pkl")
-    num_days = os.getenv("HF_CACHE_EXPIRY_DAYS", 1)
-    cache_expiration_seconds = num_days * 60 * 60 * 24
-
-    # Load or initialize the cache
-    model_data = {"cache_time": 0, "model_list": []}
-    if os.path.isfile(cache_file_path):
-        with open(cache_file_path, 'rb') as f:
-            try:
-                fcntl.flock(f, fcntl.LOCK_SH)
-                model_data = pickle.load(f)
-            except Exception as e:
-                print(f"Error loading cache file {cache_file_path}: {e}")
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-
-    current_time = time.time()
-
-    # Update the cache if it has expired
-    if ((model_data["cache_time"] + cache_expiration_seconds) < current_time) or os.getenv("FORCE_UPDATE_HF_CACHE",
-                                                                                           default=False):
-        api = HfApi()
-        while True:
-            try:
-                model_list = []
-                for model in _test_models:
-                    model_list.extend(api.list_models(model_name=model))
-                model_data["model_list"] = [
-                    ModelInfo(id=m.id, pipeline_tag=m.pipeline_tag, tags=m.tags) for m in model_list
-                ]
-                break  # Exit the loop if the operation is successful
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429:
-                    print("Rate limit exceeded. Retrying in 60 seconds...")
-                    time.sleep(60)
-                else:
-                    raise  # Re-raise the exception if it's not a 429 error
-        model_data["cache_time"] = current_time
-
-        # Save the updated cache
-        os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file_path, 'wb') as f:
-            try:
-                fcntl.flock(f, fcntl.LOCK_EX)
-                pickle.dump(model_data, f)
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-
-    return model_data["model_list"]
-
 
 # Get a list of all models and mapping from task to supported models
-_hf_models = _hf_model_list()
-_hf_model_names = [m.id for m in _hf_models]
-_hf_task_to_models = {task: [m.id for m in _hf_models if m.pipeline_tag == task] for task in _test_tasks}
+_hf_models = HfApi().list_models()
+_hf_model_names = [m.modelId for m in _hf_models]
+_hf_task_to_models = {task: [m.modelId for m in _hf_models if m.pipeline_tag == task] for task in _test_tasks}
 
 # Get all combinations of task:model to test
 _model_w_tasks = [(m, t) for m, t in itertools.product(*[_test_models, _test_tasks]) if m in _hf_task_to_models[t]]
@@ -164,6 +97,37 @@ def verify_models():
         pytest.fail(f"Model(s) do not have an assigned task: {_missing_task_models}")
 
 
+# Fixture to add skips for certain configurations
+@pytest.fixture()
+def invalid_test(model_w_task, dtype, enable_cuda_graph, enable_triton):
+    model, task = model_w_task
+    msg = ""
+    if enable_cuda_graph and (torch_info["cuda_version"] == "0.0"):
+        msg = "CUDA not detected, cannot use CUDA Graph"
+    elif enable_cuda_graph and pkg_version.parse(torch.__version__) < pkg_version.parse("1.10"):
+        msg = "CUDA Graph is only available in torch versions >= 1.10"
+    elif "gpt-j-6b" in model:
+        if dtype != torch.half:
+            msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
+        elif enable_cuda_graph:
+            msg = f"Not enough GPU memory to run {model} with CUDA Graph enabled"
+    elif "gpt-neox-20b" in model:  # TODO: remove this when neox issues resolved
+        msg = "Skipping gpt-neox-20b for now"
+    elif ("gpt-neox-20b" in model) and (dtype != torch.half):
+        msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
+    elif ("bloom" in model) and (dtype != torch.half):
+        msg = f"Bloom models only support half precision, cannot use dtype {dtype}"
+    elif ("bert" not in model.lower()) and enable_cuda_graph:
+        msg = "Non bert/roberta models do no support CUDA Graph"
+    elif enable_triton and not (dtype in [torch.half]):
+        msg = "Triton is for fp16"
+    elif enable_triton and not deepspeed.HAS_TRITON:
+        msg = "triton needs to be installed for the test"
+    elif ("bert" not in model.lower()) and enable_triton:
+        msg = "Triton kernels do not support Non bert/roberta models yet"
+    return msg
+
+
 """ Fixtures for inference config """
 
 
@@ -185,45 +149,6 @@ def enable_cuda_graph(request):
 @pytest.fixture(params=[True, False], ids=["Triton", "noTriton"])
 def enable_triton(request):
     return request.param
-
-
-"""
-This fixture will validate the configuration
-"""
-
-
-@pytest.fixture()
-def invalid_model_task_config(model_w_task, dtype, enable_cuda_graph, enable_triton):
-    model, task = model_w_task
-    msg = ""
-    if pkg_version.parse(torch.__version__) <= pkg_version.parse("1.2"):
-        msg = "DS inference injection doesn't work well on older torch versions"
-    elif model not in pytest.all_models[task]:
-        msg = f"Not a valid model / task combination: {model} / {task}"
-    elif enable_cuda_graph and (torch_info["cuda_version"] == "0.0"):
-        msg = "CUDA not detected, cannot use CUDA Graph"
-    elif enable_cuda_graph and pkg_version.parse(torch.__version__) < pkg_version.parse("1.10"):
-        msg = "CUDA Graph is only available in torch versions >= 1.10"
-    elif "gpt-j-6B" in model:
-        if dtype != torch.half:
-            msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
-        elif enable_cuda_graph:
-            msg = f"Not enough GPU memory to run {model} with CUDA Graph enabled"
-    elif "gpt-neox-20b" in model:  # TODO: remove this when neox issues resolved
-        msg = "Skipping gpt-neox-20b for now"
-    elif ("gpt-neox-20b" in model) and (dtype != torch.half):
-        msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
-    elif ("bloom" in model) and (dtype != torch.half):
-        msg = f"Bloom models only support half precision, cannot use dtype {dtype}"
-    elif ("bert" not in model.lower()) and enable_cuda_graph:
-        msg = "Non bert/roberta models do no support CUDA Graph"
-    elif enable_triton and not (dtype in [torch.half]):
-        msg = "Triton is for fp16"
-    elif enable_triton and not deepspeed.HAS_TRITON:
-        msg = "triton needs to be installed for the test"
-    elif ("bert" not in model.lower()) and enable_triton:
-        msg = "Triton kernels do not support Non bert/roberta models yet"
-    return msg
 
 
 """ Fixtures for running query """
@@ -260,7 +185,7 @@ def query(model_w_task):
 def inf_kwargs(model_w_task):
     model, task = model_w_task
     if task == "text-generation":
-        if model == "EleutherAI/gpt-j-6B":
+        if model == "EleutherAI/gpt-j-6b":
             # This model on V100 is hitting memory problems that limit the number of output tokens
             return {"do_sample": False, "max_length": 12}
         return {"do_sample": False, "max_length": 20}
@@ -320,6 +245,7 @@ def assert_fn(model_w_task):
     return assert_fn
 
 
+# Used to verify DeepSpeed kernel injection worked with a model
 def check_injection(model):
 
     def verify_injection(module):
@@ -334,27 +260,24 @@ def check_injection(model):
     verify_injection(model)
 
 
-"""
-Tests
-"""
-
-
 @pytest.mark.inference
 class TestModelTask(DistributedTest):
     world_size = 1
 
-    def test(self,
-             model_w_task,
-             dtype,
-             enable_cuda_graph,
-             enable_triton,
-             query,
-             inf_kwargs,
-             assert_fn,
-             invalid_model_task_config,
-             perf_meas=True):
-        if invalid_model_task_config:
-            pytest.skip(invalid_model_task_config)
+    def test(
+        self,
+        model_w_task,
+        dtype,
+        enable_cuda_graph,
+        enable_triton,
+        query,
+        inf_kwargs,
+        assert_fn,
+        invalid_test,
+        perf_meas=True,
+    ):
+        if invalid_test:
+            pytest.skip(invalid_test)
 
         model, task = model_w_task
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -421,7 +344,7 @@ class TestModelTask(DistributedTest):
 @pytest.mark.parametrize("model_w_task", [("EleutherAI/gpt-neo-1.3B", "text-generation"),
                                           ("EleutherAI/gpt-neox-20b", "text-generation"),
                                           ("bigscience/bloom-3b", "text-generation"),
-                                          ("EleutherAI/gpt-j-6B", "text-generation")],
+                                          ("EleutherAI/gpt-j-6b", "text-generation")],
                          ids=["gpt-neo", "gpt-neox", "bloom", "gpt-j"])
 class TestMPSize(DistributedTest):
     world_size = 2
@@ -433,13 +356,10 @@ class TestMPSize(DistributedTest):
         query,
         inf_kwargs,
         assert_fn,
+        invalid_test,
     ):
-        invalid_test_msg = validate_test(model_w_task, dtype, enable_cuda_graph=False, enable_triton=False)
-        if invalid_test_msg:
-            pytest.skip(invalid_test_msg)
-
-        if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
-            pytest.skip("This op had not been implemented on this system.", allow_module_level=True)
+        if invalid_test:
+            pytest.skip(invalid_test)
 
         model, task = model_w_task
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -488,12 +408,12 @@ class TestInjectionPolicy(DistributedTest):
         query,
         inf_kwargs,
         assert_fn,
-        invalid_model_task_config,
+        invalid_test,
         dtype,
         enable_cuda_graph,
     ):
-        if invalid_model_task_config:
-            pytest.skip(invalid_model_task_config)
+        if invalid_test:
+            pytest.skip(invalid_test)
 
         model, task = model_w_task
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -538,12 +458,12 @@ class TestAutoTensorParallelism(DistributedTest):
         query,
         inf_kwargs,
         assert_fn,
-        invalid_model_task_config,
+        invalid_test,
         dtype,
         enable_cuda_graph,
     ):
-        if invalid_model_task_config:
-            pytest.skip(invalid_model_task_config)
+        if invalid_test:
+            pytest.skip(invalid_test)
 
         model, task = model_w_task
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -569,7 +489,7 @@ class TestAutoTensorParallelism(DistributedTest):
     "model_family, model_name",
     (
         ["gpt2", "EleutherAI/gpt-neo-2.7B"],
-        ["gpt2", "EleutherAI/gpt-j-6B"],
+        ["gpt2", "EleutherAI/gpt-j-6b"],
         ["gpt2", "gpt2-xl"],
     ),
 )
