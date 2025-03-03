@@ -346,15 +346,7 @@ resulting in better performance. Therefore, DeepSpeed combines ZeRO-powered data
 Megatron-LM tensor-slicing model parallelism, which is
 significantly faster than using Megatron-LM alone.
 
-The observed performance improvements depend on several factors such as the memory per
-GPU, the local GPU interconnect (i.e., PCI-E vs NVLINK vs NVSwitch), the model size,
-inter node network interconnect, etc. Below, we show some of the performance improvements
-from using DeepSpeed over Megatron on a 16 GPU Low Bandwidth (40 Gbps) cluster and a 400 GPU DGX-2 High Bandwidth (800 Gbps) cluster.
-For details please see the [ZeRO Paper](https://arxiv.org/abs/1910.02054v2). We also
-present performance improvement on a 64 GPU cluster along with detailed configuration
-analysis to show where the improvements come from.
-
-![DeepSpeed-vs-Megatron](/assets/images/DeepSpeed-vs-Megatron.png)
+![DeepSpeed-vs-Megatron](/assets/images/zero-full.png)
 <p align="center">
 <em>The figure depicts system throughput improvements of DeepSpeed (combining ZeRO-powered data parallelism with model parallelism of Nvidia Megatron-LM) over using Megatron-LM alone.</em>
 </p>
