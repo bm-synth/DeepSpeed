@@ -313,27 +313,9 @@ Enabling and configuring ZeRO memory optimizations
     "allgather_bucket_size": 500000000,
     "overlap_comm": false,
     "reduce_scatter": [true|false],
-    "reduce_bucket_size": 5e8,
+    "reduce_bucket_size": 500000000,
     "contiguous_gradients" : [true|false],
-    "offload_param": {
-      ...
-    },
-    "offload_optimizer": {
-      ...
-    },
-    "stage3_max_live_parameters" : 1e9,
-    "stage3_max_reuse_distance" : 1e9,
-    "stage3_prefetch_bucket_size" : 5e8,
-    "stage3_param_persistence_threshold" : 1e6,
-    "sub_group_size" : 1e12,
-    "elastic_checkpoint" : [true|false],
-    "stage3_gather_16bit_weights_on_model_save": [true|false],
-    "ignore_unused_parameters": [true|false],
-    "round_robin_gradients": [true|false],
-    "zero_hpz_partition_size": 1,
-    "zero_quantized_weights": [true|false],
-    "zero_quantized_gradients": [true|false],
-    "log_trace_cache_warnings": [true|false],
+    "cpu_offload": [true|false]
     }
 ```
 
@@ -439,6 +421,11 @@ Enabling and configuring ZeRO memory optimizations
 | -------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | The size of the fixed buffer for prefetching parameters. Smaller values use less memory, but can increase stalls due to communication. | `5e8`   |
 
+***cpu_offload***: [boolean]
+
+| Description                                                  | Default |
+| ------------------------------------------------------------ | ------- |
+| Enable offloading of optimizer memory and computation to CPU. This frees up GPU memory for larger models or batch sizes.  | `False`   |
 
 ***stage3_param_persistence_threshold***: [integer]
 
