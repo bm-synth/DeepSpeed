@@ -191,9 +191,33 @@ def enable_triton(request):
     return request.param
 
 
-@pytest.fixture(params=[1, 2], ids=["ws1", "ws2"])
-def world_size(request):
-    return request.param
+@pytest.fixture()
+def invalid_model_task_config(model_w_task, dtype, enable_cuda_graph):
+    model, task = model_w_task
+    msg = ""
+    if pkg_version.parse(torch.__version__) <= pkg_version.parse("1.2"):
+        msg = "DS inference injection doesn't work well on older torch versions"
+    elif model not in pytest.all_models[task]:
+        msg = f"Not a valid model / task combination: {model} / {task}"
+    elif enable_cuda_graph and (torch_info["cuda_version"] == "0.0"):
+        msg = "CUDA not detected, cannot use CUDA Graph"
+    elif enable_cuda_graph and pkg_version.parse(
+            torch.__version__) < pkg_version.parse("1.10"):
+        msg = "CUDA Graph is only available in torch versions >= 1.10"
+    elif "gpt-j-6B" in model:
+        if dtype != torch.half:
+            msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
+        elif enable_cuda_graph:
+            msg = f"Not enough GPU memory to run {model} with CUDA Graph enabled"
+    elif "gpt-neox-20b" in model:  # TODO: remove this when neox issues resolved
+        msg = "Skipping gpt-neox-20b for now"
+    elif ("gpt-neox-20b" in model) and (dtype != torch.half):
+        msg = f"Not enough GPU memory to run {model} with dtype {dtype}"
+    elif ("bloom" in model) and (dtype != torch.half):
+        msg = f"Bloom models only support half precision, cannot use dtype {dtype}"
+    elif ("bert" not in model.lower()) and enable_cuda_graph:
+        msg = "Non bert/roberta models do no support CUDA Graph"
+    return msg
 
 
 """ Fixtures for running query """

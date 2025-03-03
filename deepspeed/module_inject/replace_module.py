@@ -137,8 +137,19 @@ def replace_transformer_layer(orig_layer_impl,
                               preln=True,
                               fp16=True,
                               training=True,
-                              huggingface=False,
-                              local_rank=-1):
+                              quantize=False,
+                              quantize_settings=None,
+                              triangular_masking=False,
+                              return_tuple=True,
+                              replace_with_kernel_inject=False,
+                              linear_layer_setting=None,
+                              moe=False,
+                              moe_experts=1,
+                              moe_type='standard',
+                              checkpoint_dict=None,
+                              save_mp_checkpoint_path=None,
+                              base_dir="",
+                              enable_cuda_graph=False):
     """ Replace bert-style transformer layers with DeepSpeed's transformer layer
     Arguments:
         orig_layer_impl (torch.nn.Module): the original transformer layer implementation to look for,
@@ -155,24 +166,18 @@ def replace_transformer_layer(orig_layer_impl,
     Returns:
         Updated nn.module with replaced transformer layers
     """
-    def replace_fn(child):
-        transformer_config = deepspeed.DeepSpeedTransformerConfig(
-            batch_size=micro_batch_size,
-            hidden_size=bert_config.hidden_size,
-            heads=bert_config.num_attention_heads,
-            attn_dropout_ratio=bert_config.attention_probs_dropout_prob,
-            hidden_dropout_ratio=bert_config.hidden_dropout_prob,
-            num_hidden_layers=bert_config.num_hidden_layers,
-            initializer_range=bert_config.initializer_range,
-            layer_norm_eps=bert_config.layer_norm_eps,
-            seed=seed,
-            fp16=fp16,
-            pre_layer_norm=preln,
-            huggingface=huggingface,
-            local_rank=local_rank,
-            training=training)
-        new_module = deepspeed.DeepSpeedTransformerLayer(transformer_config)
+    mp_replace = ReplaceWithTensorSlicing(mp_group=mp_group,
+                                          mp_size=mp_size)  #, out_dim=0, in_dim=1)
 
+    def replace_with_policy(child,
+                            policy_cls,
+                            triangular_masking,
+                            inference=False,
+                            layer_id=0):
+        policy = policy_cls(child, inference=inference)
+        if not policy.cuda_graph_supported:
+            # policy says cuda graph is not supported raise an error if set
+            assert not enable_cuda_graph, "cuda graph is not supported with this model, please disable"
         if inference:
             hidden_size, num_attention_heads = policy.get_hidden_heads()
             assert num_attention_heads % mp_size == 0,\
@@ -460,7 +465,13 @@ def replace_transformer_layer(orig_layer_impl,
     def replace_wo_policy(module, all_reduce_linears):
         def _replace(child, name, conv_linear_layer):
             mp_replace = ReplaceWithTensorSlicing(mp_group=mp_group)
-            if name in all_reduce_linears:
+            z_inference = (len(list(child.parameters())) > 0) and (list(
+                child.parameters())[0].numel() == 0)
+            if z_inference:
+                weight_shape = child.weight.ds_shape
+            else:
+                weight_shape = child.weight.shape
+            if isinstance(all_reduce_linears, dict) and name in all_reduce_linears:
                 new_weight = torch.empty((
                     weight_shape[1] if conv_linear_layer else weight_shape[0],
                     (weight_shape[0] if conv_linear_layer else weight_shape[1]) //

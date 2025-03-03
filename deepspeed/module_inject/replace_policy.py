@@ -5,7 +5,21 @@ from torch.nn.parameter import Parameter
 
 
 class DSPolicy(ABC):
-    def __init__(self, inference=True, linear_layer=True, scale_attention=True):
+    # a static class variable containing the HuggingFace model configuration.
+    # see e.g., transformers.models.opt.configuration_opt.OPTConfig
+    hf_model_config = None
+
+    def __init__(
+        self,
+        inference=True,
+        linear_layer=True,
+        scale_attention=True,
+        megatron_v2=False,
+        # the type of activation function used in MLP
+        mlp_act_func_type=ActivationFuncType.GELU,
+        # applies layer norm before attention if `pre_attn_norm` is set to True
+        pre_attn_norm=True):
+        self.cuda_graph_supported = False
         self.inference = inference
         self.linear_layer = linear_layer
         self.scale_attention = scale_attention
@@ -47,7 +61,8 @@ class HFBertLayerPolicy(DSPolicy):
     def __init__(self, client_module, inference=False, preln=False):
         super().__init__(inference)
         self.client_module = client_module
-        self.preln = preln
+        self.cuda_graph_supported = True
+
         if HFBertLayerPolicy._orig_layer_class is None:
             try:
                 import transformers
