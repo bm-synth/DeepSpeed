@@ -3,7 +3,6 @@
 
 # DeepSpeed Team
 
-from collections import defaultdict
 from typing import Any, Dict, List, Set, Tuple, Union, cast
 
 import torch
@@ -31,8 +30,10 @@ def is_moe_param(param: torch.Tensor) -> bool:
 
 
 def split_params_into_shared_and_expert_params(
-        params: List[torch.nn.Parameter]) -> Tuple[torch.nn.Parameter, torch.nn.Parameter]:
-    shared_params, expert_params = [], []
+        params: List[torch.nn.Parameter]) -> Tuple[List[torch.nn.Parameter], List[torch.nn.Parameter]]:
+    shared_params: List[nn.Parameter] = []
+    expert_params: List[nn.Parameter] = []
+
     for p in params:
         if is_moe_param(p):
             expert_params.append(p)
@@ -42,7 +43,7 @@ def split_params_into_shared_and_expert_params(
 
 
 def split_params_grads_into_shared_and_expert_params(
-        group: List[torch.nn.Parameter]) -> Tuple[torch.nn.Parameter, torch.nn.Parameter]:
+        group: List[torch.nn.Parameter]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
     """Split grad of parameters into grads of non-expert params
     and grads of expert params. This is useful while computing
     grad-norms for clipping and overflow detection
@@ -67,8 +68,10 @@ def split_params_grads_into_shared_and_expert_params(
     return shared_grads, expert_grads
 
 
-def split_params_into_different_moe_groups_for_optimizer(param_groups: Tuple[Dict],
-                                                         max_group_size=178956971) -> Tuple[Dict]:
+def split_params_into_different_moe_groups_for_optimizer(param_groups: Union[Dict[str, Any], Tuple[Dict[str, Any],
+                                                                                                   ...],
+                                                                             List[Dict[str, Any]]],
+                                                         max_group_size: int = 178956971) -> List[Dict[str, Any]]:
     """Split parameters into different MoE groups for optimizer
 
     Args:
@@ -94,18 +97,18 @@ def split_params_into_different_moe_groups_for_optimizer(param_groups: Tuple[Dic
                 data_parallel_group_names.add(param.group_name)
 
     # Create the param MoE groups, leave param assign to next step
-    group_moe: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(lambda: defaultdict(dict))
+    group_moe: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for param_group in param_groups:
         for key in data_parallel_group_names:
             group_moe[param_group['name']][key] = {}
             group_moe[param_group['name']][key]['name'] = key
             group_moe[param_group['name']][key]['moe'] = True
+
             for ori_key in param_group.keys():
                 if ori_key != 'name':
-                    if ori_key == 'params':
-                        group_moe[param_group['name']][key][ori_key] = []
-                    else:
-                        group_moe[param_group['name']][key][ori_key] = param_group[ori_key]
+                    group_moe[param_group['name']][key][ori_key] = ([]
+                                                                    if ori_key == 'params' else param_group[ori_key])
+
     # Assign param
     for param_group in param_groups:
         new_params: List[nn.Parameter] = []
@@ -119,32 +122,11 @@ def split_params_into_different_moe_groups_for_optimizer(param_groups: Tuple[Dic
 
     # Flatten the moe groups
     if max_group_size is not None:
-        for k, v in group_moe.items():
-            for k1, v1 in v.items():
-                cur_group = []
-                all_groups = []
+        for moe_group in group_moe.values():
+            for param_group in moe_group.values():
+                cur_group: List[nn.Parameter] = []
+                all_groups: List[List[nn.Parameter]] = []
                 size_of_cur_group = 0
-                for param in v1['params']:
-                    if size_of_cur_group + param.numel() <= max_group_size:
-                        cur_group.append(param)
-                        size_of_cur_group += param.numel()
-                    else:
-                        all_groups.append(cur_group)
-                        cur_group = [param]
-                        size_of_cur_group = param.numel()
-                if cur_group:
-                    all_groups.append(cur_group)
-                for group in all_groups:
-                    new_dict = {}
-                    for key, val in v1.items():
-                        if key != 'params':
-                            new_dict[key] = val
-                    new_dict['params'] = group
-                    param_groups.append(new_dict)
-    else:
-        for k, v in group_moe.items():
-            for k1, v1 in v.items():
-                param_groups.append(v1)
 
                 for param in cast(List[nn.Parameter], param_group['params']):
                     if size_of_cur_group + param.numel() <= max_group_size:
@@ -159,44 +141,12 @@ def split_params_into_different_moe_groups_for_optimizer(param_groups: Tuple[Dic
                     all_groups.append(cur_group)
 
                 for group in all_groups:
-                    param_groups.append({**param_group, 'params': group})
+                    new_dict = dict(param_group)
+                    new_dict['params'] = group
+                    param_groups.append(new_dict)
     else:
         for moe_group in group_moe.values():
             for param_group in moe_group.values():
                 param_groups.append(param_group)
 
     return param_groups
-
-
-def is_moe_param_group(param_group):
-    return param_group.get('moe', False)
-
-
-def configure_moe_param_groups(model_parameters: List):
-    assert isinstance(model_parameters, list), "model_parameters must be a list"
-
-    for p in model_parameters:
-        # match torch.optim.Optimizer expectations,
-        # see: https://github.com/pytorch/pytorch/blob/2ffab6e663b9c6951048b8c8ba82d2cc5ca5c2fc/torch/optim/optimizer.py#L270-L272
-        if not isinstance(p, (torch.Tensor, dict)):
-            raise TypeError("param argument that would be given to the optimizer should be "
-                            f"an iterable of Tensors or dicts, but got {type(p)}")
-
-    # peak at the first element to determine how to proceed
-    first = model_parameters[0]
-
-    # Case 1: model_parameters is a list of torch.nn.Parameter
-    #   -> need to create moe compatible param groups
-    if isinstance(first, torch.nn.Parameter):
-        param_group = {'params': model_parameters, 'name': 'dense-params'}
-        return split_params_into_different_moe_groups_for_optimizer(param_group)
-
-    # Case 2: model_parameters is a list of param groups List[dict]
-    #   -> moe compatible param groups might already exist, if not create them
-    elif isinstance(first, dict):
-        #there are no moe groups created
-        if not any(['moe' in param_group for param_group in model_parameters]):
-            return split_params_into_different_moe_groups_for_optimizer(model_parameters)
-        else:
-            # moe groups exist, nothing to do
-            return model_parameters

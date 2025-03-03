@@ -10,12 +10,12 @@ import torch
 from torch import nn
 
 
-class Experts(torch.nn.Module):
+class Experts(nn.Module):
 
-    def __init__(self, expert, num_local_experts=1, expert_group_name=None):
+    def __init__(self, expert: nn.Module, num_local_experts: int = 1, expert_group_name: Optional[str] = None) -> None:
         super(Experts, self).__init__()
 
-        self.deepspeed_experts = torch.nn.ModuleList([copy.deepcopy(expert) for i in range(num_local_experts)])
+        self.deepspeed_experts = nn.ModuleList([copy.deepcopy(expert) for _ in range(num_local_experts)])
         self.num_local_experts = num_local_experts
 
         # TODO: revisit allreduce for moe.gate...
