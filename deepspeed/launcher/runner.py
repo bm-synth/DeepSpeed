@@ -41,7 +41,8 @@ EXCLUDE_ENVS = {'AISC_JOB_NAME': ['NCCL_IB_HCA', 'UCX_NET_DEVICES']}
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(description="DeepSpeed runner to help launch distributed "
-                                     "multi-node/multi-gpu training jobs.")
+                                     "multi-node/multi-gpu training jobs.",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument("-H",
                         "--hostfile",
