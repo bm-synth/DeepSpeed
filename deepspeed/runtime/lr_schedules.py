@@ -356,11 +356,16 @@ class LRRangeTest(object):
         assert getattr(self, '_last_lr', None) is not None, "need to call step() first"
         return self._last_lr
 
+    def _update_optimizer(self, group_lrs):
+        for param_group, lr in zip(self.optimizer.param_groups, group_lrs):
+            param_group['lr'] = lr
+
     def step(self, batch_iteration=None):
         if batch_iteration is None:
             batch_iteration = self.last_batch_iteration + 1
         self.last_batch_iteration = batch_iteration
-        self._last_lr = update_lr(self.optimizer.param_groups, self.get_lr())
+        self._update_optimizer(self.get_lr())
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
     def state_dict(self):
         return {'last_batch_iteration': self.last_batch_iteration}
@@ -607,6 +612,12 @@ class OneCycle(object):
         assert getattr(self, '_last_lr', None) is not None, "need to call step() first"
         return self._last_lr
 
+    def get_last_lr(self):
+        """ Return last computed learning rate by current scheduler.
+        """
+        assert getattr(self, '_last_lr', None) is not None, "need to call step() first"
+        return self._last_lr
+
     def step(self, batch_iteration=None):
         """ Updates the optimizer with the learning rate for the last batch index.
         `self.last_batch_iteration` is treated as the last batch index.
@@ -617,12 +628,9 @@ class OneCycle(object):
             batch_iteration = self.last_batch_iteration + 1
 
         self.last_batch_iteration = batch_iteration
-        self._last_lr = update_lr(self.optimizer.param_groups, self.get_lr())
-
-        if self.cycle_momentum:
-            momentums = self.get_mom()
-            for param_group, momentum in zip(self.optimizer.param_groups, momentums):
-                param_group['betas'] = momentum
+        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+            param_group['lr'] = lr
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
     def state_dict(self):
         return {'last_batch_iteration': self.last_batch_iteration}
@@ -692,11 +700,19 @@ class WarmupLR(object):
         assert getattr(self, '_last_lr', None) is not None, "need to call step() first"
         return self._last_lr
 
+    def get_last_lr(self):
+        """ Return last computed learning rate by current scheduler.
+        """
+        assert getattr(self, '_last_lr', None) is not None, "need to call step() first"
+        return self._last_lr
+
     def step(self, last_batch_iteration=None):
         if last_batch_iteration is None:
             last_batch_iteration = self.last_batch_iteration + 1
         self.last_batch_iteration = last_batch_iteration
-        self._last_lr = update_lr(self.optimizer.param_groups, self.get_lr())
+        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+            param_group['lr'] = lr
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
     def state_dict(self):
         return {'last_batch_iteration': self.last_batch_iteration}
