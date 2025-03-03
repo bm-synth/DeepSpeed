@@ -319,22 +319,15 @@ empty_buffers = {}
 # Inserts _post_init_method at the end of init method
 # for all sub classes of torch.nn.Module
 class InsertPostInitMethodToModuleSubClasses(object):
-    num_module_parameters = 0
-    num_module_elements = 0
-
-    def __init__(self, enabled=True, mem_efficient_linear=True, ds_config=None, dtype=None):
+    def __init__(self,
+                 enabled=True,
+                 mem_efficient_linear=True,
+                 ds_config=None,
+                 dtype=None):
         self.mem_efficient_linear = mem_efficient_linear
         self.enabled = enabled
         self._set_dtype(ds_config, dtype)
-        assert self.dtype in [
-            torch.half, torch.bfloat16, torch.float
-        ], f"Invalid data type {self.dtype}, allowed values are [torch.half, torch.bfloat16, torch.float]"
-        self.wrapped_cls = set()
-        self.skip_init_depth = 0
-
-        self.quantized_initialization = None
-        if ds_config is not None and ds_config.weight_quantization_config and ds_config.weight_quantization_config.quantized_initialization:
-            self.quantized_initialization = ds_config.weight_quantization_config.quantized_initialization
+        assert self.dtype in [torch.half, torch.float], f"Invalid data type {self.dtype}, allowed values are [torch.half, torch.float]"
 
     def __enter__(self):
         if not self.enabled:
@@ -407,15 +400,9 @@ class InsertPostInitMethodToModuleSubClasses(object):
 
     def _set_dtype(self, ds_config, dtype):
         if ds_config is not None and dtype is None:
-            if ds_config.bfloat16_enabled and ds_config.fp16_enabled:
-                raise RuntimeError("bfloat16 and fp16 cannot be enabled at once")
-
-            if ds_config.bfloat16_enabled:
-                self.dtype = torch.bfloat16
-            elif ds_config.fp16_enabled:
-                self.dtype = torch.half
-            else:
-                self.dtype = torch.float
+            self.dtype = torch.half if ds_config.fp16_enabled else torch.float
+        elif dtype is None:
+            self.dtype = torch.half
         else:
             self.dtype = dtype or torch.float16 if get_accelerator().is_fp16_supported(
             ) else torch.bfloat16 if get_accelerator().is_bf16_supported else torch.float32
@@ -885,9 +872,11 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                  mem_efficient_linear=True,
                  remote_device=None,
                  pin_memory=False,
+                 config_dict_or_path=None,
                  config=None,
                  enabled=True,
-                 dtype=None):
+                 dtype=None,
+                 mpu=None):
         """A context to enable massive model construction for training with
         ZeRO-3. Models are automatically partitioned (or, sharded) across the
         system and converted to half precision.
@@ -909,8 +898,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 defined, otherwise GPU.
             pin_memory (bool, optional): Potentially increase performance by
                 using pinned memory for model weights. ``remote_device`` must be
-                ``"cpu"``. Defaults to pin_memory value in config, otherwise ``False``.
-            config_dict_or_path (dict or ``json file``, optional): If provided, provides configuration
+                ``"cpu"``. Defaults to ``False``.
+            config_dict_or_path (dict or ``json file``, optional): If provided, provides configuration.
+            config (``json file`` or dict, optional): If provided, provides configuration
                 for swapping fp16 params to NVMe.
             param_dict (dict, optional): Instead of requiring a deepspeed_config you can pass your deepspeed config
                 as a dictionary instead for swapping fp16 params to NVMe.
@@ -918,6 +908,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 effect. Defaults to ``True``.
             dtype (``dtype``, optional): Can be used to change the data type of the parameters.
                 Supported options are ``torch.half`` and ``torch.float``. Defaults to ``None``
+            mpu (``object``, optional): A model parallelism unit object that implements get_{model,data}_parallel_{rank,group,wolrd_size}.
 
         This context accelerates model initialization and enables models that
         are too large to allocate in their entirety in CPU memory. It has the
@@ -983,17 +974,13 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
                 model = deepspeed.zero.Init(module=model)
         """
-        if config is not None:
-            config_dict_or_path = config
-            logger.warning(
-                f"zero.Init: the 'config' argument is deprecated. Please use 'config_dict_or_path' instead.")
-        _ds_config = deepspeed.runtime.config.DeepSpeedConfig(config_dict_or_path,
-                                                              mpu) if config_dict_or_path is not None else None
-        if _ds_config is not None:
-            mem_efficient_linear = _ds_config.zero_config.memory_efficient_linear
-
-        super().__init__(enabled=enabled, mem_efficient_linear=mem_efficient_linear, ds_config=_ds_config, dtype=dtype)
-        if not dist.is_initialized():
+        _ds_config = DeepSpeedConfig(config_dict_or_path,
+                                     mpu) if config_dict_or_path is not None else None
+        super().__init__(enabled=enabled,
+                         mem_efficient_linear=mem_efficient_linear,
+                         ds_config=_ds_config,
+                         dtype=dtype)
+        if not torch.distributed.is_initialized():
             init_distributed()
             assert dist.is_initialized(), "Parameters cannot be scattered without initializing deepspeed.comm"
 
@@ -1014,7 +1001,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         self.rank = dist.get_rank(group=self.ds_process_group)
         self.dp_world_size = dist.get_world_size(group=self.ds_process_group)
 
-        self._validate_remote_device(remote_device, deepspeed_config, param_dict)
+        self._validate_remote_device(remote_device, _ds_config)
 
         self.num_ranks_in_param_group = self.dp_world_size
         self.rank_in_group = self.rank
@@ -1107,20 +1094,19 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
     def _validate_remote_device(self, remote_device, ds_config, param_dict):
         if ds_config is not None:
-            _ds_config = DeepSpeedConfig(ds_config, param_dict=param_dict)
             if remote_device in [None, OFFLOAD_CPU_DEVICE]:
-                if _ds_config.zero_config.offload_param is not None:
-                    offload_param_device = _ds_config.zero_config.offload_param[
+                if ds_config.zero_config.offload_param is not None:
+                    offload_param_device = ds_config.zero_config.offload_param[
                         OFFLOAD_PARAM_DEVICE]
                     assert offload_param_device != OFFLOAD_NVME_DEVICE, \
                     f"{OFFLOAD_PARAM_DEVICE} in DeepSpeed Config cannot be {offload_param_device} if remote device is {remote_device}."
 
-            if remote_device == OffloadDeviceEnum.nvme:
+            if remote_device == OFFLOAD_NVME_DEVICE:
                 assert ds_config.zero_config.offload_param is not None, \
-                f'"offload_param" must be defined in DeepSpeed Config if remote device is {OffloadDeviceEnum.nvme}.'
+                f'{OFFLOAD_PARAM} must be defined in DeepSpeed Config if remote device is {OFFLOAD_NVME_DEVICE}.'
 
-                assert ds_config.zero_config.offload_param.nvme_path is not None, \
-                f'"nvme_path" in DeepSpeed Config cannot be None if remote device is {OffloadDeviceEnum.nvme}'
+                assert ds_config.zero_config.offload_param[OFFLOAD_PARAM_NVME_PATH] is not None, \
+                f'{OFFLOAD_PARAM_NVME_PATH} in DeepSpeed Config cannot be None if remote device is {OFFLOAD_NVME_DEVICE}'
 
     def _post_init_method(self, module):
         #see_memory_usage(f"Before converting params in {module.__class__.__name__}", force=False)
