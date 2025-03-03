@@ -243,7 +243,7 @@ class DeepSpeedZeRoOffload(object):
         self.module.register_forward_pre_hook(_start_of_forward_hook)
 
         #likely one of them should be enough but just to be safe
-        self._register_hooks_recursively(self.module)
+        self._register_deepspeed_module(self.module)
 
         # Add top module to stack trace
         global FWD_MODULE_STACK
