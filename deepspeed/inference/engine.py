@@ -586,7 +586,6 @@ class InferenceEngine(Module):
 
             self.module.load_state_dict(
                 state_dict=checkpoint[self._choose_module_key(checkpoint)],
-                checkpoint_engine=self.checkpoint_engine,
                 strict=load_module_strict)
 
     def _choose_module_key(self, sd):
