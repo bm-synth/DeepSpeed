@@ -73,6 +73,9 @@ def set_accelerator_visible():
                 match = re.search('Device Type.*GPU', line)
                 if match:
                     num_accelerators += 1
+        elif get_accelerator().device_name() == 'npu':
+            npu_smi = subprocess.check_output(['npu-smi', 'info', '-l'])
+            num_accelerators = int(npu_smi.decode('utf-8').strip().split('\n')[0].split(':')[1].strip())
         else:
             assert get_accelerator().device_name() == 'cpu'
             cpu_sockets = int(
@@ -249,15 +252,20 @@ class DistributedTest(ABC):
 
             deepspeed.init_distributed(dist_backend=backend)
 
-            if torch.cuda.is_available():
-                torch.cuda.set_device(local_rank)
+            if get_accelerator().is_available():
+                get_accelerator().set_device(local_rank)
 
-            run_func(*func_args, **func_kwargs)
+            if self.init_distributed:
+                deepspeed.init_distributed(dist_backend=self.backend)
+                dist.barrier()
 
-            # make sure all ranks finish at the same time
-            torch.distributed.barrier()
-            # tear down after test completes
-            torch.distributed.destroy_process_group()
+        try:
+            self.run(**self._fixture_kwargs)
+        except BaseException as e:
+            if isinstance(e, Skipped):
+                skip_msg = e.msg
+            else:
+                raise e
 
         def dist_launcher(num_procs, *func_args, **func_kwargs):
             """Launch processes and gracefully handle failures. """
