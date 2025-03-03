@@ -139,26 +139,31 @@ def human_readable_size(size):
 def debug_report():
     max_dots = 33
 
-    report = [("torch install path", torch.__path__), ("torch version", torch.__version__),
-              ("deepspeed install path", deepspeed.__path__),
-              ("deepspeed info", f"{deepspeed.__version__}, {deepspeed.__git_hash__}, {deepspeed.__git_branch__}")]
-    if get_accelerator().device_name() == 'cuda':
-        hip_version = getattr(torch.version, "hip", None)
-        report.extend([("torch cuda version", torch.version.cuda), ("torch hip version", hip_version),
-                       ("nvcc version", (None if hip_version else nvcc_version())),
-                       ("deepspeed wheel compiled w.", f"torch {torch_info['version']}, " +
-                        (f"hip {torch_info['hip_version']}" if hip_version else f"cuda {torch_info['cuda_version']}"))
-                       ])
-    elif get_accelerator().device_name() == 'npu':
-        import torch_npu
-        report.extend([("deepspeed wheel compiled w.", f"torch {torch_info['version']}"),
-                       ("torch_npu install path", torch_npu.__path__), ("torch_npu version", torch_npu.__version__),
-                       ("ascend_cann version", installed_cann_version())])
-    else:
-        report.extend([("deepspeed wheel compiled w.", f"torch {torch_info['version']} ")])
+    hip_version = None
+    if hasattr(torch.version, 'hip'):
+        hip_version = torch.version.hip
 
-    report.append(("shared memory (/dev/shm) size", get_shm_size()))
-
+    report = [
+        ("torch install path",
+         torch.__path__),
+        ("torch version",
+         torch.__version__),
+        ("torch cuda version",
+         torch.version.cuda),
+        ("torch hip version",
+         hip_version),
+        ("nvcc version",
+         (None if hip_version else nvcc_version())),
+        ("deepspeed install path",
+         deepspeed.__path__),
+        ("deepspeed info",
+         f"{deepspeed.__version__}, {deepspeed.__git_hash__}, {deepspeed.__git_branch__}"
+         ),
+        ("deepspeed wheel compiled w.",
+         f"torch {torch_info['version']}, " +
+         (f"hip {torch_info['hip_version']}"
+          if hip_version else f"cuda {torch_info['cuda_version']}")),
+    ]
     print("DeepSpeed general environment info:")
     for name, value in report:
         warns = []
