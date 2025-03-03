@@ -163,17 +163,17 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.params_in_nvme_and_cpu = False
         self.max_params_in_cpu = 0
 
-        self.parameter_offload = DeepSpeedZeRoOffload(module=module,
-                                                      timers=timers,
-                                                      ds_config=ds_config,
-                                                      overlap_comm=overlap_comm,
-                                                      prefetch_bucket_size=prefetch_bucket_size,
-                                                      max_reuse_distance=max_reuse_distance,
-                                                      max_live_parameters=max_live_parameters,
-                                                      param_persistence_threshold=param_persistence_threshold,
-                                                      model_persistence_threshold=model_persistence_threshold,
-                                                      offload_param_config=offload_optimizer_config,
-                                                      mpu=mpu)
+        self.parameter_offload = self.initialize_ds_offload(module=module,
+                                                            timers=timers,
+                                                            ds_config=ds_config,
+                                                            overlap_comm=overlap_comm,
+                                                            prefetch_bucket_size=prefetch_bucket_size,
+                                                            max_reuse_distance=max_reuse_distance,
+                                                            max_live_parameters=max_live_parameters,
+                                                            param_persistence_threshold=param_persistence_threshold,
+                                                            model_persistence_threshold=model_persistence_threshold,
+                                                            offload_optimizer_config=offload_optimizer_config,
+                                                            mpu=mpu)
 
         self.persistent_parameters = self.parameter_offload.persistent_parameters
         self._configure_offloading(offload_optimizer_config, offload_param_config)
@@ -182,21 +182,21 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.elastic_checkpoint = elastic_checkpoint
         self.overlap_comm = overlap_comm
 
-        self.__inf_or_nan_tracker: Tensor = torch.zeros(1,
-                                                        dtype=torch.bool,
-                                                        device=get_accelerator().current_device_name(),
-                                                        requires_grad=False)
+        self.inf_or_nan_tracker: Tensor = torch.zeros(1,
+                                                      dtype=torch.bool,
+                                                      device=get_accelerator().current_device_name(),
+                                                      requires_grad=False)
 
         self.deepspeed_adam_offload = (self.offload_optimizer and type(init_optimizer) == DeepSpeedCPUAdam)
 
         self.device = get_accelerator().current_device_name() if not self.offload_optimizer else OffloadDeviceEnum.cpu
         ### streams used for overlapping computation with communication
-        self.__reduce_and_partition_stream = get_accelerator().Stream() if overlap_comm else get_accelerator(
+        self.reduce_and_partition_stream = get_accelerator().Stream() if overlap_comm else get_accelerator(
         ).default_stream()
 
         ############################################################################
 
-        self.__n_caching_allocator_flushes = 0
+        self.n_caching_allocator_flushes = 0
 
         #-------------Stage 3 Setup-------------------#
 
@@ -278,12 +278,12 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         if self.swap_optimizer:
             self._configure_tensor_swapping(offload_optimizer_config, aio_config)
 
-        self.__params_in_ipg_bucket: List[Parameter] = []
+        self.params_in_ipg_bucket = []
         self.is_gradient_accumulation_boundary: bool = True
 
-        self.__param_reduce_events: Deque[get_accelerator().Event] = collections.deque()
+        self.param_reduce_events: Deque[get_accelerator().Event] = collections.deque()
         # TODO. make this configurable via JSON
-        self.__max_param_reduce_events: int = 2
+        self.max_param_reduce_events: int = 2
 
         self.param_dict = {}
 
@@ -357,6 +357,32 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
     def destroy(self):
         self.parameter_offload.destroy()
+
+    def initialize_ds_offload(
+        self,
+        module,
+        timers,
+        ds_config,
+        overlap_comm,
+        prefetch_bucket_size,
+        max_reuse_distance,
+        max_live_parameters,
+        param_persistence_threshold,
+        model_persistence_threshold,
+        offload_optimizer_config,
+        mpu,
+    ):
+        return DeepSpeedZeRoOffload(module=module,
+                                    timers=timers,
+                                    ds_config=ds_config,
+                                    overlap_comm=overlap_comm,
+                                    prefetch_bucket_size=prefetch_bucket_size,
+                                    max_reuse_distance=max_reuse_distance,
+                                    max_live_parameters=max_live_parameters,
+                                    param_persistence_threshold=param_persistence_threshold,
+                                    model_persistence_threshold=model_persistence_threshold,
+                                    offload_param_config=offload_optimizer_config,
+                                    mpu=mpu)
 
     def _get_trainable_parameter_groups(self):
         param_groups = []
@@ -494,6 +520,10 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                                               device=self.device,
                                               dtype=torch.float32,
                                               timers=self.timers)
+
+    @property
+    def elements_in_ipg_bucket(self):
+        return sum(p.ds_numel for p in self.params_in_ipg_bucket)
 
     def _move_to_flat_buffer(self, param_list, flat_buffer, avoid_copy=False):
         '''If flat buffer is None then the parameters in the param_list are
@@ -949,11 +979,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         self.reduce_ipg_grads()
         self.report_ipg_memory_usage(f"In ipg_epilogue after reduce_ipg_grads", 0)
 
-        if self.overlap_comm:
-            self.reduction_stream.synchronize()
-
-        with torch.cuda.stream(self.reduction_stream):
-            self.partition_previous_reduced_grads()
+        self.reduce_and_partition_stream.synchronize()
 
         # if dist.get_rank() == 0:
         #    logger.info("Params already reduced %s", self.params_already_reduced)
@@ -1125,11 +1151,11 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
     @instrument_w_nvtx
     @torch.no_grad()
     def __add_grad_to_ipg_bucket(self, param: Parameter) -> None:
-        self.__reduce_and_partition_stream.wait_stream(get_accelerator().default_stream())
+        self.reduce_and_partition_stream.wait_stream(get_accelerator().default_stream())
 
         if self.contiguous_gradients and self.elements_in_ipg_bucket + param.grad.numel() < self.reduce_bucket_size:
             # move the gradient to a contiguous buffer
-            with get_accelerator().stream(self.__reduce_and_partition_stream):
+            with get_accelerator().stream(self.reduce_and_partition_stream):
                 # move the parameter's gradient to the contiguous flat buffer
                 new_grad_tensor = self.__ipg_bucket_flat_buffer.narrow(0, self.elements_in_ipg_bucket,
                                                                        param.grad.numel()).view_as(param.grad)
@@ -1137,44 +1163,40 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 param.grad.record_stream(get_accelerator().current_stream())
                 param.grad.data = new_grad_tensor
 
-    def gradient_reduction_w_predivide(self, tensor):
-        dp_world_size = dist.get_world_size(group=self.dp_process_group)
+        self.params_in_ipg_bucket.append(param)
 
-        tensor_to_allreduce = tensor
+    @instrument_w_nvtx
+    @torch.no_grad()
+    def __reduce_and_partition_ipg_grads(self, safe_mode: bool = False) -> None:
+        if not self.params_in_ipg_bucket:
+            return
 
-        for param in self.__params_in_ipg_bucket:
+        for param in self.params_in_ipg_bucket:
             if param.grad.numel() != param.ds_numel:
                 raise RuntimeError(f"{param.grad.numel()} != {param.ds_numel} Cannot reduce scatter "
                                    f"gradients whose size is not same as the params")
 
-        if self.postscale_gradients:
-            if self.gradient_predivide_factor != 1.0:
-                tensor_to_allreduce.mul_(1. / self.gradient_predivide_factor)
+        self.params_in_ipg_bucket.sort(key=lambda p: p.ds_id)
 
-        assert len(set(p.ds_id for p in self.__params_in_ipg_bucket)) == len(self.__params_in_ipg_bucket)
+        assert len(set(p.ds_id for p in self.params_in_ipg_bucket)) == len(self.params_in_ipg_bucket)
 
-            if self.gradient_predivide_factor != dp_world_size:
-                tensor_to_allreduce.mul_(self.gradient_predivide_factor / dp_world_size)
-        else:
-            tensor_to_allreduce.div_(dp_world_size)
-            dist.all_reduce(tensor_to_allreduce, group=self.dp_process_group)
+        while self.param_reduce_events and self.param_reduce_events[0].query():
+            self.param_reduce_events.popleft()
+        if len(self.param_reduce_events) > self.max_param_reduce_events:
+            self.param_reduce_events.popleft().synchronize()
 
-        with get_accelerator().stream(self.__reduce_and_partition_stream):
+        with get_accelerator().stream(self.reduce_and_partition_stream):
             if safe_mode:
-                assert_ints_same_as_other_ranks([p.ds_id for p in self.__params_in_ipg_bucket])
+                assert_ints_same_as_other_ranks([p.ds_id for p in self.params_in_ipg_bucket])
 
-        return tensor
+            grad_partitions = self.__avg_scatter_grads(self.params_in_ipg_bucket)
+            self.partition_grads(self.params_in_ipg_bucket, grad_partitions)
 
-    def average_tensor(self, tensors, params_to_reduce):
-        with torch.cuda.stream(self.reduction_stream):
-            if not self.reduce_scatter:
-                for tensor in tensors:
-                    self.gradient_reduction_w_predivide(tensor)
-                return
+            self.params_in_ipg_bucket.clear()
 
             event = get_accelerator().Event()
             event.record()
-            self.__param_reduce_events.append(event)
+            self.param_reduce_events.append(event)
 
     @instrument_w_nvtx
     def __avg_scatter_grads(self, params_to_reduce: List[Parameter]) -> List[Tensor]:
@@ -1283,9 +1305,10 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         return total_norm
 
     @instrument_w_nvtx
-    def __partition_grads(self, params_to_release: List[Parameter], grad_partitions: List[Tensor]) -> None:
+    def partition_grads(self, params_to_release: List[Parameter], grad_partitions: List[Tensor]) -> None:
         offload_fp32_gradients = {}
         offload_fp32_offsets = {}
+        buffers = []
         for param, grad_partition in zip(params_to_release, grad_partitions):
 
             contains_real_data = param.partition_numel() * dist.get_rank(self.dp_process_group) < param.ds_numel
@@ -1296,6 +1319,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
             # move or accumulate gradient partition to target buffer
             grad_buffer = self.__param_id_to_grad_partition[param.ds_id].narrow(0, 0, grad_partition.numel())
+            buffers.append(grad_buffer)
             if self.micro_step_id == 0:  # don't accumulate
                 grad_buffer.copy_(grad_partition, non_blocking=True)
                 # ensure grad buffer is a CUDA buffer to speed up the next few
@@ -1313,8 +1337,14 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 # operations and so it can be used asynchronously
                 grad_buffer = cuda_grad_buffer
 
-        if allocate_grads_in_partition:
-            self.grads_in_partition = []
+            if hasattr(self.inf_or_nan_tracker, "logical_or_"):
+                self.inf_or_nan_tracker.logical_or_(torch.isinf(grad_buffer).any())
+                self.inf_or_nan_tracker.logical_or_(torch.isnan(grad_buffer).any())
+            else:
+                # logical_or_ not available in older versions of pytorch
+                self.inf_or_nan_tracker += torch.isinf(grad_buffer).any()
+                self.inf_or_nan_tracker += torch.isnan(grad_buffer).any()
+                self.inf_or_nan_tracker = self.inf_or_nan_tracker > 0
 
             # offload the gradient partition if applicable
             if self.offload_optimizer:
@@ -1343,6 +1373,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                 self.optimizer_swapper.swap_out_gradients(parameter=self.fp32_partitioned_groups_flat[i],
                                                           gradient_offsets=offload_fp32_offsets[i],
                                                           gradient_tensors=offload_fp32_gradients[i])
+        return buffers
 
     def reduce_ready_partitions_and_remove_grads(self, param, i):
         #print_rank_0(f"Backward {debug_param2name_id_shape(param)}", force=True)
@@ -1911,7 +1942,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         # warn user about caching allocator flushes
         memory_stats = get_accelerator().memory_stats()
         alloc_retries = memory_stats["num_alloc_retries"] if memory_stats != None else 0
-        if alloc_retries > self.__n_caching_allocator_flushes:
+        if alloc_retries > self.n_caching_allocator_flushes:
             if dist.get_rank() == 0:
                 logger.warning(
                     "%d pytorch allocator cache flushes since last step. this happens "
@@ -1921,8 +1952,8 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
                     "make the cache flushes go away consider adding "
                     "get_accelerator().empty_cache() calls in your training loop to ensure "
                     "that all ranks flush their caches at the same time",
-                    alloc_retries - self.__n_caching_allocator_flushes)
-            self.__n_caching_allocator_flushes = alloc_retries
+                    alloc_retries - self.n_caching_allocator_flushes)
+            self.n_caching_allocator_flushes = alloc_retries
 
     def dump_pre_step_gradients(self, debug_fp32_grads):
         # Dump gradient norms for debugging
@@ -1990,9 +2021,9 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
 
     def has_overflow(self, partition_gradients=True):
         if partition_gradients:
-            with get_accelerator().stream(self.__reduce_and_partition_stream):
-                self.local_overflow = bool(self.__inf_or_nan_tracker.item())
-                self.__inf_or_nan_tracker.zero_()
+            with get_accelerator().stream(self.reduce_and_partition_stream):
+                self.local_overflow = bool(self.inf_or_nan_tracker.item())
+                self.inf_or_nan_tracker.zero_()
 
             overflow = self.local_overflow if self.offload_optimizer else self.has_overflow_partitioned_grads_serial(
             )
@@ -2086,7 +2117,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         """get fp32 gradient partition dictionary
         accessed as grad_dict[parameter_group_index][parameter_index]
         """
-        self.__reduce_and_partition_stream.synchronize()
+        self.reduce_and_partition_stream.synchronize()
         grad_dict = collections.defaultdict(dict)
         if self.offload_optimizer:
             for group in self.fp16_groups:
@@ -2120,7 +2151,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         if not param.requires_grad:
             return None
 
-        self.__reduce_and_partition_stream.synchronize()
+        self.reduce_and_partition_stream.synchronize()
 
         if self.offload_optimizer:
             group_idx, dest_offset, num_elements = self.grad_position[self.get_param_id(param)]
@@ -2135,7 +2166,7 @@ class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
         if not param.requires_grad:
             return None
 
-        self.__reduce_and_partition_stream.synchronize()
+        self.reduce_and_partition_stream.synchronize()
         group_idx, dest_offset, num_elements = self.grad_position[self.get_param_id(param)]
 
         if self._swappable_optimizer_subgroup(group_idx):

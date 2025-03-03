@@ -1480,6 +1480,8 @@ class DeepSpeedEngine(Module):
 
     def _configure_zero_optimizer(self, optimizer):
         zero_stage = self.zero_optimization_stage()
+        mics_shard_size = self.mics_shard_size()
+
         model_dtype, grad_accum_dtype = self.get_data_types()
         timers = self.timers if self.wall_clock_breakdown() else None
 
@@ -1566,6 +1568,14 @@ class DeepSpeedEngine(Module):
                                                  offload_param_config=self.zero_offload_param(),
                                                  mpu=self.mpu)
             else:
+                log_dist(
+                    f'Creating fp16 ZeRO stage {zero_stage} optimizer,'
+                    f' MiCS is enabled {mics_shard_size>0},'
+                    f' Hierarchical params gather {self._config.mics_hierarchial_params_gather}',
+                    ranks=[0])
+                if mics_shard_size > 0:
+                    return self._return_mics_optimizer(optimizer, timers)
+
                 log_dist(f'Creating {model_dtype} ZeRO stage {zero_stage} optimizer', ranks=[0])
                 from deepspeed.runtime.zero.stage3 import DeepSpeedZeroOptimizer_Stage3
                 optimizer = DeepSpeedZeroOptimizer_Stage3(
@@ -1604,7 +1614,6 @@ class DeepSpeedEngine(Module):
 
     def _return_mics_optimizer(self, basic_optimizer, timers):
         from deepspeed.runtime.zero.mics import MiCS_Optimizer
-        model_dtype, gradient_accumulation_dtype = self.get_data_types()
         optimizer = MiCS_Optimizer(self.module,
                                    basic_optimizer,
                                    timers=timers,
@@ -1620,7 +1629,7 @@ class DeepSpeedEngine(Module):
                                    max_live_parameters=self.zero_max_live_parameters(),
                                    param_persistence_threshold=self.zero_param_persistence_threshold(),
                                    model_persistence_threshold=self.zero_model_persistence_threshold(),
-                                   dp_process_group=self.seq_data_parallel_group,
+                                   dp_process_group=self.data_parallel_group,
                                    reduce_scatter=self.zero_reduce_scatter(),
                                    overlap_comm=self.zero_overlap_comm(),
                                    offload_optimizer_config=self.zero_offload_optimizer(),
@@ -1631,7 +1640,6 @@ class DeepSpeedEngine(Module):
                                    gradient_predivide_factor=self.gradient_predivide_factor(),
                                    gradient_accumulation_steps=self.gradient_accumulation_steps(),
                                    aio_config=self.aio_config(),
-                                   gradient_accumulation_dtype=gradient_accumulation_dtype,
                                    communication_data_type=self.communication_data_type)
         return optimizer
 

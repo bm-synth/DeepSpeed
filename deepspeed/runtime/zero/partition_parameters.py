@@ -633,17 +633,12 @@ class AllGatherHandle:
         if param.ds_status != ZeroParamStatus.INFLIGHT:
             raise RuntimeError(f"expected param {param.ds_summary()} to be available")
 
-        self.__handle = handle
-        self.__param = param
-        self.__quantization = quantization
+        self.handle = handle
+        self.param = param
 
-    def wait(self, handle_dependency=True) -> None:
-        instrument_w_nvtx(self.__handle.wait)()
-        if self.__quantization:
-            instrument_w_nvtx(self.__quantization.quant_handle.wait)()
-            self.__param.data = self.__quantization.backend.dequantize(
-                self.__quantization.quantized_param, self.__quantization.scale_buffer).to(self.__param.device)
-        self.__param.ds_status = ZeroParamStatus.AVAILABLE
+    def wait(self) -> None:
+        instrument_w_nvtx(self.handle.wait)()
+        self.param.ds_status = ZeroParamStatus.AVAILABLE
 
 
 class AllGatherCoalescedHandle:
@@ -657,83 +652,12 @@ class AllGatherCoalescedHandle:
         use_secondary_tensor=False,
         quantization=None,
     ) -> None:
+        # renaming the fields without double underscore to ease
+        # the class inheritance
         self.allgather_handle = allgather_handle
         self.params = params
         self.partitions = partitions
         self.world_size = world_size
-        self.use_secondary_tensor = use_secondary_tensor
-        self.complete = False
-        self.quantization = quantization
-
-        for param in self.params:
-            if param.ds_status != ZeroParamStatus.INFLIGHT:
-                raise RuntimeError(f"expected param {param.ds_summary()} to not be available")
-
-    @instrument_w_nvtx
-    def wait(self, handle_dependency=True) -> None:
-        if self.complete:
-            return
-
-        instrument_w_nvtx(self.allgather_handle.wait)()
-
-        if self.quantization:
-            instrument_w_nvtx(self.quantization.quant_handle.wait)()
-            flat_tensor = self.quantization.backend.dequantize(
-                self.quantization.quantized_param, self.quantization.scale_buffer).to(self.params[0].device)
-
-            self.partitions: List[Parameter] = []
-            for i in range(self.world_size):
-                self.partitions.append(
-                    flat_tensor.narrow(0, self.quantization.partition_sz * i, self.quantization.partition_sz))
-
-        # split the single tensor out into individual tensors
-        param_offset = 0
-        for param in self.params:
-            assert param.ds_status == ZeroParamStatus.INFLIGHT, f"expected param {param.ds_summary()} to be inflight"
-            partitions: List[Tensor] = []
-            ds_tensor_numel = param.ds_tensor.ds_numel
-            if self.use_secondary_tensor:
-                ds_tensor_numel *= param.ds_secondary_tensor_num_of_groups
-            for rank in range(self.world_size):
-                param_start = rank * ds_tensor_numel
-                if param_start < param.ds_numel:
-                    part_to_copy = self.__partitions[rank].narrow(
-                        0, param_offset, min(param.ds_numel - param_start, param.ds_tensor.ds_numel))
-                    partitions.append(part_to_copy)
-            param.data = instrument_w_nvtx(torch.cat)(partitions).view(param.ds_shape)
-            param.ds_status = ZeroParamStatus.AVAILABLE
-            if not get_accelerator().is_synchronized_device() and handle_dependency:
-                for part_to_copy in partitions:
-                    part_to_copy.record_stream(get_accelerator().current_stream())
-
-            for part_to_copy in partitions:
-                part_to_copy.record_stream(get_accelerator().current_stream())
-
-        self.complete = True
-        if not get_accelerator().is_synchronized_device() and not handle_dependency:
-            # if the device needs to handle dependencies and opts for explicit processing outside the function.
-            AllGatherCoalescedHandle.data_buffer.append(partitions)
-
-    @staticmethod
-    def free_buffer():
-        AllGatherCoalescedHandle.data_buffer = []
-
-
-class MultipleAllGatherHandles:
-
-    def __init__(self, handles: List[AllGatherCoalescedHandle]):
-        self.handles = handles
-
-    def wait(self, handle_dependency=True) -> None:
-        for handle in self.handles:
-            handle.wait(handle_dependency)
-
-
-class AllReduceCoalescedHandle:
-
-    def __init__(self, handle, params: List[Parameter]) -> None:
-        self.handle = handle
-        self.params = params
         self.complete = False
 
         for param in self.params:
@@ -745,15 +669,17 @@ class AllReduceCoalescedHandle:
         if self.complete:
             return
 
-        instrument_w_nvtx(self.handle.wait)()
+        instrument_w_nvtx(self.allgather_handle.wait)()
 
+        # split the single tensor out into individual tensors
+        param_offset = 0
         for param in self.params:
             assert param.ds_status == ZeroParamStatus.INFLIGHT, f"expected param {param.ds_summary()} to be inflight"
             partitions: List[Tensor] = []
-            for rank in range(self.__world_size):
+            for rank in range(self.world_size):
                 param_start = rank * param.ds_tensor.ds_numel
                 if param_start < param.ds_numel:
-                    part_to_copy = self.__partitions[rank].narrow(
+                    part_to_copy = self.partitions[rank].narrow(
                         0, param_offset, min(param.ds_numel - param_start, param.ds_tensor.ds_numel))
                     partitions.append(part_to_copy)
             param.data = instrument_w_nvtx(torch.cat)(partitions).view(param.ds_shape)
@@ -762,67 +688,7 @@ class AllReduceCoalescedHandle:
         self.complete = True
 
 
-class QuantizationInfo:
-    # a placeholder object to store all quant related vars used in handles
-    def __init__(self) -> None:
-        self.quantized_param = None
-        self.backend = None
-        self.quant_handle = None
-        self.scale_buffer = None
-
-
-class CUDAQuantizer:
-    async_flag = True
-    target_group_size = 8000  # the optimal size is 4k, so we set the target to be below 8k
-    group_size_cache = dict()
-    quantizer_cuda_module = None
-
-    def __init__(self) -> None:
-        if CUDAQuantizer.quantizer_cuda_module is None:
-            CUDAQuantizer.quantizer_cuda_module = deepspeed.ops.op_builder.QuantizerBuilder().load()
-
-    def quantize(self, param, groups=None):
-        if groups is None:
-            try:
-                groups = self.group_size_cache[param.numel()]
-            except KeyError:
-                groups = math.ceil(param.numel() / self.target_group_size)
-                while groups < param.numel():
-                    if param.numel() % (8 * groups) == 0:
-                        break
-                    groups += 1
-                while True:
-                    if param.numel() % (8 * groups * 2) == 0 and param.numel(
-                    ) / groups > self.target_group_size:  #hard limit of 16k group_size
-                        groups *= 2
-                    else:
-                        break
-                assert (
-                    param.numel() % (8 * groups) == 0
-                ), f"Qantized weight requires the number of weights be a multiple of 8. Yet {param.numel()} cannot be divided by 8*{groups}"
-                assert (param.numel() / groups < 16000), f"{param.numel()} / {groups} is larger than 16k"
-                assert param.numel(
-                ) > groups, f"Adaptive grouping algorithm cannot find a group size for input tensor of size {param.numel()}"
-                self.group_size_cache[param.numel()] = groups
-        return self.quantizer_cuda_module.quantize(param.to(get_accelerator().device_name()), groups, 8,
-                                                   self.quantizer_cuda_module.Symmetric)
-
-    def dequantize(self, quantized_param, scale):
-        return self.quantizer_cuda_module.dequantize(quantized_param, scale, scale.numel(), 8,
-                                                     self.quantizer_cuda_module.Symmetric)
-
-
-def _no_gather_coalesced(params: Iterable[Parameter]) -> AllGatherCoalescedHandle:
-    for param in params:
-        if param.ds_status != ZeroParamStatus.NOT_AVAILABLE:
-            raise RuntimeError(f"expect param.ds_status == ZeroParamStatus.NOT_AVAILABLE, got{param.ds_summary()}")
-        param.ds_status = ZeroParamStatus.INFLIGHT
-
-    params = sorted(params, key=lambda p: p.ds_id)
-    if len(params) == 1:
-        param, = params
-        return NoGatherHandle(param)
-    return NoGatherCoalescedHandle(params)
+        self.complete = True
 
 
 def _no_gather_coalesced(params: Iterable[Parameter]) -> AllGatherCoalescedHandle:
@@ -972,14 +838,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         else:
             self.ds_process_group = data_parallel_group
 
-        if sequence_data_parallel_group is not None:
-            logger.warning(
-                f"sequence_data_parallel_group' is deprecated and will be removed. Use 'data_parallel_group' instead.")
-            if data_parallel_group is not None:
-                raise ValueError(
-                    "Both 'data_parallel_group' and 'sequence_data_parallel_group' were specified. Please provide only one of these arguments."
-                )
-            self.ds_process_group = sequence_data_parallel_group
+        self.rank = dist.get_rank(group=self.ds_process_group)
+        self.dp_world_size = dist.get_world_size(group=self.ds_process_group)
 
         # Local device is the device where the parameters are consumed, must be default device.
         # It is the device where parameters are fully instantiated using allgather
@@ -1059,7 +919,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
     def _update_persist_config(self, ds_config):
         Init.apply_param_persistence = True
         Init.param_persistence_threshold = ds_config.zero_config.param_persistence_threshold
-        Init.model_persistence_threshold = ds_config.zero_config.model_persistence_threshold // self.world_size
+        Init.model_persistence_threshold = ds_config.zero_config.model_persistence_threshold // self.num_partitions
 
     def _convert_to_zero_parameters(self, param_list):
         for param in param_list:
@@ -1134,7 +994,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                     f"Partitioning param {debug_param2name_id_shape(param)} module={debug_module2name(module)}")
 
                 if get_accelerator().on_accelerator(param):
-                    dist.broadcast(param, 0, self.ds_process_group)
+                    dist.broadcast(param, 0, self.get_dp_process_group())
                 else:
                     if torch.distributed.get_rank() == 0:
                         logger.warn(f"param `{name}` in {module.__class__.__name__} "
@@ -1213,7 +1073,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             # fetches from nvme if the partition is not available and in nvme
             self._ensure_availability_of_partitioned_params(params)
 
-            if self.world_size == 1:
+            if self.num_partitions == 1:
                 return _no_gather_coalesced(params)
 
             for param in params:
@@ -1261,39 +1121,36 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
                 param_ds_tensor = param.ds_secondary_tensor if use_secondary_tensor else param.ds_tensor
                 param_buffer = torch.empty(
-                    math.ceil(param.ds_numel / self.world_size) * self.world_size,
+                    math.ceil(param.ds_numel / self.num_partitions) * self.num_partitions,
                     dtype=param.dtype,
                     device=get_accelerator().current_device_name(),
                     requires_grad=False,
                 )
                 handle = _dist_allgather_fn(param.ds_tensor.to(get_accelerator().current_device_name()), param_buffer,
-                                            self.ds_process_group)
+                                            self.get_partition_dp_group(param))
                 param.data = param_buffer.narrow(0, 0, param.ds_numel).view(param.ds_shape).to(param.device)
                 return AllGatherHandle(handle, param)
             else:
                 partition_sz = sum(p.ds_tensor.ds_numel for p in params)
-                flat_tensor = torch.empty(partition_sz * self.world_size,
+                flat_tensor = torch.empty(partition_sz * self.num_partitions,
                                           dtype=get_only_unique_item(p.dtype for p in params),
                                           device=get_accelerator().current_device_name(),
                                           requires_grad=False)
                 partitions: List[Parameter] = []
-                for i in range(self.world_size):
+                for i in range(self.num_partitions):
                     partitions.append(flat_tensor.narrow(0, partition_sz * i, partition_sz))
 
                 instrument_w_nvtx(torch.cat)([p.ds_tensor.to(get_accelerator().current_device_name()) for p in params],
-                                             out=partitions[self.rank])
-                handle = _dist_allgather_fn(partitions[self.rank], flat_tensor, self.ds_process_group)
+                                             out=partitions[self.get_partition_rank()])
+                handle = _dist_allgather_fn(partitions[self.get_partition_rank()], flat_tensor,
+                                            self.get_partition_dp_group(params[0]))
 
-                    return AllReduceCoalescedHandle(handle=handle, params=params)
-                else:
-                    if not quantize:
-                        dtype_params = defaultdict(list)
-                        for p in params:
-                            dtype_params[p.ds_tensor.dtype].append(p)
-                        handles = []
-                        for dtype, params in dtype_params.items():
-                            handles.append(
-                                _all_gather_dtype(dtype, params, world_size, rank_in_group, ds_process_group))
+                return AllGatherCoalescedHandle(
+                    allgather_handle=handle,
+                    params=params,
+                    partitions=partitions,
+                    world_size=self.num_partitions,
+                )
 
                         return MultipleAllGatherHandles(handles)
 
@@ -1557,6 +1414,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
             tensor_size = self._aligned_size(param)
             partition_size = tensor_size // self.num_partitions
+
             if param.ds_tensor is None:
                 final_location = None
                 if self.remote_device == OffloadDeviceEnum.nvme and self.param_swapper.swappable_tensor(
@@ -1673,20 +1531,22 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         #            param.data = replicated_tensor.data
         #            return None
         if self.use_all_gather_into_tensor:
-            # try the all_gather_into_tensor on PyTorch master branch
             handle = dist.all_gather_into_tensor(flat_tensor,
                                                  param.ds_tensor.to(get_accelerator().device_name()),
-                                                 group=self.ds_process_group,
+                                                 group=self.get_partition_dp_group(param),
                                                  async_op=async_op)
         else:
             partitions = []
-            for i in range(self.world_size):
+            for i in range(self.num_partitions):
                 partitions.append(flat_tensor.narrow(0, partition_size * i, partition_size))
 
-                if i == dist.get_rank(group=self.ds_process_group):
+                if i == dist.get_rank(group=self.get_partition_dp_group(param)):
                     partitions[i].data.copy_(param.ds_tensor.data, non_blocking=True)
 
-            handle = dist.all_gather(partitions, partitions[self.rank], group=self.ds_process_group, async_op=async_op)
+            handle = dist.all_gather(partitions,
+                                     partitions[self.get_partition_rank()],
+                                     group=self.get_partition_dp_group(param),
+                                     async_op=async_op)
 
         replicated_tensor = flat_tensor.narrow(0, 0, param.ds_numel).view(param.ds_shape)
         param.data = replicated_tensor.data
@@ -1699,7 +1559,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         if len(param_list) == 0:
             return
 
-        if self.world_size == 1:
+        if self.num_partitions == 1:
             handle = _no_gather_coalesced(param_list)
             handle.wait()
             return None
@@ -1714,27 +1574,25 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         # allocate memory for allgather params
         allgather_params = []
         for psize in partition_sizes:
-            tensor_size = psize * self.world_size
+            tensor_size = psize * self.num_partitions
             flat_tensor = torch.empty(tensor_size, dtype=param_list[0].dtype, device=self.local_device).view(-1)
             flat_tensor.requires_grad = False
             allgather_params.append(flat_tensor)
 
         # launch
         launch_handles = []
-        # backend = get_backend(self.ds_process_group)
-        # with _batch_p2p_manager(backend):
         for param_idx, param in enumerate(param_list):
             input_tensor = local_tensors[param_idx].view(-1)
 
             if self.use_all_gather_into_tensor:
-                # try the all_gather_into_tensor from Pytorch master
+                # try the _all_gather_base from Pytorch master
                 h = dist.all_gather_into_tensor(allgather_params[param_idx],
                                                 input_tensor,
-                                                group=self.ds_process_group,
+                                                group=self.get_partition_dp_group(param),
                                                 async_op=True)
             else:
                 output_list = []
-                for i in range(self.world_size):
+                for i in range(self.num_partitions):
                     psize = partition_sizes[param_idx]
                     partition = allgather_params[param_idx].narrow(0, i * psize, psize)
                     output_list.append(partition)
@@ -1742,8 +1600,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                         logger.warning(
                             f'param {param_idx}, partition {i} is not on CUDA, partition shape {partition.size()}')
 
-                # back to old all_gather function signature
-                h = dist.all_gather(output_list, input_tensor, group=self.ds_process_group, async_op=True)
+                # back to old all_gather function
+                h = dist.all_gather(output_list, input_tensor, group=self.get_partition_dp_group(param), async_op=True)
             launch_handles.append(h)
 
         # Wait ensures the operation is enqueued, but not necessarily complete.
@@ -1765,7 +1623,7 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
         partition_size = sum([param.ds_tensor.ds_numel for param in param_list])
 
-        tensor_size = partition_size * self.world_size
+        tensor_size = partition_size * self.num_partitions
         flat_tensor = torch.empty(tensor_size, dtype=param_list[0].dtype, device=self.local_device)
         flat_tensor.requires_grad = False
         partitions = []
@@ -1783,7 +1641,10 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
                     offset += param_numel
 
-        dist.all_gather(partitions, partitions[self.rank], group=self.ds_process_group, async_op=False)
+        dist.all_gather(partitions,
+                        partitions[self.get_partition_rank()],
+                        group=self.get_partition_dp_group(param),
+                        async_op=False)
         param_offset = 0
 
         for param in param_list:
@@ -1862,8 +1723,11 @@ class Init(InsertPostInitMethodToModuleSubClasses):
             #print("after reduce scatter gradients")
             input_list.append(input)
 
-        rank = dist.get_rank(group=self.ds_process_group)
-        handle = dist.reduce_scatter(input_list[rank], input_list, group=self.ds_process_group, async_op=True)
+        rank = dist.get_rank(group=self.get_partition_dp_group(param))
+        handle = dist.reduce_scatter(input_list[rank],
+                                     input_list,
+                                     group=self.get_partition_dp_group(param),
+                                     async_op=True)
 
         return handle, input_list[rank]
 
