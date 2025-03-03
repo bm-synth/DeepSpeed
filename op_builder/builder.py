@@ -37,6 +37,14 @@ else:
     TORCH_MINOR = int(torch.__version__.split('.')[1])
 
 
+class MissingCUDAException(Exception):
+    pass
+
+
+class CUDAMismatchException(Exception):
+    pass
+
+
 def installed_cuda_version(name=""):
     import torch.utils.cpp_extension
     cuda_home = torch.utils.cpp_extension.CUDA_HOME
@@ -92,9 +100,10 @@ def assert_no_cuda_mismatch(name=""):
                 "Detected `DS_SKIP_CUDA_CHECK=1`: Allowing this combination of CUDA, but it may result in unexpected behavior."
             )
             return True
-        raise Exception(f">- DeepSpeed Op Builder: Installed CUDA version {sys_cuda_version} does not match the "
-                        f"version torch was compiled with {torch.version.cuda}, unable to compile "
-                        "cuda/cpp extensions without a matching cuda version.")
+        raise CUDAMismatchException(
+            f">- DeepSpeed Op Builder: Installed CUDA version {sys_cuda_version} does not match the "
+            f"version torch was compiled with {torch.version.cuda}, unable to compile "
+            "cuda/cpp extensions without a matching cuda version.")
     return True
 
 
@@ -395,7 +404,7 @@ class OpBuilder(ABC):
         try:
             assert_no_cuda_mismatch(self.name)
             return '-D__ENABLE_CUDA__'
-        except BaseException:
+        except MissingCUDAException:
             print(f"{WARNING} {self.name} cuda is missing or is incompatible with installed torch, "
                   "only cpu ops can be compiled!")
             return '-D__DISABLE_CUDA__'
@@ -655,7 +664,7 @@ class CUDAOpBuilder(OpBuilder):
             if not self.is_rocm_pytorch():
                 assert_no_cuda_mismatch(self.name)
             self.build_for_cpu = False
-        except BaseException:
+        except MissingCUDAException:
             self.build_for_cpu = True
 
         if self.build_for_cpu:
