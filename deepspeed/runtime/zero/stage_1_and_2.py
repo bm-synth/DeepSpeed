@@ -164,7 +164,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         # - flat by groups, not keeping state. TODO: remove state explicitly?
         # - master grad and unflat master weight never exist. TODO: a way to save out unflat master?
         if not get_accelerator().is_available():
-            raise SystemError("Cannot use fp16 without accelerator.")
+            raise SystemError("Accelerator is not detected, cannot perform low precision training (e.g., fp16, bf16).")
         self.optimizer = init_optimizer
 
         # Use torch (un)flatten ops
@@ -182,8 +182,6 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         self.overlap_comm = overlap_comm
 
         self.deepspeed_adam_offload = self.cpu_offload
-
-        self.deepspeed_adam_offload = cpu_offload
 
         self.device = get_accelerator().current_device_name() if not self.cpu_offload else 'cpu'
 
@@ -453,8 +451,12 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             self.norm_for_param_grads = {}
             self.local_overflow = False
             self.grad_position = {}
-            self.temp_grad_buffer_for_cpu_offload = get_accelerator().pin_memory(
-                torch.zeros(largest_param_numel, device=self.device, dtype=self.dtype))
+            self.temp_grad_buffer_for_cpu_offload = torch.zeros(largest_param_numel,
+                                                                device=self.device,
+                                                                dtype=self.dtype)
+            if self.cpu_offload_pin_memory:
+                self.temp_grad_buffer_for_cpu_offload = get_accelerator().pin_memory(
+                    self.temp_grad_buffer_for_cpu_offload)
             self.temp_grad_buffer_for_gpu_offload = torch.zeros(largest_param_numel,
                                                                 device=get_accelerator().current_device_name(),
                                                                 dtype=self.dtype)
@@ -644,7 +646,7 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                                                 dtype=self.single_partition_of_fp32_groups[i].dtype,
                                                 device=self.device)
             self.single_partition_of_fp32_groups[i].grad = get_accelerator().pin_memory(
-                single_grad_partition) if self.cpu_offload else single_grad_partition
+                single_grad_partition) if self.cpu_offload_pin_memory else single_grad_partition
 
         # Initialize the optimizer states with the flattened fp32 partition.
         # State initialization for the Adagrad optimizer occurs at construction as opposed to other optimizers
@@ -1169,7 +1171,8 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         #buffer for storing gradients for this parameter in CPU
         def buffer_to_accumulate_to_in_cpu():
             if not self.fp16_master_weights_and_gradients:
-                return get_accelerator().pin_memory(torch.zeros(param.numel(), dtype=param.dtype, device=self.device))
+                buffer = torch.zeros(param.numel(), dtype=param.dtype, device=self.device)
+                return get_accelerator().pin_memory(buffer) if self.cpu_offload_pin_memory else buffer
             else:
                 return self.single_partition_of_fp32_groups[i].grad.view(-1).narrow(0, dest_offset, num_elements)
 
