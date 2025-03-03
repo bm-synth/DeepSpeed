@@ -1909,14 +1909,31 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
 
                 self.timers(OPTIMIZER_GRADIENTS_TIMER).stop()
 
-                # Step 3:- run the optimizer if no offloading
-                self.timers(OPTIMIZER_STEP_TIMER).start()
-                self._optimizer_step(i)
-                # Step 4:- get rid of the fp32 gradients. Not needed anymore
-                self.single_partition_of_fp32_groups[i].grad = None
-                del single_grad_partition
-                bit16_partitions = self.parallel_partitioned_bit16_groups[i]
-                fp32_partition = self.single_partition_of_fp32_groups[i]
+        self._global_grad_norm = get_global_norm(norm_list=norm_groups)
+        self.unscale_and_clip_grads(single_partition_grad_groups, self._global_grad_norm)
+        self.stop_timers([OPTIMIZER_GRADIENTS])
+
+        self.start_timers([OPTIMIZER_STEP])
+        if self.deepspeed_adam_offload:
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
+            if type(self.optimizer) == DeepSpeedCPUAdam and self.dtype == torch.half:
+                bit16_param_groups = [[
+                    bit16_partitions[partition_id]
+                ] for bit16_partitions in self.parallel_partitioned_bit16_groups]
+                self.optimizer.step(fp16_param_groups=bit16_param_groups)
+            else:
+                self.optimizer.step()
+                for bit16_partitions, fp32_partition in zip(self.parallel_partitioned_bit16_groups, self.single_partition_of_fp32_groups):
+                    bit16_partitions[partition_id].data.copy_(fp32_partition.data)
+        else:
+            self.optimizer.step()
+
+            # get rid of the fp32 gradients. Not needed anymore
+            if not self.cpu_offload:
+                for group in self.single_partition_of_fp32_groups:
+                    group.grad = None  # in step
+
+            for bit16_partitions, fp32_partition in zip(self.parallel_partitioned_bit16_groups, self.single_partition_of_fp32_groups):
                 bit16_partitions[partition_id].data.copy_(fp32_partition.data)
                 self.timers(OPTIMIZER_STEP_TIMER).stop()
 
