@@ -346,8 +346,58 @@ def replace_transformer_layer(orig_layer_impl,
                 return data
 
             if attn_linear_layer:
-                qkvw.data = transpose(qkvw.data)
-                dense_w.data = transpose(dense_w.data)
+                if qkvw.numel() == 0 or qkvw.is_meta:
+                    if qkvw.is_meta or qkvw.ds_tensor.numel(
+                    ) < attn_block.attn_qkvw.numel():
+                        pass
+                    else:
+                        with GatheredParameters([qkvw,
+                                                 dense_w,
+                                                 qkvb,
+                                                 dense_b],
+                                                modifier_rank=0):
+                            qkvw = transpose(qkvw.data)
+                            dense_w = transpose(dense_w.data)
+                            qkvb = qkvb.data
+                            dense_b = dense_b.data
+                else:
+                    qkvw.data = transpose(qkvw.data)
+                    dense_w.data = transpose(dense_w.data)
+
+            def _transpose(x):
+                attention_head_size = x.shape[-1] // transformer_config.heads
+                new_x_shape = x.size()[:-1] + (transformer_config.heads,
+                                               attention_head_size)
+                x_1 = x.view(*new_x_shape)
+                (q, k, v) = torch.split(x_1, (x_1.shape[-1] // 3), dim=(x_1.dim() - 1))
+                if len(q.shape) > 2:
+                    return torch.cat((q.reshape(q.shape[0],
+                                                -1),
+                                      k.reshape(q.shape[0],
+                                                -1),
+                                      v.reshape(q.shape[0],
+                                                -1)),
+                                     dim=-1).reshape(x.shape)
+                else:
+                    return torch.cat((q.reshape(-1),
+                                      k.reshape(-1),
+                                      v.reshape(-1)),
+                                     dim=-1).reshape(x.shape)
+
+            if megatron_v2:
+                new_module.config.rotate_half = True
+                new_module.config.rotate_every_two = False
+
+                # Note: this part needs to be added for BLOOM architecture
+                qkvw = torch.nn.parameter.Parameter(_transpose(qkvw).contiguous())
+                qkvb = torch.nn.parameter.Parameter(_transpose(qkvb).contiguous())
+
+            # NOTE: This part caused instability in the multi-GPU inference!
+            # TODO: This needs to be incorporated in the kernels.
+            #dense_b = dense_b if dense_b is None else dense_b * (
+            #    transformer_config.training_mp_size / transformer_config.mp_size)
+            #_4hh_b = _4hh_b * (transformer_config.training_mp_size /
+            #                   transformer_config.mp_size)
 
             if mlp_linear_layer:
                 _h4h_w = [transpose(moe_w1.data)
