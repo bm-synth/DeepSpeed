@@ -36,7 +36,8 @@ unsigned get_workspace_size(unsigned maxBatchSize,
     if (training) {
         workSpacesize += ((std::max)((size_t(maxBatchSize) * seq_len * intermediate_size),
                                      2 * (size_t(maxBatchSize) * heads * seq_len * seq_len)));
-        if (gelu_checkpoint) workSpacesize += 2 * (size_t(maxBatchSize) * seq_len * hidden_size);
+        if (gelu_checkpoint)
+            workSpacesize += 2 * (size_t(maxBatchSize) * seq_len * intermediate_size);
     }
     return workSpacesize;  // * sizeof(T);
 }
