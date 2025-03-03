@@ -899,14 +899,22 @@ class DeepSpeedEngine(Module):
             "variable, it is set by the deepspeed launcher, deepspeed.init_distributed, or the torch's launcher. If using a " \
             "different launcher please ensure LOCAL_RANK is set prior to initializing deepspeed."
 
-        if hasattr(args, 'local_rank') and args.local_rank is not None:
-            assert isinstance(args.local_rank,
-                              int), f"args.local_rank of {args.local_rank} is an unknown type {type(args.local_rank)}"
-            if args.local_rank >= 0:
-                env_local_rank = int(os.environ.get("LOCAL_RANK"))
-                assert (
-                    env_local_rank == args.local_rank
-                ), f"Mismatch in local rank setting, args.local_rank={args.local_rank} but env['LOCAL_RANK']={env_local_rank}."
+        local_rank_err = "DeepSpeed requires a command line parameter of --local_rank [int] and/or setting the LOCAL_RANK environment variable."
+        if hasattr(args, 'local_rank'):
+            assert type(args.local_rank) == int, local_rank_err
+            if "LOCAL_RANK" in os.environ and args.local_rank >= 0:
+                env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
+                assert env_local_rank == args.local_rank, \
+                    f"Mismatch in local rank setting, args.local_rank={args.local_rank} but env['LOCAL_RANK']={env_local_rank}."
+        else:
+            assert "LOCAL_RANK" in os.environ, local_rank_err
+
+        if self.config_params is None:
+            assert hasattr(args, 'deepspeed_config') and args.deepspeed_config is not None, \
+                'DeepSpeed requires --deepspeed_config to specify configuration file'
+
+            assert os.path.isfile(args.deepspeed_config), \
+                'DeepSpeed configuration file: {} is not an existing file'.format(args.deepspeed_config)
 
     def _is_supported_optimizer(self, optimizer_name):
         return (optimizer_name in DEEPSPEED_OPTIMIZERS or getattr(torch.optim, optimizer_name, None) is not None)
