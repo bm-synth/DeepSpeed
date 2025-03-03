@@ -915,6 +915,8 @@ class DeepSpeedConfig(object):
         self.timers_config = get_timers_config(param_dict)
         self.tensor_parallel_config = get_tensor_parallel_config(param_dict)
 
+        self.timers_config = get_timers_config(param_dict)
+
     def _batch_assertion(self):
 
         train_batch = self.train_batch_size
