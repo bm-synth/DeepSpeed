@@ -571,6 +571,9 @@ class DeepSpeedEngine(Module):
     def flops_profiler_enabled(self):
         return self._config.flops_profiler_config.enabled
 
+    def flops_profiler_recompute_fwd_factor(self):
+        return self._config.flops_profiler_config.recompute_fwd_factor
+
     def flops_profiler_profile_step(self):
         return self._config.flops_profiler_config.profile_step
 

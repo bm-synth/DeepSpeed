@@ -16,6 +16,7 @@ class DeepSpeedFlopsProfilerConfig(DeepSpeedConfigObject):
         super(DeepSpeedFlopsProfilerConfig, self).__init__()
 
         self.enabled = None
+        self.recompute_fwd_factor = None
         self.profile_step = None
         self.module_depth = None
         self.top_modules = None
@@ -29,6 +30,9 @@ class DeepSpeedFlopsProfilerConfig(DeepSpeedConfigObject):
 
     def _initialize(self, flops_profiler_dict):
         self.enabled = get_scalar_param(flops_profiler_dict, FLOPS_PROFILER_ENABLED, FLOPS_PROFILER_ENABLED_DEFAULT)
+
+        self.recompute_fwd_factor = get_scalar_param(flops_profiler_dict, FLOPS_PROFILER_RECOMPUTE_FWD_FACTOR,
+                                                     FLOPS_PROFILER_RECOMPUTE_FWD_FACTOR_DEFAULT)
 
         self.profile_step = get_scalar_param(flops_profiler_dict, FLOPS_PROFILER_PROFILE_STEP,
                                              FLOPS_PROFILER_PROFILE_STEP_DEFAULT)
