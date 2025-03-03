@@ -8,10 +8,13 @@ import torch
 import tqdm
 import deepspeed
 import deepspeed.ops.transformer as transformer_inference
-from .replace_policy import HFBertLayerPolicy, HFGPT2LayerPolicy, HFGPTJLayerPolicy
-from .replace_policy import replace_policies
-from ..constants import INFERENCE_GENERIC_MODE, INFERENCE_SPECIALIZED_MODE
-from ..runtime.weight_quantizer import WeightQuantization
+from deepspeed.ops.transformer.inference.diffusers_attention import DeepSpeedDiffusersAttention
+from deepspeed.ops.transformer.inference.diffusers_transformer_block import DeepSpeedDiffusersTransformerBlock
+from deepspeed.ops.transformer.inference.diffusers_2d_transformer import Diffusers2DTransformerConfig
+from .replace_policy import HFBertLayerPolicy, HFGPT2LayerPolicy, BLOOMLayerPolicy
+from .replace_policy import replace_policies, generic_policies
+
+from deepspeed import comm as dist
 from torch import nn
 from deepspeed import comm as dist
 
@@ -230,7 +233,7 @@ def generic_injection(module, fp16=False, enable_cuda_graph=True):
             triangular_masking=False,
             max_out_tokens=4096,
         )
-        attn_module = transformer_inference.DeepSpeedDiffusersAttention(config)
+        attn_module = DeepSpeedDiffusersAttention(config)
 
         def transpose(data):
             data = data.contiguous()
@@ -253,8 +256,8 @@ def generic_injection(module, fp16=False, enable_cuda_graph=True):
         return attn_module
 
     def replace_attn_block(child, policy):
-        config = transformer_inference.Diffusers2DTransformerConfig()
-        return transformer_inference.DeepSpeedDiffusersTransformerBlock(child, config)
+        config = Diffusers2DTransformerConfig()
+        return DeepSpeedDiffusersTransformerBlock(child, config)
 
     if isinstance(module, torch.nn.Module):
         pass

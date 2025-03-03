@@ -5,6 +5,7 @@
 
 import torch
 import torch.nn as nn
+from ... import op_builder
 
 from deepspeed import module_inject
 from .diffusers_attention import DeepSpeedDiffusersAttention
