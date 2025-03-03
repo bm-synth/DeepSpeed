@@ -6,12 +6,21 @@ Licensed under the MIT license.
 import torch
 import json
 import copy
-from deepspeed.runtime.constants import *
-from deepspeed.runtime.fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, DELAYED_SHIFT, MIN_LOSS_SCALE
-from deepspeed.runtime.config_utils import get_scalar_param, dict_raise_error_on_duplicate_keys
-from deepspeed.runtime.zero.config import DeepSpeedZeroConfig
-from deepspeed.runtime.activation_checkpointing.config import DeepSpeedActivationCheckpointingConfig
-from deepspeed.utils import logger
+
+from .constants import *
+from .fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, DELAYED_SHIFT, MIN_LOSS_SCALE
+from .config_utils import get_scalar_param, dict_raise_error_on_duplicate_keys, ScientificNotationEncoder
+from .zero.config import DeepSpeedZeroConfig
+from .zero.constants import *
+from .activation_checkpointing.config import DeepSpeedActivationCheckpointingConfig
+
+from ..git_version_info import version as __version__
+from ..utils import logger
+
+from ..elasticity import elasticity_enabled, compute_elastic_config, ensure_immutable_elastic_config
+from ..elasticity.config import ElasticityConfigError
+from ..elasticity.constants import ELASTICITY, IGNORE_NON_ELASTIC_BATCH_INFO, \
+    IGNORE_NON_ELASTIC_BATCH_INFO_DEFAULT
 
 from ..profiling.config import DeepSpeedFlopsProfilerConfig
 
@@ -683,6 +692,7 @@ class DeepSpeedConfig(object):
             json.dumps(self._param_dict,
                        sort_keys=True,
                        indent=4,
+                       cls=ScientificNotationEncoder,
                        separators=(',',
                                    ':'))))
 
