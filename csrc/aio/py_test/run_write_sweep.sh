@@ -9,17 +9,17 @@ function prep_folder()
     fi
 }
 
-function validate_environment()
-{
-    validate_cmd="python ./validate_async_io.py"
-    eval ${validate_cmd}
-    res=$?
-    if [[ $res != 0 ]]; then
-        echo "Failing because environment is not properly configured"
-        echo "Possible fix: sudo apt-get install libaio-dev"
-        exit 1
-    fi
-}
+if [[ $# -ne 3 ]]; then
+    echo "Usage: $0 <write size in MB> <write dir ><output log dir>"
+    exit 1
+fi
+
+SIZE="$1M"
+WRITE_DIR=$2
+LOG_DIR=$3/aio_perf_sweep
+
+OUTPUT_FILE=${WRITE_DIR}/ds_aio_write_${SIZE}B.pt
+WRITE_OPT="--write_file ${OUTPUT_FILE} --write_size ${SIZE}"
 
 
 
@@ -66,15 +66,14 @@ for sub in single block; do
         else
             ov_opt=""
         fi
-        for p in 1 2 4 8; do
-            for t in 1 2 4 8; do
-                for d in 32 64 128; do
-                    for bs in 256K 512K 1M; do
-                        SCHED_OPTS="${sub_opt} ${ov_opt} --handle ${gpu_opt} ${gds_opt} --folder ${MAP_DIR}"
-                        OPTS="--queue_depth ${d} --block_size ${bs} --io_size ${IO_SIZE} --multi_process ${p} --io_parallel ${t}"
-                        LOG="${LOG_DIR}/write_${sub}_${ov}_t${t}_p${p}_d${d}_bs${bs}.txt"
-                        cmd="python ${RUN_SCRIPT} ${OPTS} ${SCHED_OPTS} &> ${LOG}"
-                        echo ${DISABLE_CACHE}
+        for t in 1 2 4 8; do
+            for p in 1; do
+                for d in 1 2 4 8 16 32; do
+                    for bs in 128K 256K 512K 1M; do
+                        SCHED_OPTS="${sub_opt} ${ov_opt} --handle --threads ${t}"
+                        OPTS="--io_parallel ${p} --queue_depth ${d} --block_size ${bs}"
+                        LOG="${LOG_DIR}/write_${SIZE}B_${sub}_${ov}_t${t}_p${p}_d${d}_bs${bs}.txt"
+                        cmd="python ${RUN_SCRIPT} ${WRITE_OPT} ${OPTS} ${SCHED_OPTS} &> ${LOG}"
                         echo ${cmd}
                         echo ${SYNC}
 

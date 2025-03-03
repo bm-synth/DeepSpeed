@@ -14,34 +14,7 @@ function prep_folder()
     fi
 }
 
-function validate_environment()
-{
-    validate_cmd="TORCH_EXTENSIONS_DIR=./torch_extentions python3 ./validate_async_io.py"
-    eval ${validate_cmd}
-    res=$?
-    if [[ $res != 0 ]]; then
-        echo "Failing because environment is not properly configured"
-        echo "Possible fix: sudo apt-get install libaio-dev"
-        exit 1
-    fi
-}
-
-function fileExists() {
-    local file="$1"
-    if [[ -f "$file" ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-validate_environment
-
-IO_SIZE=$1
-LOG_DIR=./aio_perf_sweep
-MAP_DIR=$2/aio
-GPU_MEM=$3
-USE_GDS=$4
+LOG_DIR=$2/aio_perf_sweep
 RUN_SCRIPT=./test_ds_aio.py
 READ_OPT="--read"
 
