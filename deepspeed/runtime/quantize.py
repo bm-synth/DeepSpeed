@@ -1,8 +1,4 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
+import pdb
 import torch
 import math
 from deepspeed.utils import logger
@@ -64,8 +60,7 @@ class Quantizer(object):
                     if block_eigenvalue is None:
                         eigenvalue, layer_id = None, 0
                     else:
-                        eigenvalue, layer_id = block_eigenvalue[param_id] if param_id in block_eigenvalue else (None,
-                                                                                                                0)
+                        eigenvalue, layer_id = block_eigenvalue[param_id] if param_id in block_eigenvalue else (None, 0)
                     if eigenvalue is not None:
                         factor = 1 + math.floor(eigenvalue * 4)
                         p.data = self.compute_quantization(p.data, layer_id, factor)
@@ -91,11 +86,15 @@ class Quantizer(object):
         if self.q_type == 'symmetric':
             scale = 2 * torch.max(torch.abs(g_min), torch.abs(g_max)) / q_range
             zero_point = 0.
-            input_flat = (input_flat / scale + p).round().clamp(-(q_range >> 1), (q_range >> 1) - 1) * scale
+            input_flat = (input_flat / scale + p).round().clamp(
+                -(q_range >> 1),
+                (q_range >> 1) - 1) * scale
         elif self.q_type == 'asymmetric':
             scale = (g_max - g_min) / q_range
             zero_point = (g_min / scale).round() * scale
-            input_flat = ((input_flat - zero_point) / scale + p).round().clamp(0, (q_range - 1)) * scale + zero_point
+            input_flat = ((input_flat - zero_point) / scale + p).round().clamp(
+                0,
+                (q_range - 1)) * scale + zero_point
         output = input_flat.reshape(inputs.shape).contiguous()
         return output
 
@@ -147,12 +146,15 @@ class Quantizer(object):
 
         if self.use_quantizer_kernel:
             if input.start_bits <= 2:
-                raise ValueError('Quantization bit is too low, please do it without quantization kernel!')
-            input_q = ds_quantizer(input.data.clone(),
-                                   self.q_groups,
-                                   input.start_bits,
-                                   asym=False if self.q_type == 'symmetric' else True,
-                                   sr=False if self.q_rounding == 'nearest_neighbor' else True)
+                raise ValueError(
+                    'Quantization bit is too low, please do it without quantization kernel!'
+                )
+            input_q = ds_quantizer(
+                input.data.clone(),
+                self.q_groups,
+                input.start_bits,
+                asym=False if self.q_type == 'symmetric' else True,
+                sr=False if self.q_rounding == 'nearest_neighbor' else True)
         else:
             if input.start_bits >= 3:
                 input_flat = self.quantize_highbit(input.data, input.start_bits)
