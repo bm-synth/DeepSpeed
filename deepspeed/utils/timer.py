@@ -133,7 +133,6 @@ class ThroughputTimer:
     def __init__(
         self,
         batch_size,
-        num_workers,
         start_step=2,
         steps_per_output=50,
         monitor_memory=False,
@@ -173,17 +172,11 @@ class ThroughputTimer:
         self._init_timer()
         self.started = True
         if self.global_step_count >= self.start_step:
-            if self.config.synchronized:
-                get_accelerator().synchronize()
+            torch.cuda.synchronize()
             self.start_time = time.time()
 
-    def _is_report_boundary(self):
-        if self.steps_per_output is None:
-            return False
-        return self.global_step_count % self.steps_per_output == 0
-
     def stop(self, global_step=False, report_speed=True):
-        if not self.config.enabled or not self.started:
+        if not self.started:
             return
         self.started = False
         self.micro_step_count += 1
@@ -191,36 +184,40 @@ class ThroughputTimer:
             self.global_step_count += 1
 
         if self.start_time > 0:
-            if self.config.synchronized:
-                get_accelerator().synchronize()
+            torch.cuda.synchronize()
             self.end_time = time.time()
             duration = self.end_time - self.start_time
             self.total_elapsed_time += duration
+            self.step_elapsed_time += duration
 
-            curr_samples_sec = (self.batch_size * self.num_workers) / duration
-
-            if report_speed:
-                self.logging(
-                    "{}/{}, RunningAvgSamplesPerSec={}, CurrSamplesPerSec={}, MemAllocated={}GB, MaxMemAllocated={}GB"
-                    .format(
-                        self.epoch_count,
-                        self.local_step_count,
-                        self.avg_samples_per_sec(),
-                        curr_samples_sec,
-                        round(torch.cuda.memory_allocated() / 1024**3,
-                              2),
-                        round(torch.cuda.max_memory_allocated() / 1024**3,
-                              2),
-                    ))
-                if self.monitor_memory:
-                    virt_mem = psutil.virtual_memory()
-                    swap = psutil.swap_memory()
-                    self.logging("{}/{}, vm percent: {}, swap percent: {}".format(
-                        self.epoch_count,
-                        self.local_step_count,
-                        virt_mem.percent,
-                        swap.percent,
-                    ))
+            if global_step:
+                if report_speed and self.global_step_count % self.steps_per_output == 0:
+                    self.logging(
+                        "epoch={}/micro_step={}/global_step={}, RunningAvgSamplesPerSec={}, CurrSamplesPerSec={}, "
+                        "MemAllocated={}GB, MaxMemAllocated={}GB".format(
+                            self.epoch_count,
+                            self.micro_step_count,
+                            self.global_step_count,
+                            self.avg_samples_per_sec(),
+                            self.batch_size / self.step_elapsed_time,
+                            round(torch.cuda.memory_allocated() / 1024**3,
+                                  2),
+                            round(torch.cuda.max_memory_allocated() / 1024**3,
+                                  2),
+                        ))
+                    if self.monitor_memory:
+                        virt_mem = psutil.virtual_memory()
+                        swap = psutil.swap_memory()
+                        self.logging(
+                            "epoch={}/micro_step={}/global_step={}, vm %: {}, swap %: {}"
+                            .format(
+                                self.epoch_count,
+                                self.micro_step_count,
+                                self.global_step_count,
+                                virt_mem.percent,
+                                swap.percent,
+                            ))
+                self.step_elapsed_time = 0
 
     def avg_samples_per_sec(self):
         if self.global_step_count > 0:
