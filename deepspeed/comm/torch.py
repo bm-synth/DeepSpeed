@@ -20,12 +20,6 @@ DS_COMM_ALL_REDUCE_OFF = False
 DS_COMM_REDUCE_OFF = False
 
 
-def disable_compiler_collective(func):
-    if required_torch_version(min_version=2.3):
-        return func
-    return compiler.disable(func)
-
-
 def build_shm_op():
     builder = get_accelerator().create_op_builder("ShareMemCommBuilder")
     if builder is None or not deepspeed.ops.__compatible_ops__[builder.NAME]:
@@ -157,12 +151,11 @@ class TorchBackend(Backend):
         op = self._reduce_op(op)
         return torch.distributed.all_reduce(tensor=tensor, op=op, group=group, async_op=async_op)
 
+    @compiler.disable
     def inference_all_reduce(self, tensor, op, group=None):
-        if not hasattr(torch.ops, 'deepspeed') or not hasattr(torch.ops.deepspeed, 'inference_all_reduce_'):
+        if self.shm_comm_op == None or self.shm_comm_op.inference_all_reduce(tensor, op) == -1:
             op = self._reduce_op(op)
             return torch.distributed.all_reduce(tensor=tensor, op=op, group=group, async_op=False)
-        else:
-            return torch.ops.deepspeed.inference_all_reduce_(tensor)
 
     @disable_compiler_collective
     def all_reduce_coalesced(self, tensors, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
