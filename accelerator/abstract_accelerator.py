@@ -296,11 +296,3 @@ class DeepSpeedAccelerator(ABC):
     @abc.abstractmethod
     def set_visible_devices_envs(self, current_env, local_accelerator_ids):
         ...
-
-    @abc.abstractmethod
-    def get_compile_backend(self):
-        ...
-
-    @abc.abstractmethod
-    def set_compile_backend(self, backend):
-        ...

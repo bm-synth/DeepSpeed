@@ -307,23 +307,8 @@ class HPU_Accelerator(DeepSpeedAccelerator):
         return []
 
     def visible_devices_envs(self):
-        # Current way deepspeed set this env var is not applicable with all HPU instances
-        # User has to follow instructions in:
-        # https://docs.habana.ai/en/latest/PyTorch/Reference/PT_Multiple_Tenants_on_HPU/Multiple_Workloads_Single_Docker.html
-        # keeping CUDA_VISIBLE_DEVICES
-        return ['CUDA_VISIBLE_DEVICES']  #['HABANA_VISIBLE_MODULES']
+        return ['HABANA_VISIBLE_MODULES']
 
     def set_visible_devices_envs(self, current_env, local_accelerator_ids):
         for env in self.visible_devices_envs():
             current_env[env] = ",".join(map(str, local_accelerator_ids))
-
-    def get_compile_backend(self):
-        return self._compile_backend
-
-    def set_compile_backend(self, backend):
-        supported_backends = torch._dynamo.list_backends(exclude_tags=())
-        if backend in supported_backends:
-            self._compile_backend = backend
-        else:
-            raise ValueError(
-                f"{backend} not supported by {self.device_name()}. Supported Backends are {supported_backends}")
