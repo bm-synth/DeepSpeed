@@ -3,7 +3,6 @@ Copyright 2020 The Microsoft DeepSpeed Team
 """
 import distutils.spawn
 import subprocess
-import torch
 
 from .builder import OpBuilder
 
@@ -49,6 +48,7 @@ class AsyncIOBuilder(TorchCPUOpBuilder):
         # -O0 for improved debugging, since performance is bound by I/O
         CPU_ARCH = self.cpu_arch()
         SIMD_WIDTH = self.simd_width()
+        import torch  # Keep this import here to avoid errors when building DeepSpeed wheel without torch installed
         TORCH_MAJOR, TORCH_MINOR = map(int, torch.__version__.split('.')[0:2])
         if TORCH_MAJOR >= 2 and TORCH_MINOR >= 1:
             CPP_STD = '-std=c++17'
