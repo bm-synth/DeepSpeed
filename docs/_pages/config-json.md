@@ -248,9 +248,9 @@ Example of <i>**scheduler**</i>
 
 <i>**fp16:initial_scale_power**</i>: [integer]
 
-| Description                                                                                                                                                                                                   | Default |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| <i>**initial_scale_power**</i> is a **fp16** parameter representing the power of the initial dynamic loss scale value. The actual loss scale is computed as 2<sup><i>**initial_scale_power**</i></sup>. | `32`    |
+| Description                                                                                                                                                                                             | Default |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| <i>**initial_scale_power**</i> is a **fp16** parameter representing the power of the initial dynamic loss scale value. The actual loss scale is computed as 2<sup><i>**initial_scale_power**</i></sup>. | `16`    |
 
 <i>**fp16:loss_scale_window**</i>: [integer]
 
