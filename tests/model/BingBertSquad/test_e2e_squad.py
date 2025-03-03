@@ -7,11 +7,11 @@ import pytest
 import json
 import argparse
 
-sys.path.append("../../../DeepSpeedExamples/BingBertSquad")
+sys.path.append("../../../DeepSpeedExamples/training/BingBertSquad")
 import evaluate as eval
 
 squad_dir = "/data/BingBertSquad"
-base_dir = "../../../DeepSpeedExamples/BingBertSquad"
+base_dir = "../../../DeepSpeedExamples/training/BingBertSquad"
 
 script_file_name = "run_squad_deepspeed.sh"
 model_file_name = "training_state_checkpoint_162.tar"
