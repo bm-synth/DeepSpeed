@@ -5,8 +5,8 @@
 
 # Create a container object to save model-specific tensors using the policy file above.
 
-from ..common_parameters import *
-from ..layer_container_base import LayerContainer
+from ...model_implementations.common_parameters import *
+from ...model_implementations.layer_container_base import LayerContainer
 '''
  # HF OPT model looks like this:
 
@@ -87,8 +87,9 @@ class OPTNonTransformerContainer(LayerContainer):
     final_norm_b: NormParameter
 
     PARAM_MAPPING = {
-        "*decoder.embed_tokens.weight": ["word_emb.params", "word_unembed.params"],
-        "*decoder.embed_positions.weight": "word_emb_pos.params",
-        "*decoder.final_layer_norm.weight": "final_norm_w.params",
-        "*decoder.final_layer_norm.bias": "final_norm_b.params",
+        "model.decoder.embed_tokens.weight": "word_emb.params",
+        "model.decoder.embed_positions.weight": "word_emb_pos.params",
+        "model.decoder.final_layer_norm.weight": "final_norm_w.params",
+        "model.decoder.final_layer_norm.bias": "final_norm_b.params",
+        "lm_head.weight": "word_unembed.params",
     }

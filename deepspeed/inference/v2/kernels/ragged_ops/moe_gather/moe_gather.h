@@ -16,5 +16,4 @@ void moe_gather(torch::Tensor& layer_output,
                 const torch::Tensor& moe_output,
                 const torch::Tensor& scores,
                 const torch::Tensor& mapped_slots,
-                const torch::Tensor& expert_counts,
-                const bool normalize_scales);
+                const torch::Tensor& expert_counts);

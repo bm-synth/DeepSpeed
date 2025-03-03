@@ -39,26 +39,24 @@ def split_kv(kv_cache: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
 
 class BlockedKVCache:
 
-    _caches: Tuple[torch.Tensor, ...]
+    _caches: torch.Tensor
     """
     Backing storage for all KV caches. This is a 6D tensor with the following shape:
         (num_caches, num_blocks, block_size, 2, num_heads, head_size)
     """
 
-    _allocators: Tuple[BlockedAllocator, ...]
+    _allocator: BlockedAllocator
     """
     Block allocator for tracking cache usage. This manages the GPU cache.
     """
 
-    _configs: Tuple[KVCacheConfig, ...]
+    _config: KVCacheConfig
     """
-    Configuration of the KV cache(s). See ``KVCacheConfig`` for more details. This enables the support
-    for different types/shapes of KV-caches (i.e. the alternating local and global attention in
-    GPT-Neo).
+    Configuration of the KV cache. See ``KVCacheConfig`` for more details.
     """
 
     def __init__(self,
-                 configs: Tuple[KVCacheConfig, ...],
+                 config: KVCacheConfig,
                  memory_config: MemoryConfig,
                  mp_group: Optional[Any] = None,
                  offload: bool = False) -> None:
@@ -73,7 +71,7 @@ class BlockedKVCache:
             blocks (int): The number of blocks to pre-allocate for the cache. If this is set,
                 slack will be ignored.
         """
-        self._configs = configs
+        self._config = config
         self._memory_config = memory_config
         self._enable_offload = offload
 
@@ -81,13 +79,9 @@ class BlockedKVCache:
             raise NotImplementedError("Offloading of KV-caches is not yet supported.")
 
         if AllocationMode(self._memory_config.mode) is AllocationMode.RESERVE:
-            # TODO(cmikeh2): Change the weighting based on the type of the KV-cache
-
-            total_per_block_footprint = 0
-            for config in self._configs:
-                per_block_footprint = reduce(operator.mul, config.cache_shape, config.block_size)
-                per_block_footprint *= 2  # for key and value
-                total_per_block_footprint += per_block_footprint * elem_size(config.cache_dtype)
+            per_block_footprint = reduce(operator.mul, self._config.cache_shape, self._config.block_size)
+            per_block_footprint *= 2  # for key and value
+            per_block_footprint *= elem_size(self._config.cache_dtype)
 
             # Perform a dummy nccl call before calculating available memory, on some systems (H100) we've observed higher memory allocations from NCCL
             if dist.get_world_size(group=mp_group) > 1:
@@ -99,15 +93,15 @@ class BlockedKVCache:
             total_memory = get_accelerator().total_memory()
 
             inference_logger().debug(
-                f"Memory usage before KV-cache allocation: total_memory={total_memory}, available_kv_memory={available_kv_memory}, total_per_block_footprint={total_per_block_footprint}"
+                f"Memory usage before KV-cache allocation: total_memory={total_memory}, available_kv_memory={available_kv_memory}, per_block_footprint={per_block_footprint}"
             )
 
-            if available_kv_memory < total_per_block_footprint:
+            if available_kv_memory < per_block_footprint:
                 raise ValueError(
-                    f"Insufficient memory to allocate KV-caches. Required: {total_per_block_footprint}, Available: {available_kv_memory}"
+                    f"Insufficient memory to allocate KV-caches. Required: {per_block_footprint}, Available: {available_kv_memory}"
                 )
 
-            num_blocks = available_kv_memory // total_per_block_footprint
+            num_blocks = available_kv_memory // per_block_footprint
 
             # In a multi-process setting, we need to ensure that all processes have the same
             # KV cache capacity to ensure scheduling guarantees are equivalent on all ranks.
@@ -123,86 +117,49 @@ class BlockedKVCache:
         else:  # AllocationMode.ALLOCATE
             num_blocks = self._memory_config.size
 
-        caches = []
-        allocators = []
+        num_caches = self._config.cache_shape[0]
+        num_heads = self._config.cache_shape[1]
+        head_size = self._config.cache_shape[2]
 
-        for cache_group_id, config in enumerate(self._configs):
-            num_caches = config.cache_shape[0]
-            num_heads = config.cache_shape[1]
-            head_size = config.cache_shape[2]
+        alloc_shape = (num_caches, num_blocks, self._config.block_size, 2, num_heads, head_size)
+        inference_logger().info(f"Allocating KV-cache with shape: {alloc_shape} consisting of {num_blocks} blocks.")
+        self._caches = torch.empty(alloc_shape,
+                                   dtype=self._config.cache_dtype,
+                                   device=get_accelerator().current_device())
+        self._allocator = BlockedAllocator(num_blocks)
 
-            alloc_shape = (num_caches, num_blocks, config.block_size, 2, num_heads, head_size)
-            inference_logger().info(
-                f"Allocating KV-cache {cache_group_id} with shape: {alloc_shape} consisting of {num_blocks} blocks.")
-            caches.append(torch.empty(alloc_shape, dtype=config.cache_dtype,
-                                      device=get_accelerator().current_device()))
-            allocators.append(BlockedAllocator(num_blocks))
-
-        self._caches = tuple(caches)
-        self._allocators = tuple(allocators)
-
-    def reserve(self, num_blocks: int, cache_group: int = 0) -> torch.Tensor:
+    def reserve(self, num_blocks: int) -> torch.Tensor:
         """
         Reserve a number of blocks from the cache. This will return a 1D tensor of
         block_ids that have been marked as reserved.
-
-        Parameters:
-            num_blocks (int): The number of blocks to reserve.
-            cache_group (int): The cache group to reserve from. Default is 0.
         """
-        return self._allocators[cache_group].allocate(num_blocks)
+        return self._allocator.allocate(num_blocks)
 
-    def free(self, blocks: Iterable[int], cache_group: int = 0) -> None:
+    def free(self, blocks: Iterable[int]) -> None:
         """
         Free a set of blocks from the cache. This will mark the blocks as free in the
         allocator.
-
-        Parameters:
-            blocks (Iterable[int]): The blocks to free.
-            cache_group (int): The cache group to free from. Default is 0.
         """
-        self._allocators[cache_group].free(blocks)
+        self._allocator.free(blocks)
 
-    def offload(self, blocks: Iterable[int], cache_group: int = 0) -> torch.Tensor:
+    def offload(self, blocks: Iterable[int]) -> torch.Tensor:
         """
         Offload KV-cache blocks from accelerator memory to the host.
-
-        Parameters:
-            blocks (Iterable[int]): The blocks to offload.
-            cache_group (int): The cache group to offload from. Default is 0.
         """
         raise NotImplementedError("Offloading is not yet supported.")
 
-    def restore(self, blocks: Iterable[int], cache_group: int = 0) -> torch.Tensor:
+    def restore(self, blocks: Iterable[int]) -> torch.Tensor:
         """
         Restore KV-cache blocks from the host to accelerator memory.
-
-        Parameters:
-            blocks (Iterable[int]): The blocks to restore.
-            cache_group (int): The cache group to restore to. Default is 0.
         """
         raise NotImplementedError("Offloading is not yet supported.")
 
-    def get_cache(self, cache_id: int, cache_group: int = 0) -> torch.Tensor:
+    def get_cache(self, cache_id: int) -> torch.Tensor:
         """
         Get the tensor associated with the given cache ID.
-
-        Parameters:
-            cache_id (int): The ID of the cache tensor to get.
-            cache_group (int): The cache group to get from. Default is 0.
         """
-        return self._caches[cache_group][cache_id]
+        return self._caches[cache_id]
 
     @property
-    def free_blocks(self) -> torch.Tensor:
-        """
-        Return the number of free blocks in each cache
-        """
-        return [allocator.free_blocks for allocator in self._allocators]
-
-    @property
-    def num_caches(self) -> int:
-        """
-        Return the number of caches
-        """
-        return len(self._caches)
+    def free_blocks(self):
+        return self._allocator.free_blocks

@@ -12,7 +12,6 @@ from deepspeed.runtime.config_utils import DeepSpeedConfigModel
 from ..ds_module import DSModuleBase
 from ..module_registry import DSModuleRegistryBase
 from ..configs import DSMoEConfig
-from ...inference_parameter import InferenceParameter
 
 
 class DSMoEBase(DSModuleBase):
@@ -32,7 +31,7 @@ class DSMoEBase(DSModuleBase):
         super().__init__(config, implementation_config)
 
     @abstractmethod
-    def transform_gate_param(self, param: torch.Tensor) -> InferenceParameter:
+    def transform_gate_param(self, param: torch.Tensor) -> torch.Tensor:
         """
         Perform any necessary transformations of the gate parameter.
 
@@ -42,7 +41,7 @@ class DSMoEBase(DSModuleBase):
         ...
 
     @abstractmethod
-    def transform_moe_mlp_1_param(self, param: torch.Tensor) -> InferenceParameter:
+    def transform_moe_mlp_1_param(self, param: torch.Tensor) -> torch.Tensor:
         """
         Perform any necessary transformations of the parameter. The specific component
         being transformed should be inferred from the shape of the parameter.
@@ -53,7 +52,7 @@ class DSMoEBase(DSModuleBase):
         ...
 
     @abstractmethod
-    def transform_moe_mlp_2_param(self, param: torch.Tensor) -> InferenceParameter:
+    def transform_moe_mlp_2_param(self, param: torch.Tensor) -> torch.Tensor:
         """
         Perform any necessary transformations of the parameter. The specified component being
         transformed should be inferred from the shape of the parameter. This interface is

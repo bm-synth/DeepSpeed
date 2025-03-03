@@ -12,7 +12,6 @@ from deepspeed.runtime.config_utils import DeepSpeedConfigModel
 from ..ds_module import DSModuleBase
 from ..module_registry import DSModuleRegistryBase
 from ..configs import DSLinearConfig
-from ...inference_parameter import InferenceParameter
 
 
 class DSLinearBase(DSModuleBase):
@@ -34,7 +33,7 @@ class DSLinearBase(DSModuleBase):
         super().__init__(config, implementation_config)
 
     @abstractmethod
-    def transform_param(self, param: torch.Tensor) -> InferenceParameter:
+    def transform_param(self, param: torch.Tensor) -> torch.Tensor:
         """
         Perform any necessary transformations of the parameters of this module.
 

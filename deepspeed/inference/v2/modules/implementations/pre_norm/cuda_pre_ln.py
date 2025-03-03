@@ -13,7 +13,6 @@ from ...configs import DSNormConfig, NormTypeEnum
 from ....kernels.core_ops.cuda_layer_norm.cuda_pre_ln import CUDAFPPreLN
 from ....kernels.core_ops.cuda_layer_norm.cuda_ln import CUDAFPLN
 from ....allocator import empty_from
-from ....inference_parameter import InferenceParameter
 
 
 @DSPreNormRegistry.register_module
@@ -48,9 +47,8 @@ class DSPreLNCUDAModule(DSPreNormBase):
                                           dtype=config.output_dtype,
                                           device=get_accelerator().current_device())
 
-    def transform_param(self, param: torch.Tensor) -> InferenceParameter:
-        param = param.to(self._config.input_dtype)
-        return InferenceParameter.initialize(param)
+    def transform_param(self, param: torch.Tensor) -> torch.Tensor:
+        return param.to(self._config.input_dtype)
 
     def forward(self, residual: torch.Tensor, hidden_in: Optional[torch.Tensor], gamma: torch.Tensor,
                 beta: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

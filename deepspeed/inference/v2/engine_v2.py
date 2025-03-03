@@ -4,8 +4,6 @@
 # DeepSpeed Team
 
 import os
-import json
-import pickle
 from typing import Iterable, Tuple
 
 import torch
@@ -19,8 +17,6 @@ from .model_implementations import InferenceV2Policy
 from .logging import inference_logger
 from .ragged import DSStateManager, RaggedBatchWrapper, PlaceholderSequenceDescriptor
 from .scheduling_utils import SchedulingError, SchedulingResult
-from .model_implementations.flat_model_helpers import make_param_filename, make_metadata_filename
-from .model_implementations.inference_model_base import DSInferenceModelBase
 
 from .config_v2 import RaggedInferenceEngineConfig
 
@@ -34,7 +30,7 @@ class InferenceEngineV2:
     Configuration of the inference engine.
     """
 
-    _model: DSInferenceModelBase
+    #_model: DSInferenceModelBase
     """
     Inference model supporting ragged inference.
     """
@@ -45,25 +41,11 @@ class InferenceEngineV2:
     """
 
     @property
-    def free_blocks(self) -> torch.Tensor:
+    def free_blocks(self) -> int:
         """
-        Number of free KV blocks. This is a tensor of shape [n_kv_cache_groups] where each
-        element is the number of free blocks in the corresponding KV cache group.
+        Number of free KV blocks.
         """
         return self._state_manager.free_blocks
-
-    @property
-    def n_kv_cache_groups(self) -> int:
-        """
-        Number of KV cache groups.
-        """
-        return self._state_manager.n_kv_cache_groups
-
-    def model(self) -> DSInferenceModelBase:
-        """
-        The model implementation.
-        """
-        return self._model
 
     def __init__(self, policy: InferenceV2Policy, engine_config: RaggedInferenceEngineConfig) -> None:
         """
@@ -104,10 +86,7 @@ class InferenceEngineV2:
         ranks = list(range(self._config.tensor_parallel.tp_size))
         return dist.new_group(ranks=ranks)
 
-    def put(self,
-            batch_uids: Iterable[int],
-            batch_tokens: Iterable[torch.Tensor],
-            do_checks: bool = True) -> torch.Tensor:
+    def put(self, batch_uids: Iterable[int], batch_tokens: Iterable[torch.Tensor]) -> torch.Tensor:
         """
         Put a ragged batch onto the inference engine. This will perform one forward and return
         a Tensor of the shape [len(batch_uids), *output_shape]. Logits for the non-final tokens
@@ -116,14 +95,12 @@ class InferenceEngineV2:
         Arguments:
             batch_uids: Iterable of uids for the batch on the host
             batch_tokens: Iterable of token tensors for the batch on the host
-            do_checks: Check schedulability when it is set to True. You can skip this check for better performance when it has already been completed.
         """
 
-        if do_checks:
-            token_lens = [len(tokens) for tokens in batch_tokens]
-            schedule_check = self.can_schedule(batch_uids, token_lens)
-            if schedule_check != SchedulingResult.Success:
-                raise SchedulingError(schedule_check)
+        token_lens = [len(tokens) for tokens in batch_tokens]
+        schedule_check = self.can_schedule(batch_uids, token_lens)
+        if schedule_check != SchedulingResult.Success:
+            raise SchedulingError(schedule_check)
 
         self._batch.clear()
         for uid, tokens in zip(batch_uids, batch_tokens):
@@ -133,7 +110,7 @@ class InferenceEngineV2:
             host_seq_desc.pre_forward(tokens.numel())
 
             # We can disable checks since we already validated schedulability.
-            self._batch.insert_sequence(host_seq_desc, tokens, do_checks=do_checks)
+            self._batch.insert_sequence(host_seq_desc, tokens, do_checks=False)
 
         # Send all metadata to the device
         self._batch.finalize()
@@ -155,7 +132,7 @@ class InferenceEngineV2:
 
         return logits
 
-    def query(self, uid: int, max_request_tokens: int, max_request_blocks) -> Tuple[int, torch.Tensor]:
+    def query(self, uid: int, max_request_tokens: int, max_request_blocks) -> Tuple[int, int]:
         """
         Determine the number of tokens and KV blocks to reserve for a given request. Given a UID
         (this UID may not be recognized by the model yet), this will return the number of tokens
@@ -230,15 +207,6 @@ class InferenceEngineV2:
 
         return SchedulingResult.Success
 
-    def get_remaining_block_capacity(self, uid: int) -> int:
-        """
-        Get the remaining capacity of the last block already allocated.
-        """
-        seq_desc = self._state_manager.get_sequence(uid)
-        if seq_desc is None:
-            return 0
-        return self._model.get_remaining_block_capacity(seq_desc)
-
     def flush(self, uid: int) -> None:
         """
         Remove all state associated with a sequence from the inference engine.
@@ -247,22 +215,3 @@ class InferenceEngineV2:
             uid (int): The UID of the sequence to flush.
         """
         self._state_manager.flush_sequence(uid)
-
-    def serialize(self, save_path: str) -> None:
-        """
-        Serialize the model to a file.
-
-        Arguments:
-            path (str): Path to the file to serialize to.
-        """
-        param_file_name = make_param_filename(save_path, self._model.tp_rank, self._model.tp_size)
-        metadata_file_name = make_metadata_filename(save_path, self._model.tp_rank, self._model.tp_size)
-
-        # Save the flattened parameters
-
-        torch.save(self._model.flattened_params, param_file_name)
-
-        json.dump(self._model.flattened_param_metadata.json(), open(metadata_file_name, "w"))
-
-        if self._model.tp_rank == 0:
-            pickle.dump(self._model._config, open(os.path.join(save_path, "ds_model_config.pkl"), "wb"))

@@ -13,7 +13,6 @@ from ...ragged import RaggedBatchWrapper
 from ..ds_module import DSModuleBase
 from ..module_registry import DSModuleRegistryBase
 from ..configs import DSEmbeddingsConfig
-from ...inference_parameter import InferenceParameter
 
 
 class DSEmbeddingBase(DSModuleBase):
@@ -33,7 +32,7 @@ class DSEmbeddingBase(DSModuleBase):
     def __init__(self, config: DSEmbeddingsConfig, implementation_config: Dict[str, Any]) -> None:
         super().__init__(config, implementation_config)
 
-    def transform_param(self, embed_param: torch.Tensor) -> InferenceParameter:
+    def transform_param(self, embed_param: torch.Tensor) -> torch.Tensor:
         """
         Perform any necessary transformations on an embedding parameter. This module assumes
         that all embedding parameters would require the same set of transformations.
@@ -60,7 +59,7 @@ class DSEmbeddingBase(DSModuleBase):
                 word_embeddings: torch.Tensor,
                 position_embeddings: Optional[torch.Tensor] = None,
                 token_type_ids: Optional[torch.Tensor] = None,
-                token_type_embeddings: Optional[torch.Tensor] = None) -> InferenceParameter:
+                token_type_embeddings: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Parameters:
             ragged_batch (torch.Tensor): Ragged batch of token ids + associated metadata.

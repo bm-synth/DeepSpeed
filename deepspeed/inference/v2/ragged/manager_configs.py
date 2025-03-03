@@ -6,32 +6,13 @@
 from enum import Enum
 from typing import Tuple
 
-from pydantic import PositiveInt, model_validator
+from deepspeed.pydantic_v1 import PositiveInt, validator
 
 from deepspeed.runtime.config_utils import DeepSpeedConfigModel
 from ..inference_utils import DtypeEnum
 
 
-class KVCacheType(Enum):
-
-    DENSE = "dense"
-    """
-    Dense KV-cache. This is the default type.
-    """
-
-    LOCAL = "local"
-    """
-    KV-cache that attends to only a local (trailing) window of tokens.
-    """
-
-
 class KVCacheConfig(DeepSpeedConfigModel):
-
-    type: KVCacheType = KVCacheType.DENSE
-    """
-    Type of KV-cache to use. This may inform the allocator of the expected access/retention pattern
-    to enable more efficient memory management.
-    """
 
     block_size: int = 128
     """
@@ -173,9 +154,11 @@ class DSStateManagerConfig(DeepSpeedConfigModel):
     Enable tracking for offloading KV-cache to host memory. Currently unsupported.
     """
 
-    @model_validator(mode="after")
-    def max_ragged_sequence_count_validator(self):
+    @validator("max_ragged_sequence_count")
+    def max_ragged_sequence_count_validator(cls, v: int, values: dict):
         # If the attributes below failed their validation they won't appear in the values dict.
-        assert self.max_ragged_sequence_count <= self.max_tracked_sequences, "max_ragged_sequence_count must be less than max_tracked_sequences"
-        assert self.max_ragged_sequence_count <= self.max_ragged_batch_size, "max_ragged_sequence_count must be less than max_ragged_batch_size"
-        return self
+        if "max_tracked_sequences" in values and v > values["max_tracked_sequences"]:
+            raise ValueError("max_ragged_sequence_count must be less than max_tracked_sequences")
+        if "max_ragged_batch_size" in values and v > values["max_ragged_batch_size"]:
+            raise ValueError("max_ragged_sequence_count must be less than max_ragged_batch_size")
+        return v
