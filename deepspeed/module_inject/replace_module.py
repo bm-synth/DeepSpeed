@@ -384,7 +384,14 @@ def replace_transformer_layer(orig_layer_impl,
 
         # 5. Set the quantization config
         quantizer = GroupQuantizer(q_int8=quantize)
-        _container.set_quantization_config(quantizer)
+        if inference:
+            scale_attn_by_inverse_layer_idx = config.scale_attn_by_inverse_layer_idx if hasattr(
+                config,
+                'scale_attn_by_inverse_layer_idx') else False
+            if moe:
+                ep_world_size = dist.get_world_size()
+                local_ep_size = 1 if num_experts < ep_world_size else num_experts // ep_world_size
+                bigscience_bloom = policy_cls is BLOOMLayerPolicy
 
         # 6. create a DS Inference config object
         _container.create_ds_model_config()
@@ -688,9 +695,7 @@ def replace_transformer_layer(orig_layer_impl,
                 weight_shape = child.weight.ds_shape
             else:
                 weight_shape = child.weight.shape
-            if (isinstance(all_reduce_linears,
-                           tuple) or isinstance(all_reduce_linears,
-                                                str)) and name in all_reduce_linears:
+            if name in all_reduce_linears:
                 new_weight = torch.empty((
                     weight_shape[1] if conv_linear_layer else weight_shape[0],
                     (weight_shape[0] if conv_linear_layer else weight_shape[1]) //

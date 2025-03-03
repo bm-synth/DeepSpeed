@@ -15,6 +15,8 @@ from . import ops
 from .runtime.engine import DeepSpeedEngine, DeepSpeedOptimizerCallable, DeepSpeedSchedulerCallable
 from .runtime.engine import ADAM_OPTIMIZER, LAMB_OPTIMIZER
 from .runtime.pipe.engine import PipelineEngine
+from .inference.engine import InferenceEngine
+from .inference.config import DeepSpeedInferenceConfig
 from .runtime.lr_schedules import add_tuning_arguments
 from .runtime.config import DeepSpeedConfig, DeepSpeedConfigError
 from .runtime.activation_checkpointing import checkpointing
@@ -221,62 +223,45 @@ def add_config_arguments(parser):
     return parser
 
 
-def init_inference(model,
-                   triangular_masking=True,
-                   mp_size=1,
-                   training_mp_size=1,
-                   mpu=None,
-                   ep_group=None,
-                   expert_mp_group=None,
-                   checkpoint=None,
-                   dtype=None,
-                   injection_policy=None,
-                   replace_method='auto',
-                   quantization_setting=None,
-                   replace_with_kernel_inject=False,
-                   return_tuple=True,
-                   ep_size=1,
-                   moe=False,
-                   moe_experts=1,
-                   moe_type='standard',
-                   args=None,
-                   enable_cuda_graph=False):
+def default_inference_config():
+    """
+        Return a default DeepSpeed inference configuration dictionary.
+    """
+    return DeepSpeedInferenceConfig().dict()
+
+
+def init_inference(model, config=None, **kwargs):
     """Initialize the DeepSpeed InferenceEngine.
 
+    Description: all four cases are valid and supported in DS init_inference() API.
+
+    # Case 1: user provides no config and no kwargs. Default config will be used.
+    generator.model = deepspeed.init_inference(generator.model)
+    string = generator("DeepSpeed is")
+    print(string)
+
+    # Case 2: user provides a config and no kwargs. User supplied config will be used.
+    generator.model = deepspeed.init_inference(generator.model, config=config)
+    string = generator("DeepSpeed is")
+    print(string)
+
+    # Case 3: user provides no config and uses keyword arguments (kwargs) only.
+    generator.model = deepspeed.init_inference(generator.model,
+                                                mp_size=world_size,
+                                                dtype=torch.half,
+                                                replace_with_kernel_inject=True)
+    string = generator("DeepSpeed is")
+    print(string)
+
+    # Case 4: user provides config and keyword arguments (kwargs). Both config and kwargs are merged and kwargs take precedence.
+    generator.model = deepspeed.init_inference(generator.model, config={"dtype": torch.half}, replace_with_kernel_inject=True)
+    string = generator("DeepSpeed is")
+    print(string)
+
     Arguments:
-        model: Required: nn.module class before apply any wrappers
+        model: Required: original nn.module object without any wrappers
 
-        triangular_masking: Required: this shows the type of masking for attention scores in transformer layer
-            note that the masking is application specific.
-
-        mp_size: Optional: Desired model parallel size, default is 1 meaning no
-            model parallelism.
-
-        training_mp_size: Optional: if loading a checkpoint this is the mp size that it was trained with,
-            it may be different than what the mp size that you want to use during inference.
-
-        mpu: Optional: A model parallelism unit object that implements
-            get_{model,data}_parallel_{rank,group,world_size}()
-
-        checkpoint: Optional: Path to deepspeed compatible checkpoint or path to
-            JSON with load policy.
-
-        dtype: Optional: Desired model data type, will convert model to this type.
-            Supported target types: torch.half, torch.int8, torch.float
-
-        injection_policy: Optional: Dictionary mapping a client nn.Module to its corresponding
-            injection policy. e.g., {BertLayer : deepspeed.inference.HFBertLayerPolicy}
-
-        replace_method: Optional: If 'auto' DeepSpeed will automatically try and replace
-            model modules with its optimized versions. If an injection_policy is set this will
-            override the automatic replacement behavior.
-
-        quantization_setting: Optional: Quantization settings used for quantizing your model using the MoQ.
-            The setting can be one element or a tuple. If one value is passed in, we consider it as the number
-            of groups used in quantization. A tuple is passed in if we want to mention that there is extra-grouping
-            for the MLP part of a Transformer layer (e.g. (True, 8) shows we quantize the model using 8 groups for
-            all the network except the MLP part that we use 8 extra grouping).
-        replace_with_kernel_inject: If set we inject kernel as we initialize the inference-engine
+        config: Optional: instead of arguments, you can pass in a DS inference config dict
 
     Returns:
         A deepspeed.InferenceEngine wrapped model.
@@ -287,25 +272,20 @@ def init_inference(model,
         __git_branch__),
              ranks=[0])
 
-    engine = InferenceEngine(model,
-                             triangular_masking,
-                             mp_size,
-                             training_mp_size,
-                             ep_size,
-                             mpu,
-                             ep_group,
-                             expert_mp_group,
-                             checkpoint,
-                             dtype,
-                             injection_policy,
-                             return_tuple,
-                             replace_method,
-                             quantization_setting,
-                             replace_with_kernel_inject,
-                             moe,
-                             moe_experts,
-                             moe_type,
-                             args,
-                             enable_cuda_graph)
+    # User did not pass a config, use defaults
+    if config is None:
+        config_dict = kwargs
+    else:
+        config_dict = config
+
+    # if config and kwargs both are passed, merge them, and overwrite using kwargs
+    if config and kwargs:
+        config_dict = {}
+        config_dict.update(config)
+        config_dict.update(kwargs)
+
+    ds_inference_config = DeepSpeedInferenceConfig(**config_dict)
+
+    engine = InferenceEngine(model, config=ds_inference_config)
 
     return engine
