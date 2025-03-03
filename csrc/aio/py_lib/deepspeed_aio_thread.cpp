@@ -11,6 +11,32 @@ Functionality for swapping optimizer tensors to/from (NVMe) storage devices.
 
 using namespace std;
 
+io_op_desc_t::io_op_desc_t(const bool read_op,
+                           const torch::Tensor& buffer,
+                           const int fd,
+                           const char* filename,
+                           const long long int num_bytes,
+                           const bool validate)
+    : _read_op(read_op),
+      _buffer(buffer),
+      _fd(fd),
+      _filename(filename),
+      _num_bytes(num_bytes),
+      _validate(validate)
+{
+    _cpu_buffer = (_buffer.is_cuda() || _buffer.is_xpu()) ? _buffer.to(torch::kCPU).pin_memory()
+                                                          : _buffer;
+    _contiguous_buffer = _cpu_buffer.contiguous();
+}
+
+char* io_op_desc_t::data_ptr() const { return (char*)_contiguous_buffer.data_ptr(); }
+
+void io_op_desc_t::fini()
+{
+    if (_read_op && _buffer.is_cuda()) { _buffer.copy_(_cpu_buffer.to(torch::kCUDA)); }
+    if (_read_op && _buffer.is_xpu()) { _buffer.copy_(_cpu_buffer.to(torch::kXPU)); }
+}
+
 deepspeed_aio_thread_t::deepspeed_aio_thread_t(const int tid, deepspeed_aio_config_t& aio_config)
     : _tid(tid),
       _aio_config(aio_config),
