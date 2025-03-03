@@ -610,22 +610,21 @@ int create_transformer_layer(unsigned layer_id,
     TrainingContext::Instance().TestGemmFP16(
         test_gemm, batch_size, init_seq_length, num_heads, hidden_dim / num_heads);
 
-    auto layer =
-        std::make_shared<BertTransformerLayer<T>>(layer_id,
-                                                  batch_size,
-                                                  hidden_dim,
-                                                  num_heads,
-                                                  intermediate_size,
-                                                  init_seq_length,
-                                                  attn_dropout_ratio,
-                                                  hidden_dropout_ratio,
-                                                  layer_norm_eps,
-                                                  pre_or_postLayerNorm,
-                                                  TrainingContext::Instance().GetGemmAlgos(),
-                                                  attn_dropout_checkpoint,
-                                                  normalize_invertible,
-                                                  gelu_checkpoint,
-                                                  stochastic_mode);
+    auto layer = std::make_shared<BertTransformerLayer<T>>(layer_id,
+                                                           batch_size,
+                                                           hidden_dim,
+                                                           num_heads,
+                                                           intermediate_size,
+                                                           init_seq_length,
+                                                           attn_dropout_ratio,
+                                                           hidden_dropout_ratio,
+                                                           layer_norm_eps,
+                                                           pre_or_postLayerNorm,
+                                                           Context::Instance().GetGemmAlgos(),
+                                                           attn_dropout_checkpoint,
+                                                           normalize_invertible,
+                                                           gelu_checkpoint,
+                                                           stochastic_mode);
 
     s_transformer_layers[layer_id] = layer;
 

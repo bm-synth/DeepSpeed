@@ -1,8 +1,3 @@
-// Copyright (c) Microsoft Corporation.
-// SPDX-License-Identifier: Apache-2.0
-
-// DeepSpeed Team
-
 #include "custom_cuda_layers.h"
 
 #define rows_trans 16
@@ -101,7 +96,7 @@ __global__ void transform_0213<__half>(__half* output,
                                        int heads,
                                        int head_ext)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
 
     int d0_stride = hidden_dim * seq_length;
     int d1_stride = hidden_dim;
@@ -224,7 +219,7 @@ __global__ void bias_add_transform_0213<__half>(__half* output,
                                                 int heads,
                                                 int head_ext)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
 
     int d0_stride = hidden_dim * seq_length;
     int d1_stride = hidden_dim;
@@ -294,7 +289,7 @@ __global__ void bias_add_transform_0213_v2(__half* output,
                                            int seq_length,
                                            int heads)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
     __shared__ float4 in_data[3072];
 
     int d0_stride = hidden_dim * seq_length;
@@ -456,7 +451,7 @@ __global__ void transform4d_0213<__half>(__half* out,
                                          int hidden_dim,
                                          int head_ext)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
 
     int d0_stride = hidden_dim * (seq_length / head_ext);
     int d1_stride = hidden_dim;
@@ -492,7 +487,7 @@ __global__ void transform4d_0213_v2(__half* out,
                                     int seq_length,
                                     int hidden_dim)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
     __shared__ float4 in_data[3072];
 
     int d0_stride = hidden_dim * seq_length;

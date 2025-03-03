@@ -368,11 +368,21 @@ class DeepSpeedTransformerLayer(nn.Module):
         cuda_module = stochastic_transformer_cuda_module if self.config.stochastic_mode else transformer_cuda_module
         create_layer_func = cuda_module.create_transformer_layer_fp16 if self.config.fp16 else cuda_module.create_transformer_layer_fp32
 
-        create_layer_func(self.config.layer_id, self.config.batch_size, self.config.hidden_size, self.config.heads,
-                          self.config.intermediate_size, self.config.attn_dropout_ratio,
-                          self.config.hidden_dropout_ratio, self.config.layer_norm_eps, self.config.seed,
-                          self.config.pre_layer_norm, self.config.test_gemm, self.config.attn_dropout_checkpoint,
-                          self.config.normalize_invertible, self.config.gelu_checkpoint, self.config.stochastic_mode)
+        create_layer_func(self.config.layer_id,
+                          self.config.batch_size,
+                          self.config.hidden_size,
+                          self.config.heads,
+                          self.config.intermediate_size,
+                          self.config.attn_dropout_ratio,
+                          self.config.hidden_dropout_ratio,
+                          self.config.layer_norm_eps,
+                          self.config.seed,
+                          self.config.pre_layer_norm,
+                          self.config.test_gemm,
+                          self.config.attn_dropout_checkpoint,
+                          self.config.normalize_invertible,
+                          self.config.gelu_checkpoint,
+                          self.config.stochastic_mode)
 
     def init_transformer_weights(self, adjust_init_range=False):
         num_layers = self.config.num_hidden_layers
