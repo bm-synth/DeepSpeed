@@ -21,6 +21,8 @@ Taken and modified for DeepSpeed from:
 Commit: 93ab4bea59dc5cbf97c079d313741866af4deac9
 """
 
+import torch
+
 INITIAL_LOSS_SCALE = 'init_scale'
 SCALE_WINDOW = 'scale_window'
 DELAYED_SHIFT = 'delayed_shift'
@@ -129,6 +131,7 @@ class DynamicLossScaler(LossScalerBase):
         self.cur_hysteresis = delayed_shift
         self.consecutive_hysteresis = consecutive_hysteresis
         self.raise_error_at_min_scale = raise_error_at_min_scale
+        self.dynamic = True
 
     # `params` is a list / generator of torch.Variable
     def has_overflow_serial(self, params):
@@ -195,8 +198,8 @@ class DynamicLossScaler(LossScalerBase):
 def CreateLossScaler(dtype, static_loss_scale, dynamic_scaling, dynamic_loss_args):
     if dtype == torch.half and dynamic_scaling:
         if dynamic_loss_args is None:
-            return DynamicLossScaler(dtype=dtype)
-        return DynamicLossScaler(dtype=dtype, **dynamic_loss_args)
+            return DynamicLossScaler()
+        return DynamicLossScaler(**dynamic_loss_args)
 
     loss_scale_value = static_loss_scale if dtype == torch.half else 1.0
     return LossScaler(scale=loss_scale_value)
