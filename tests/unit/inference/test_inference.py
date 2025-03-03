@@ -45,7 +45,7 @@ _bert_models = [
     "deepset/minilm-uncased-squad2",
     "cross-encoder/ms-marco-MiniLM-L-12-v2",
     "dslim/bert-base-NER",
-    "bert-large-uncased-whole-word-masking-finetuned-squad",
+    "google-bert/bert-large-uncased-whole-word-masking-finetuned-squad",
     "distilbert/distilbert-base-cased-distilled-squad",
 ]
 _roberta_models = [
