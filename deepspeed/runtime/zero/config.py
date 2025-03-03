@@ -184,3 +184,8 @@ class DeepSpeedZeroConfig(DeepSpeedConfigObject):
         self.legacy_stage1 = get_scalar_param(zero_config_dict,
                                               ZERO_OPTIMIZATION_LEGACY_STAGE1,
                                               ZERO_OPTIMIZATION_LEGACY_STAGE1_DEFAULT)
+
+        self.round_robin_gradients = get_scalar_param(
+            zero_config_dict,
+            ZERO_OPTIMIZATION_ROUND_ROBIN_GRADIENTS,
+            ZERO_OPTIMIZATION_ROUND_ROBIN_GRADIENTS_DEFAULT)
