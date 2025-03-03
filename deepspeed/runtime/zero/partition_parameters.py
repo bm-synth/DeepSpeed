@@ -867,9 +867,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                  mem_efficient_linear=True,
                  remote_device=None,
                  pin_memory=False,
-                 deepspeed_config=None,
-                 param_dict=None,
-                 enabled=True):
+                 config=None,
+                 enabled=True,
+                 dtype=None):
         """A context to enable massive model construction for training with
         ZeRO-3. Models are automatically partitioned (or, sharded) across the
         system and converted to half precision.
@@ -900,12 +900,6 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                 effect. Defaults to ``True``.
             dtype (``dtype``, optional): Can be used to change the data type of the parameters.
                 Supported options are ``torch.half`` and ``torch.float``. Defaults to ``None``
-            mpu (``object``, optional): A model parallelism unit object that implements get_{model,data}_parallel_{rank,group,world_size}.
-            zero_param_parallel_group(``object``, optional): Parallel (comm) group for dual partitioning of ZeRO params.
-            zero_quantized_weights (bool, optional): If ``True``, turn on quantized weights in all gather weights. Default is ``False``
-            zero_quantized_nontrainable_weights (bool, optional): If ``True``, nontrainable weights will be stored in quantized format. Default is ``False``
-            param_swapper (``deepspeed.runtime.swap_tensor.partitioned_param_swapper.AsyncPartitionedParameterSwapper``, optional): [Experimental] Use existing parameter swapper. Defaults to ``None``.
-                This argument will be removed in the near future.
 
         This context accelerates model initialization and enables models that
         are too large to allocate in their entirety in CPU memory. It has the
