@@ -55,7 +55,7 @@ class NoGatherHandle:
                                                  non_blocking=True).view(param.ds_shape)
         self.__param = param
 
-    def wait(self) -> None:
+    def wait(self, **kwargs) -> None:
         if not get_accelerator().resolves_data_dependency():
             get_accelerator().current_stream().synchronize()
         self.__param.ds_status = ZeroParamStatus.AVAILABLE
@@ -757,31 +757,6 @@ class AllReduceCoalescedHandle:
         self.complete = True
 
 
-class AllReduceCoalescedHandle:
-
-    def __init__(self, handle, params: List[Parameter]) -> None:
-        self.handle = handle
-        self.params = params
-        self.complete = False
-
-        for param in self.params:
-            if param.ds_status != ZeroParamStatus.INFLIGHT:
-                raise RuntimeError(f"expected param {param.ds_summary()} to not be available")
-
-    @instrument_w_nvtx
-    def wait(self) -> None:
-        if self.complete:
-            return
-
-        instrument_w_nvtx(self.handle.wait)()
-
-        for param in self.params:
-            assert param.ds_status == ZeroParamStatus.INFLIGHT, f"expected param {param.ds_summary()} to be inflight"
-            param.ds_status = ZeroParamStatus.AVAILABLE
-
-        self.complete = True
-
-
 class QuantizationInfo:
     # a placeholder object to store all quant related vars used in handles
     def __init__(self) -> None:
@@ -1348,67 +1323,6 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
                     else:
                         partition_sz = sum(p.ds_tensor.ds_numel for p in params)
-
-                        if use_secondary_tensor:
-                            partition_sz = sum(p.ds_tensor.ds_numel * p.ds_secondary_tensor_num_of_groups
-                                               for p in params)
-
-                        flat_tensor = torch.empty(partition_sz * world_size,
-                                                  dtype=torch.int8,
-                                                  device=get_accelerator().current_device_name(),
-                                                  requires_grad=False)
-
-                        if use_secondary_tensor:
-                            if hasattr(params[0].ds_secondary_tensor, "ds_quant_scale"):
-                                quantized_param = instrument_w_nvtx(torch.cat)([
-                                    p.ds_secondary_tensor.data.to(get_accelerator().current_device_name())
-                                    for p in params
-                                ])
-                                scales = instrument_w_nvtx(torch.cat)([
-                                    p.ds_secondary_tensor.ds_quant_scale.to(get_accelerator().current_device_name())
-                                    for p in params
-                                ])
-                            else:
-                                quantized_param, scales = self.quantizer_module.quantize(
-                                    instrument_w_nvtx(torch.cat)([
-                                        p.ds_secondary_tensor.to(get_accelerator().current_device_name())
-                                        for p in params
-                                    ]))
-                        else:
-                            if hasattr(params[0].ds_tensor, "ds_quant_scale"):
-                                quantized_param = instrument_w_nvtx(torch.cat)(
-                                    [p.ds_tensor.data.to(get_accelerator().current_device_name()) for p in params])
-                                scales = instrument_w_nvtx(torch.cat)([
-                                    p.ds_tensor.ds_quant_scale.to(get_accelerator().current_device_name())
-                                    for p in params
-                                ])
-                            else:
-                                quantized_param, scales = self.quantizer_module.quantize(
-                                    instrument_w_nvtx(torch.cat)(
-                                        [p.ds_tensor.to(get_accelerator().current_device_name()) for p in params]))
-                        quant_scale_buffer = torch.empty(
-                            scales.numel() * world_size,
-                            dtype=torch.float32,
-                            device=get_accelerator().current_device_name(),
-                            requires_grad=False,
-                        )
-                        handle = _dist_allgather_fn(quantized_param, flat_tensor, ds_process_group)
-                        quant_handle = _dist_allgather_fn(scales, quant_scale_buffer, ds_process_group)
-                        quant_info = QuantizationInfo()
-                        quant_info.quantized_param = flat_tensor
-                        quant_info.backend = self.quantizer_module
-                        quant_info.quant_handle = quant_handle
-                        quant_info.scale_buffer = quant_scale_buffer
-                        quant_info.partition_sz = partition_sz
-                        quant_info.world_size = world_size
-                        return AllGatherCoalescedHandle(
-                            allgather_handle=handle,
-                            params=params,
-                            partitions=None,
-                            world_size=world_size,
-                            use_secondary_tensor=use_secondary_tensor,
-                            quantization=quant_info,
-                        )
 
                         if use_secondary_tensor:
                             partition_sz = sum(p.ds_tensor.ds_numel * p.ds_secondary_tensor_num_of_groups
