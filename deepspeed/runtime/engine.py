@@ -88,7 +88,7 @@ from deepspeed.runtime.data_pipeline.data_routing.basic_layer import RandomLayer
 from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
 
 from .pipe.module import PipelineModule
-from .utils import ensure_directory_exists, get_ma_status
+from .utils import get_ma_status
 from ..ops.adam import FusedAdam
 from ..moe.sharded_moe import TopKGate, MOELayer
 from ..moe.layer import MoE
@@ -3241,8 +3241,8 @@ class DeepSpeedEngine(Module):
         # There seems to be issue creating them in parallel
 
         # Ensure save_dir directory exists
-        os.makedirs(save_dir, exist_ok=True)
-        torch.distributed.barrier()
+        self.checkpoint_engine.makedirs(save_dir, exist_ok=True)
+        dist.barrier()
 
         if tag is None:
             tag = f"global_step{self.global_steps}"
@@ -3694,8 +3694,8 @@ class DeepSpeedEngine(Module):
         else:
             state_dict = self.module_state_dict(exclude_frozen_parameters=exclude_frozen_parameters)
 
-        if torch.distributed.get_rank() == 0:
-            os.makedirs(save_dir, exist_ok=True)
+        if dist.get_rank() == 0:
+            self.checkpoint_engine.makedirs(save_dir, exist_ok=True)
             logger.info(f"Saving model weights to {path}")
             self.checkpoint_engine.save(state_dict, path)
 
