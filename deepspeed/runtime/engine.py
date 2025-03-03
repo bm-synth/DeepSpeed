@@ -487,17 +487,17 @@ class DeepSpeedEngine(Module):
     def flops_profiler_enabled(self):
         return self._config.flops_profiler_config.enabled
 
-    def flops_profiler_start_step(self):
-        return self._config.flops_profiler_config.start_step
-
-    def flops_profiler_end_step(self):
-        return self._config.flops_profiler_config.end_step
+    def flops_profiler_profile_step(self):
+        return self._config.flops_profiler_config.profile_step
 
     def flops_profiler_module_depth(self):
         return self._config.flops_profiler_config.module_depth
 
     def flops_profiler_top_modules(self):
         return self._config.flops_profiler_config.top_modules
+
+    def flops_profiler_detailed(self):
+        return self._config.flops_profiler_config.detailed
 
     def memory_breakdown(self):
         return self._config.memory_breakdown
@@ -1653,34 +1653,13 @@ class DeepSpeedEngine(Module):
             **kwargs: variable length keyword arguments
         """
         if self.flops_profiler_enabled(
-        ) and self.global_steps == self.flops_profiler_start_step(
+        ) and self.global_steps == self.flops_profiler_profile_step(
         ) and self.global_rank == 0:
             self.flops_profiler = FlopsProfiler(self.module)
             self.flops_profiler.start_profile(ignore_list=None)
 
-        if self.flops_profiler_enabled(
-        ) and self.global_steps == self.flops_profiler_end_step(
-        ) and self.global_rank == 0:
-            print('{:<30}  {:<8}'.format(
-                'Number of multiply-adds: ',
-                self.flops_profiler.get_total_flops(in_str=False)))
-            print('{:<30}  {:<8}'.format(
-                'Number of parameters: ',
-                self.flops_profiler.get_total_params(in_str=False)))
-            print('{:<30}  {:<8}'.format('Number of steps profiled: ',
-                                         self.flops_profiler.get_total_steps()))
-            self.flops_profiler.print_model_profile()
-            self.flops_profiler.print_model_aggregated_profile(
-                module_depth=self.flops_profiler_module_depth(),
-                top_modules=self.flops_profiler_top_modules())
-            self.flops_profiler.flops = self.flops_profiler.get_total_flops()
-            self.flops_profiler.params = self.flops_profiler.get_total_params()
-            self.flops_profiler.end_profile()
-
-        if self.autotuning_profile_model_info():
-            ma = get_ma_status()
-        else:
-            see_memory_usage("Engine before forward", force=self.memory_breakdown())
+        if self.module.training and self.progressive_layer_drop:
+            kwargs.update(self.progressive_layer_drop.get_state())
 
         flops_profiler_active = (self.flops_profiler_enabled()
                                  and self.global_steps == self.flops_profiler_profile_step() and self.global_rank == 0)
@@ -1738,18 +1717,16 @@ class DeepSpeedEngine(Module):
             for module in self.module.modules():
                 module._parameters._in_forward = False
 
-        self._stop_timers(self.engine_timers.forward_timers)
+        if self.flops_profiler_enabled(
+        ) and self.global_steps == self.flops_profiler_profile_step(
+        ) and self.global_rank == 0:
+            self.flops_profiler.print_model_profile(
+                profile_step=self.global_steps,
+                module_depth=self.flops_profiler_module_depth(),
+                top_modules=self.flops_profiler_top_modules(),
+                detailed=self.flops_profiler_detailed())
+            self.flops_profiler.end_profile()
 
-        if flops_profiler_active:
-            self.flops_profiler.stop_profile()
-
-        if self.autotuning_profile_model_info():
-            activation_mem = get_ma_status() - ma
-            self.autotuning_model_info["activation_mem_per_gpu"] = activation_mem
-            print_json_dist(self.autotuning_model_info, [0], path=self.autotuning_model_info_path())
-            exit()
-        else:
-            see_memory_usage("Engine after forward", force=self.memory_breakdown())
         return loss
 
     def _cast_inputs_half(self, inputs):
