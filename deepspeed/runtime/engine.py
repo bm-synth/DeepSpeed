@@ -1056,8 +1056,22 @@ class DeepSpeedEngine(Module):
         for name, param in self.module.named_parameters():
             param_id = id(param)
 
-            def ids_list(group):
-                return [id(param) for param in group]
+        if client_optimizer is not None:
+            client_optimizer.param_groups[:] = [
+                pg for pg in client_optimizer.param_groups if len(pg["params"]) != 0
+            ]
+            logger.info(
+                "Removing param_group that has no 'params'in the client Optimizer")
+
+            basic_optimizer = client_optimizer
+            if self.global_rank == 0:
+                logger.info('Using client Optimizer as basic optimizer')
+        else:
+            basic_optimizer = self._configure_basic_optimizer(model_parameters)
+            if self.global_rank == 0:
+                logger.info(
+                    'Using DeepSpeed Optimizer param name {} as basic optimizer'.format(
+                        self.optimizer_name()))
 
             occurrence = sum([
                 ids_list(group['params']).count(param_id) if param_id in ids_list(group['params']) else 0
