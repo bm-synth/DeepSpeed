@@ -477,10 +477,13 @@ class TestModelTask(DistributedTest):
                           ("EleutherAI/gpt-neox-20b",
                            "text-generation"),
                           ("bigscience/bloom-3b",
+                           "text-generation"),
+                          ("EleutherAI/gpt-j-6B",
                            "text-generation")],
                          ids=["gpt-neo",
                               "gpt-neox",
-                              "bloom"])
+                              "bloom",
+                              "gpt-j"])
 class TestMPSize(DistributedTest):
     world_size = 2
 
@@ -630,15 +633,9 @@ class TestLMCorrectness(DistributedTest):
             setattr(lm, model_family, getattr(lm, model_family).half().to(device))
             lm._device = device
         else:
-            if get_accelerator().device_name() == 'hpu':
-                #lm_eval not supporting HPU device, so get model with CPU and move it to HPU.
-                lm = lm_eval.models.get_model(model_family).create_from_arg_string(f"pretrained={model_name}",
-                                                                                   {"device": "cpu"})
-                setattr(lm, model_family, getattr(lm, model_family).to(device))
-                lm._device = device
-            else:
-                lm = lm_eval.models.get_model(model_family).create_from_arg_string(
-                    f"pretrained={model_name}", {"device": get_accelerator().device_name()})
+            lm = lm_eval.models.get_model(model_family).create_from_arg_string(
+                f"pretrained={model_name}",
+                {"device": "cuda"})
 
         get_accelerator().synchronize()
         start = time.time()
