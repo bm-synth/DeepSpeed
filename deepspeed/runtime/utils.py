@@ -14,13 +14,15 @@ import psutil
 import gc
 from math import sqrt
 
+from numpy import prod
+
 import torch
-from deepspeed import comm as dist
+from torch.nn import functional as F
 try:
     from torch._six import inf
 except ModuleNotFoundError:
     from torch import inf
-from typing import Union, List, Dict
+
 from deepspeed import comm as dist
 from deepspeed.moe.utils import is_moe_param
 from deepspeed.utils import groups, logger
