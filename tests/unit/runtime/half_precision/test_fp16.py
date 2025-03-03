@@ -172,8 +172,6 @@ class TestFP16OptimizerForMoE(DistributedTest):
     world_size = 2
 
     def test_unfused_gradnorm(self, monkeypatch):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
@@ -202,8 +200,6 @@ class TestFP16OptimizerForMoE(DistributedTest):
             engine.step()
 
     def test_fused_gradnorm(self, monkeypatch):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
@@ -238,8 +234,6 @@ class TestFP16OptimizerForMoE(DistributedTest):
     @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
                         reason="FusedLambBuilder has not been implemented on this system.")
     def test_lamb_gradnorm(self, monkeypatch, fused_lamb_legacy: bool):
-        if not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
