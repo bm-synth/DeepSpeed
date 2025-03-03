@@ -74,9 +74,58 @@ void launch_bias_gelu(T* input,
 #define INSTANTIATE_LAUNCH_BIAS_GELU(T) \
     template void launch_bias_gelu<T>(T*, const T*, int, int, cudaStream_t);
 
-INSTANTIATE_LAUNCH_BIAS_GELU(float)
-#ifdef BF16_AVAILABLE
-INSTANTIATE_LAUNCH_BIAS_GELU(__nv_bfloat16)
+// Not called directly from DeepSpeed, but used in ds_qkv_gemm_int8, ds_linear_layer, etc.
+__global__ void fused_bias_add(float* input, const float* bias, int total_count, int hidden_size)
+{
+    float4* input_cast = reinterpret_cast<float4*>(input);
+    const float4* bias_cast = reinterpret_cast<const float4*>(bias);
+    int offset = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (offset < total_count) {
+        float4 data = input_cast[offset];
+        float4 bias_data = bias_cast[offset % hidden_size];
+
+        data.x += bias_data.x;
+        data.y += bias_data.y;
+        data.z += bias_data.z;
+        data.w += bias_data.w;
+
+        input_cast[offset] = data;
+    }
+}
+
+__global__ void fused_bias_add(__half* input, const __half* bias, int total_count, int hidden_size)
+{
+#ifdef HALF_PRECISION_AVAILABLE
+
+    float2* input_cast = reinterpret_cast<float2*>(input);
+    const float2* bias_cast = reinterpret_cast<const float2*>(bias);
+
+    int offset = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (offset < total_count) {
+        float2 vals_vec = input_cast[offset];
+        float2 bias_vec = bias_cast[offset % hidden_size];
+
+        __half2* vals_half = reinterpret_cast<__half2*>(&vals_vec);
+        __half2* bias_half = reinterpret_cast<__half2*>(&bias_vec);
+
+        float2 low_data = __half22float2(vals_half[0]);
+        float2 high_data = __half22float2(vals_half[1]);
+
+        float2 low_bias = __half22float2(bias_half[0]);
+        float2 high_bias = __half22float2(bias_half[1]);
+
+        low_data.x += low_bias.x;
+        low_data.y += low_bias.y;
+        high_data.x += high_bias.x;
+        high_data.y += high_bias.y;
+
+        vals_half[0] = __float22half2_rn(low_data);
+        vals_half[1] = __float22half2_rn(high_data);
+
+        input_cast[offset] = vals_vec;
+    }
 #endif
 INSTANTIATE_LAUNCH_BIAS_GELU(__half)
 
