@@ -104,9 +104,7 @@ class TorchBackend(Backend):
 
     def __init__(self, backend, timeout, init_method, rank=-1, world_size=-1, name='torch'):
         super(TorchBackend, self).__init__()
-        self.shm_comm_op = build_shm_op()
-        self.has_all_reduce_coalesced = has_all_reduce_coalesced()
-        self.has_coalescing_manager = has_coalescing_manager()
+        self.torch_version_before_18 = older_torch()
         self.all_gather_function = self.get_all_gather_function()
         self.reduce_scatter_function = self.get_reduce_scatter_function()
         self.initialized = True
@@ -116,6 +114,28 @@ class TorchBackend(Backend):
         # it is not so we can run on a single GPU without doing any init_process_group
         self.single_gpu_mode = True
         self.init_process_group(backend, timeout, init_method, rank, world_size)
+
+    @classmethod
+    def get_all_gather_function(self):
+        if hasattr(torch.distributed, "all_gather_into_tensor"):
+            return torch.distributed.all_gather_into_tensor
+        elif hasattr(torch.distributed, "_all_gather_base"):
+            return torch.distributed._all_gather_base
+        return None
+
+    @classmethod
+    def get_reduce_scatter_function(self):
+        if hasattr(torch.distributed, "reduce_scatter_tensor"):
+            return torch.distributed.reduce_scatter_tensor
+        elif hasattr(torch.distributed, "_reduce_scatter_base"):
+            return torch.distributed._reduce_scatter_base
+        return None
+
+    def has_all_gather_into_tensor(self):
+        return self.all_gather_function is not None
+
+    def has_reduce_scatter_tensor(self):
+        return self.reduce_scatter_function is not None
 
     def init_process_group(self, backend, timeout, init_method, rank, world_size):
         if not torch.distributed.is_initialized():
@@ -146,27 +166,27 @@ class TorchBackend(Backend):
     def all_gather(self, tensor_list, tensor, group=None, async_op=False):
         return torch.distributed.all_gather(tensor_list=tensor_list, tensor=tensor, group=group, async_op=async_op)
 
-    def all_gather_base(self, output_tensor, input_tensor, group=None, async_op=False):
-        if self.has_allgather_base:
-            return torch.distributed.distributed_c10d._all_gather_base(output_tensor=output_tensor,
-                                                                       input_tensor=input_tensor,
-                                                                       group=group,
-                                                                       async_op=async_op)
+    def all_gather_into_tensor(self, output_tensor, input_tensor, group=None, async_op=False):
+        if self.has_all_gather_into_tensor():
+            return self.all_gather_function(output_tensor=output_tensor,
+                                            input_tensor=input_tensor,
+                                            group=group,
+                                            async_op=async_op)
         else:
-            utils.logger.warning("unable to find torch.distributed._all_gather_base. will fall back to "
-                                 "torch.distributed.reduce_scatter which will result in suboptimal performance. "
+            utils.logger.warning("unable to find torch.distributed.all_gather_into_tensor. will fall back to "
+                                 "torch.distributed.all_gather which will result in suboptimal performance. "
                                  "please consider upgrading your pytorch installation.")
             pass
 
-    def reduce_scatter_base(self, output_tensor, input_tensor, op=ReduceOp.SUM, group=None, async_op=False):
-        if self.has_reduce_scatter_base:
-            return torch.distributed._reduce_scatter_base(output_tensor,
-                                                          input_tensor,
-                                                          op=self._reduce_op(op),
-                                                          group=group,
-                                                          async_op=async_op)
+    def reduce_scatter_tensor(self, output_tensor, input_tensor, op=ReduceOp.SUM, group=None, async_op=False):
+        if self.has_reduce_scatter_tensor():
+            return self.reduce_scatter_function(output_tensor,
+                                                input_tensor,
+                                                op=self._reduce_op(op),
+                                                group=group,
+                                                async_op=async_op)
         else:
-            utils.logger.warning("unable to find torch.distributed._reduce_scatter_base. will fall back to "
+            utils.logger.warning("unable to find torch.distributed.reduce_scatter_tensor. will fall back to "
                                  "torch.distributed.reduce_scatter which will result in suboptimal performance. "
                                  "please consider upgrading your pytorch installation.")
             pass
