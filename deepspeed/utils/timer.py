@@ -35,6 +35,17 @@ except ImportError:
     pass
 
 
+class CudaEventTimer(object):
+    def __init__(self, start_event: torch.cuda.Event, end_event: torch.cuda.Event):
+        self.start_event = start_event
+        self.end_event = end_event
+
+    def get_elapsed_msec(self):
+        torch.cuda.current_stream().wait_event(self.end_event)
+        self.end_event.synchronize()
+        return self.start_event.elapsed_time(self.end_event)
+
+
 class SynchronizedWallClockTimer:
     """Group of timers. Borrowed from Nvidia Megatron code"""
 
@@ -45,43 +56,27 @@ class SynchronizedWallClockTimer:
             self.name_ = name
             self.started_ = False
             self.event_timers = []
-            self.use_host_timer = get_accelerator().use_host_timers()
             self.start_event = None
             self.elapsed_records = None
-            self.start_time = 0.0
-            self.end_time = 0.0
 
         def start(self):
             """Start the timer."""
-            assert not self.started_, f"{self.name_} timer has already been started"
-            if self.use_host_timer:
-                self.start_time = time.time()
-            else:
-                event_class = get_accelerator().Event
-                self.start_event = event_class(enable_timing=True)
-                self.start_event.record()
+            assert not self.started_, f"{self.name} timer has already been started"
+            self.start_event = torch.cuda.Event(enable_timing=True)
+            self.start_event.record()
             self.started_ = True
 
         def stop(self, reset=False, record=False):
             """Stop the timer."""
             assert self.started_, "timer is not started"
-            event_class = get_accelerator().Event
-            if self.use_host_timer:
-                self.end_time = time.time()
-                self.event_timers.append(self.end_time - self.start_time)
-            else:
-                event_class = get_accelerator().Event
-                end_event = event_class(enable_timing=True)
-                end_event.record()
-                self.event_timers.append(CudaEventTimer(self.start_event, end_event))
-                self.start_event = None
+            end_event = torch.cuda.Event(enable_timing=True)
+            end_event.record()
+            self.event_timers.append(CudaEventTimer(self.start_event, end_event))
+            self.start_event = None
             self.started_ = False
 
         def _get_elapsed_msec(self):
-            if self.use_host_timer:
-                self.elapsed_records = [et * 1000.0 for et in self.event_timers]
-            else:
-                self.elapsed_records = [et.get_elapsed_msec() for et in self.event_timers]
+            self.elapsed_records = [et.get_elapsed_msec() for et in self.event_timers]
             self.event_timers.clear()
             return sum(self.elapsed_records)
 
@@ -109,7 +104,6 @@ class SynchronizedWallClockTimer:
             return elapsed_
 
         def mean(self):
-            self.elapsed(reset=False)
             return trim_mean(self.elapsed_records, 0.1)
 
     def __init__(self):
