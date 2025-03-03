@@ -69,9 +69,9 @@ def split_params_grads_into_shared_and_expert_params(
     return shared_grads, expert_grads
 
 
-def split_params_into_different_moe_groups_for_optimizer(
-        param_groups: Union[Dict[str, Any], Tuple[Dict[str, Any], ...], List[Dict[str, Any]]],
-        max_group_size: Union[int, float] = 178956971) -> List[Dict[str, Any]]:
+def split_params_into_different_moe_groups_for_optimizer(param_groups: Tuple[Dict],
+                                                         max_group_size=178956971
+                                                         ) -> Tuple[Dict]:
     """Split parameters into different MoE groups for optimizer
 
     Args:
@@ -120,11 +120,32 @@ def split_params_into_different_moe_groups_for_optimizer(
 
     # Flatten the moe groups
     if max_group_size is not None:
-        for moe_group in group_moe.values():
-            for param_group in moe_group.values():
-                cur_group: List[nn.Parameter] = []
-                all_groups: List[List[nn.Parameter]] = []
+        for k, v in group_moe.items():
+            for k1, v1 in v.items():
+                cur_group = []
+                all_groups = []
                 size_of_cur_group = 0
+                for param in v1['params']:
+                    if size_of_cur_group + param.numel() <= max_group_size:
+                        cur_group.append(param)
+                        size_of_cur_group += param.numel()
+                    else:
+                        all_groups.append(cur_group)
+                        cur_group = [param]
+                        size_of_cur_group = param.numel()
+                if cur_group:
+                    all_groups.append(cur_group)
+                for group in all_groups:
+                    new_dict = {}
+                    for key, val in v1.items():
+                        if key != 'params':
+                            new_dict[key] = val
+                    new_dict['params'] = group
+                    param_groups.append(new_dict)
+    else:
+        for k, v in group_moe.items():
+            for k1, v1 in v.items():
+                param_groups.append(v1)
 
                 for param in cast(List[nn.Parameter], param_group['params']):
                     if size_of_cur_group + param.numel() <= max_group_size:
