@@ -38,14 +38,21 @@ from deepspeed.checkpoint.constants import (DS_VERSION, OPTIMIZER_STATE_DICT, SI
 debug = 0
 
 
-@dataclass
-class zero_model_state:
-    buffers: dict()
-    param_shapes: dict()
-    shared_params: list
-    ds_version: int
-    frozen_param_shapes: dict()
-    frozen_param_fragments: dict()
+def get_model_state_file(checkpoint_dir):
+
+    if not os.path.isdir(checkpoint_dir):
+        raise FileNotFoundError(f"Directory '{checkpoint_dir}' doesn't exist")
+
+    # there should be only one file
+    file = os.path.join(checkpoint_dir, "zero_pp_rank_0_mp_rank_00_model_states.pt")
+
+    if not os.path.exists(file):
+        raise FileNotFoundError(f"can't find '{file}' in directory '{checkpoint_dir}'")
+
+    return file
+
+
+def get_optim_files(checkpoint_dir):
 
 
 debug = 0
@@ -85,7 +92,7 @@ def get_model_state_file(checkpoint_dir, zero_stage):
 
 def get_checkpoint_files(checkpoint_dir, glob_pattern):
     # XXX: need to test that this simple glob rule works for multi-node setup too
-    ckpt_files = sorted(glob.glob(os.path.join(checkpoint_dir, glob_pattern)), key=natural_keys)
+    optim_files = sorted(glob.glob(os.path.join(checkpoint_dir, "*_optim_states.pt")))
 
     if len(ckpt_files) == 0:
         raise FileNotFoundError(f"can't find {glob_pattern} files in directory '{checkpoint_dir}'")
@@ -93,62 +100,28 @@ def get_checkpoint_files(checkpoint_dir, glob_pattern):
     return ckpt_files
 
 
-def get_optim_files(checkpoint_dir):
-    return get_checkpoint_files(checkpoint_dir, "*_optim_states.pt")
+def parse_model_state(file):
+
+    # load to cpu
+    device = torch.device('cpu')
+    state_dict = torch.load(file, map_location=device)
+
+    if "buffer_names" not in state_dict:
+        raise ValueError(f"{file} is not a model state checkpoint")
+    buffer_names = state_dict["buffer_names"]
+    if debug:
+        print(buffer_names)
+
+    # recover just the buffers while restoring them to fp32 if they were saved in fp16
+    buffers = {
+        k: v.float()
+        for k,
+        v in state_dict["module"].items() if k in buffer_names
+    }
+    return buffers
 
 
-def get_model_state_files(checkpoint_dir):
-    return get_checkpoint_files(checkpoint_dir, "*_model_states.pt")
-
-
-def parse_model_states(files):
-    zero_model_states = []
-    for file in files:
-        state_dict = torch.load(file, map_location=device, weights_only=False)
-
-        if BUFFER_NAMES not in state_dict:
-            raise ValueError(f"{file} is not a model state checkpoint")
-        buffer_names = state_dict[BUFFER_NAMES]
-        if debug:
-            print("Found buffers:", buffer_names)
-
-        # recover just the buffers while restoring them to fp32 if they were saved in fp16
-        buffers = {k: v.float() for k, v in state_dict["module"].items() if k in buffer_names}
-        param_shapes = state_dict[PARAM_SHAPES]
-
-        # collect parameters that are included in param_shapes
-        param_names = []
-        for s in param_shapes:
-            for name in s.keys():
-                param_names.append(name)
-
-        # update with frozen parameters
-        frozen_param_shapes = state_dict.get(FROZEN_PARAM_SHAPES, None)
-        if frozen_param_shapes is not None:
-            if debug:
-                print(f"Found frozen_param_shapes: {frozen_param_shapes}")
-            param_names += list(frozen_param_shapes.keys())
-
-        # handle shared params
-        shared_params = [[k, v] for k, v in state_dict["shared_params"].items()]
-
-        ds_version = state_dict.get(DS_VERSION, None)
-
-        frozen_param_fragments = state_dict.get(FROZEN_PARAM_FRAGMENTS, None)
-
-        z_model_state = zero_model_state(buffers=buffers,
-                                         param_shapes=param_shapes,
-                                         shared_params=shared_params,
-                                         ds_version=ds_version,
-                                         frozen_param_shapes=frozen_param_shapes,
-                                         frozen_param_fragments=frozen_param_fragments)
-        zero_model_states.append(z_model_state)
-
-    return zero_model_states
-
-
-def parse_optim_states(files, ds_checkpoint_dir):
-    total_files = len(files)
+def parse_optim_states(files):
     state_dicts = []
     for f in tqdm(files, desc='Loading checkpoint shards'):
         state_dict = torch.load(f, map_location=device, mmap=True, weights_only=False)
@@ -158,7 +131,7 @@ def parse_optim_states(files, ds_checkpoint_dir):
         state_dicts.append(state_dict)
 
     if not "zero_stage" in state_dicts[0]['optimizer_state_dict']:
-        raise ValueError(f"non zero checkpoint")
+        raise ValueError(f"{files[0]} is not a zero checkpoint")
     zero_stage = state_dicts[0]['optimizer_state_dict']["zero_stage"]
     world_size = state_dicts[0]['optimizer_state_dict']["partition_count"]
     param_shapes = state_dicts[0]["param_shapes"]
@@ -365,7 +338,9 @@ def _zero3_merge_frozen_params(state_dict, world_size, zero_model_states):
         print(f'Frozen params: Have {avail_numel} numels to process.')
         print(f'Frozen params: Need {wanted_numel} numels in {wanted_params} params')
 
+    model_file = get_model_state_file(checkpoint_dir)
     optim_files = get_optim_files(checkpoint_dir)
+    buffers = parse_model_state(model_file)
     zero_stage, world_size, param_shapes, fp32_flat_groups = parse_optim_states(optim_files)
     print(
         f"Detected checkpoint of type zero stage {zero_stage}, world_size: {world_size}")
@@ -387,9 +362,16 @@ def _zero3_merge_frozen_params(state_dict, world_size, zero_model_states):
         # XXX: memory usage doubles here (zero2)
         full_single_fp32_vector = torch.cat(fp32_flat_groups, 0)
 
+    state_dict = OrderedDict()
+
+    # buffers
+    state_dict.update(buffers)
+    if debug:
+        print(f"added {len(buffers)} buffers")
+
+    # params
     # XXX: for huge models that can't fit into the host's RAM we will have to recode this to support
     # out-of-core computing solution
-    state_dict = OrderedDict()
     offset = 0
     total_numel = 0
     for name, shape in zero_model_states[0].frozen_param_shapes.items():

@@ -3084,19 +3084,20 @@ class DeepSpeedEngine(Module):
         # then instead just returns None.
         self._curr_ckpt_path = os.path.join(save_dir, tag)
 
-        state = dict(
-            module=self.module_state_dict(),
-            optimizer=self.optimizer.state_dict()
-            if self.optimizer and not self.zero_optimization() else None,
-            lr_scheduler=self.lr_scheduler.state_dict()
-            if self.lr_scheduler is not None else None,
-            csr_tensor_module_names=self.csr_tensor_module_names,
-            skipped_steps=self.skipped_steps,
-            global_steps=self.global_steps,
-            global_samples=self.global_samples,
-            dp_world_size=self.dp_world_size,
-            mp_world_size=self.mp_world_size,
-        )
+        state = dict(module=self.module_state_dict(),
+                     buffer_names=self._get_buffer_names(),
+                     optimizer=self.optimizer.state_dict()
+                     if self.optimizer and not self.zero_optimization() else None,
+                     lr_scheduler=self.lr_scheduler.state_dict()
+                     if self.lr_scheduler is not None else None,
+                     csr_tensor_module_names=self.csr_tensor_module_names,
+                     skipped_steps=self.skipped_steps,
+                     global_steps=self.global_steps,
+                     global_samples=self.global_samples,
+                     dp_world_size=self.dp_world_size,
+                     mp_world_size=self.mp_world_size,
+                     ds_config=self.config,
+                     ds_version=version)
         state.update(client_state)
 
         if self.save_non_zero_checkpoint:
@@ -3124,106 +3125,13 @@ class DeepSpeedEngine(Module):
 
         return buffer_names
 
-    def _get_param_shape_func(self, param):
-        return param.ds_shape if hasattr(param, 'ds_id') else param.shape
-
-    def _get_param_fragment_func(self, param):
-        return param.ds_tensor.detach().cpu() if hasattr(param, 'ds_id') else param.detach().cpu()
-
-    def _get_zero_frozen_param_attributes(self, attr_func):
-        frozen_param_fragments = OrderedDict()
-
-        for param in self.module.parameters():
-            if param.requires_grad:
-                continue
-            if param not in self.param_names:
-                raise ValueError(f"failed to find frozen {param} in named params")
-            name = self.param_names[param]
-            frozen_param_fragments[name] = attr_func(param)
-
-        return frozen_param_fragments
-
-    def _get_zero_param_shapes(self):
-        """Returns a dict of name to shape mapping, only for the flattened fp32 weights saved by the
-        optimizer. the names are exactly as in state_dict. The order is absolutely important, since
-        the saved data is just flattened data with no identifiers and requires reconstruction in the
-        same order it was saved.
-        We can't rely on self.module.named_parameters() to get the saved tensors, as some params
-        will be missing and others unsaved and then it'd be impossible to reconstruct state_dict
-        from the flattened weights.
-        optimizer.bit16_groups seems to be the easiest to use as it's in all zeroX versions.
-        """
-        param_group_shapes = []
-        cnt = 0
-        numel = 0
-
-        # zero2 started using a round_robin_bit16_groups which is a shuffled version of bit16_groups -
-        # if we don't use it, we get parameters ordered incorrectly
-        if hasattr(self.optimizer, "round_robin_bit16_groups"):
-            bit16_groups = self.optimizer.round_robin_bit16_groups
-        elif self.bfloat16_enabled() and hasattr(self.optimizer, "bf16_groups"):
-            bit16_groups = self.optimizer.bf16_groups
-        else:
-            bit16_groups = self.optimizer.bit16_groups if self.zero_optimization_stage(
-            ) == 2 else self.optimizer.fp16_groups
-
-        for bit16_group in bit16_groups:
-            param_shapes = OrderedDict()
-            for param in bit16_group:
-                cnt += 1
-                numel += param.ds_numel if hasattr(param, "ds_numel") else param.numel()
-                shape = param.ds_shape if hasattr(param, "ds_shape") else param.shape
-                if param not in self.param_names:
-                    raise ValueError(f"failed to find optimizer param in named params")
-                name = self.param_names[param]
-                param_shapes[name] = shape
-
-                # uncomment to debug zero_to_fp32.py problems
-                # if self.global_rank == 0: print(f"saving param {name} {shape} (numel={shape.numel()})")
-            param_group_shapes.append(param_shapes)
-        # if self.global_rank == 0: print(f"Total saved {numel} numels in {cnt} params")
-
-        return param_group_shapes
-
-    def _get_shared_params(self):
-        """
-        Returns a dict of shared params, which can later be used to reconstruct the original state dict,
-        e.g. in `zero_to_fp32`. Each dict entry is a pair of param names, where the key is the name
-        of the variable that isn't stored and the value is the actual param holding data.
-        """
-        shared_index = {}
-        shared_params_by_full_name = {}
-
-        is_zero3_model = (self.zero_optimization_partition_weights()
-                          and any(hasattr(param, "ds_id") for param in self.module.parameters()))
-
-        def get_layer_state_dict(module, prefix=""):
-            # handle params
-            for name, param in module.named_parameters(recurse=False):
-                if param is None or (is_zero3_model and not hasattr(param, "ds_id")):
-                    continue
-                key = prefix + name
-
-                # When weights are manged by stage 3, we can't rely on param.data_ptr() as it will be reused
-                # as weights get gathered and reduced, but param.ds_id is unique across all zero weights
-                # (and shared params will have the same param.ds_id)
-                param_id = param.ds_id if is_zero3_model else param.data_ptr()
-
-                if param_id in shared_index:
-                    # shared weights
-                    #print(f"`{key}` is shared with `{shared_index[param_id]}`")
-                    shared_params_by_full_name[key] = shared_index[param_id]
-                else:
-                    shared_index[param_id] = key
-
-            for name, child in module.named_children():
-                if child is not None:
-                    get_layer_state_dict(child, prefix + name + ".")
-
-        if dist.get_rank() == 0:
-            get_layer_state_dict(self.module, prefix="")
-
-        return shared_params_by_full_name
+    def _get_param_shapes(self):
+        param_shapes = OrderedDict()
+        for name, param in self.module.named_parameters():
+            param_shapes[name] = param.ds_shape if hasattr(param,
+                                                           "ds_shape") else param.shape
+            # print(f"saving param {name} {param_shapes[name]}")
+        return param_shapes
 
     def _copy_recovery_script(self, save_path):
         base_dir = os.path.dirname(os.path.dirname(__file__))
