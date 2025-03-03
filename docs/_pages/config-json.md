@@ -34,10 +34,10 @@ toc_label: "Contents"
 
 <i>**optimizer**</i>: [dictionary]
 
-| Fields | Value                                                                                                                                                                                                                                                                                                        | Example                      |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| type   | The optimizer name. DeepSpeed natively supports **Adam**, **AdamW**, **OneBitAdam**, **Lamb**, and **OneBitLamb** optimizers (See [here](https://deepspeed.readthedocs.io/en/latest/optimizers.html) for details) and will import other optimizers from [torch](https://pytorch.org/docs/stable/optim.html). | `"Adam"`                     |
-| params | Dictionary of parameters to instantiate optimizer. The parameter names must match the optimizer constructor signature (e.g., for [Adam](https://pytorch.org/docs/stable/optim.html#torch.optim.Adam)).                                                                                                       | `{"lr": 0.001, "eps": 1e-8}` |
+| Fields | Value                                                        | Example                        |
+| ------ | ------------------------------------------------------------ | ------------------------------ |
+| type   | The optimizer name. DeepSpeed natively supports Adam, OneBitAdam, and LAMB optimizers and will import other optimizers from [torch](https://pytorch.org/docs/stable/optim.html). | `"Adam"`                         |
+| params | Dictionary of parameters to instantiate optimizer. The parameter names must match the optimizer constructor signature (e.g., for [Adam](https://pytorch.org/docs/stable/optim.html#torch.optim.Adam)). | `{"lr": 0.001, "eps": 1e-8}` |
 
   Example of <i>**optimizer**</i> with Adam
 
@@ -55,14 +55,7 @@ toc_label: "Contents"
     }
   }
 ```
-The Adam optimizer also supports the following two params keys/values in addition to the standard parameters from [torch.optim.Adam](https://pytorch.org/docs/stable/_modules/torch/optim/adam.html#Adam):
-
-| "params" key  | Description                                                                 | Default |
-| ------------- | --------------------------------------------------------------------------- | ------- |
-| torch\_adam   | Use torch's implementation of adam instead of our fused adam implementation | false   |
-| adam\_w\_mode | Apply L2 regularization (also known as AdamW)                               | true    |
-
-Another example of <i>**optimizer**</i> with 1-bit Adam specific parameters is as follows.
+  Another example of ***optimizer*** with 1-bit Adam specific parameters is as follows.
 
 ```json
 "optimizer": {
@@ -76,83 +69,10 @@ Another example of <i>**optimizer**</i> with 1-bit Adam specific parameters is a
       "eps": 1e-8,
       "weight_decay": 3e-7,
       "freeze_step": 400,
-      "cuda_aware": false,
-      "comm_backend_name": "nccl"
+      "cuda_aware": true
     }
   }
 ```
-
-The 1-bit Adam optimizer supports the following three params keys/values in addition to the standard Adam (learn more in our [tutorial](/tutorials/onebit-adam/)):
-
-| "params" key        | Description                                                                        | Default |
-| ------------------- | ---------------------------------------------------------------------------------- | ------- |
-| freeze\_step        | Number of warm up steps before 1-bit compression gets applied to the communication | 100000  |
-| cuda\_aware         | To indicate that the underlying MPI library supports CUDA-Aware communication      | false   |
-| comm\_backend\_name | To indicate which backend implementation to use                                    | "nccl"  |
-
-A variant ***optimizer*** for 1-bit Adam is 0/1 Adam, which further optimizes 1-bit Adam via adaptive variance freezing and 1-bit synchronization over optimizer states.
-```json
-"optimizer": {
-    "type": "ZeroOneAdam",
-    "params": {
-      "lr": 1e-3,
-      "weight_decay": 0.01,
-      "bias_correction": false,
-      "var_freeze_step": 1000,
-      "var_update_scaler": 16,
-      "local_step_scaler": 1000,
-      "local_step_clipper": 16,
-      "cuda_aware": false,
-      "comm_backend_name": "nccl"
-    }
-  }
-```
-0/1 Adam supports  the following params key/values in addition to standard Adam (learn more in our [tutorial](/tutorial/zero-one-adam/).)
-
-| "params" key        | Description                                                                        | Default |
-| ------------------- | ---------------------------------------------------------------------------------- | ------- |
-| var\_freeze\_step   | The latest step to update the variance                                             | 100000  |
-| var\_update\_scaler | The interval to update the variance                                                | 16  |
-| local\_step\_scaler | The interval to scale the local steps interval according to the learning rate policy   | 32678  |
-| local\_step\_clipper | The largest interval for local steps with learning rate policy                     | 16  |
-| cuda\_aware         | To indicate that the underlying MPI library supports CUDA-Aware communication      | false   |
-| comm\_backend\_name | To indicate which backend implementation to use                                    | "nccl"  |
-
-Another example of ***optimizer*** with 1-bit LAMB
-
-```json
-"optimizer": {
-    "type": "OneBitLamb",
-    "params": {
-      "lr": 11e-3,
-      "weight_decay": 0.01,
-      "bias_correction": false,
-      "max_coeff": 0.3,
-      "min_coeff": 0.01,
-      "freeze_step": 1000,
-      "cuda_aware": false,
-      "comm_backend_name": "nccl",
-      "coeff_beta": 0.9,
-      "factor_max": 4.0,
-      "factor_min": 0.5,
-      "factor_threshold": 0.1
-    }
-  }
-```
-
-The 1-bit LAMB optimizer supports the following params keys/values in addition to the standard LAMB (learn more in our [tutorial](/tutorials/onebit-lamb/)):
-
-| "params" key        | Description                                                                               | Default |
-| ------------------- | ----------------------------------------------------------------------------------------- | ------- |
-| max\_coeff          | Scaling coefficient upper bound for original LAMB algorithm and 1-bit LAMB's warmup stage | 10.0    |
-| min\_coeff          | Scaling coefficient lower bound for original LAMB algorithm and 1-bit LAMB's warmup stage | 0.01    |
-| freeze\_step        | Number of warm up steps before 1-bit compression gets applied to the communication        | 100000  |
-| cuda\_aware         | To indicate that the underlying MPI library supports CUDA-Aware communication             | false   |
-| comm\_backend\_name | To indicate which backend implementation to use                                           | "nccl"  |
-| coeff\_beta         | Coefficient used for computing running averages of lamb coefficient                       | 0.9     |
-| factor\_max         | Maximum value of scaling factor to the frozen lamb coefficient during compression stage   | 4.0     |
-| factor\_min         | Minimum value of scaling factor to the frozen lamb coefficient during compression stage   | 0.5     |
-| factor\_threshold   | Threshold of how much the scaling factor can fluctuate between steps                      | 0.1     |
 
 ### Scheduler Parameters
 
