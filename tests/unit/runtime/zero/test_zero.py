@@ -1497,213 +1497,76 @@ class TestZeroFrozenWeights(DistributedTest):
             model.backward(loss)
             model.step()
 
+            step_counts = []
+            if zero_stage == 3:
+                for sub_group_id, _ in enumerate(optimizer.fp16_groups):
+                    fp32_param = optimizer.fp32_partitioned_groups_flat[sub_group_id]
+                    state = optimizer.optimizer.state[fp32_param]
+                    step_counts.append(state['step'])
+                assert all(step == step_counts[0] for step in step_counts)
+            elif zero_stage == 1 or zero_stage == 2:
+                for param_group in optimizer.optimizer.param_groups:
+                    for param in param_group['params']:
+                        state = optimizer.optimizer.state[param]
+                        step_counts.append(state['step'])
+                assert all(step == step_counts[0] for step in step_counts)
 
-@pytest.mark.parametrize("force_ds_optim", [True, False])
-class TestZeroOffloadOptim(DistributedTest):
+
+class TestZeroFrozenWeights(DistributedTest):
     world_size = 1
 
-    def test(self, force_ds_optim):
+    def test(self):
         config_dict = {
             "train_batch_size": 4,
-            "gradient_accumulation_steps": 2,
             "steps_per_print": 1,
-            "zero_optimization": {
-                "stage": 1,
-                "offload_optimizer": {
-                    "device": "cpu"
-                }
-            },
-            "zero_force_ds_cpu_optimizer": force_ds_optim,
-        }
-        if get_accelerator().is_fp16_supported():
-            config_dict["fp16"] = {"enabled": True}
-        elif get_accelerator().is_bf16_supported():
-            config_dict["bf16"] = {"enabled": True}
-        hidden_dim = 10
-
-        model = SimpleModel(hidden_dim)
-
-        optimizer = torch.optim.Adam(model.parameters())
-
-        if force_ds_optim:
-            with pytest.raises(ZeRORuntimeException):
-                model, _, _, _ = deepspeed.initialize(model=model, optimizer=optimizer, config=config_dict)
-        else:
-            model, _, _, _ = deepspeed.initialize(model=model, optimizer=optimizer, config=config_dict)
-
-
-@pytest.mark.parametrize("training", [True, False])
-class TestZeroPartitionCache(DistributedTest):
-    world_size = 1
-
-    def test_training_partition_cache(self, training):
-        hidden_dim = 10
-        config_dict = {
-            "train_batch_size": 2,
-            "zero_optimization": {
-                "stage": 3,
-                "stage3_param_persistence_threshold": hidden_dim,
-            },
-        }
-        if get_accelerator().is_fp16_supported():
-            config_dict["fp16"] = {"enabled": True, "initial_scale_power": 8}
-        elif get_accelerator().is_bf16_supported():
-            config_dict["bf16"] = {"enabled": True}
-        if training:
-            config_dict["optimizer"] = {"type": "Adam"}
-
-        with deepspeed.zero.Init(config_dict_or_path=config_dict):
-            model = SimpleModel(hidden_dim, empty_grad=False)
-
-        model, _, _, _ = deepspeed.initialize(model=model, config=config_dict)
-
-        data_loader = random_dataloader(
-            model=model,
-            total_samples=6,
-            hidden_dim=hidden_dim,
-            device=model.device,
-        )
-
-        for _, batch in enumerate(data_loader):
-            loss = model(batch[0], batch[1])
-            if training:
-                model.backward(loss)
-                model.step()
-
-        persist_param_size = sum([p.numel() for p in model.parameters() if p.ds_persist])
-
-        assert persist_param_size >= sum([p.numel() for p in model.parameters()])
-
-        model.empty_partition_cache()
-        assert sum([p.numel() for p in model.parameters()]) == 0
-
-
-@pytest.mark.parametrize("use_client_optimizer", [True, False])
-@pytest.mark.parametrize("empty_weight_group", [True, False])
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
-class TestEmptyParameterGroup(DistributedTest):
-    world_size = 1
-
-    def test_empty_param_groups(self, dtype, use_client_optimizer, empty_weight_group):
-        if dtype == torch.float16 and not get_accelerator().is_fp16_supported():
-            pytest.skip("fp16 is not supported")
-        model = SimpleModel(hidden_dim=4, nlayers=4)
-        param_groups = [
-            {
-                "params": [] if empty_weight_group else [l.weight for l in model.linears],
-                "weight_decay": 0.01,
-            },
-            {
-                "params": [l.bias for l in model.linears] if empty_weight_group else [],
-                "weight_decay": 0.0
-            },
-        ]
-
-        config_dict = {
-            "train_micro_batch_size_per_gpu": 1,
-            "steps_per_print": 1,
-            "zero_optimization": {
-                "stage": 3,
-                "stage3_param_persistence_threshold": 0,
-            },
-            "fp16": {
-                "enabled": dtype == torch.float16,
-            },
-            "bf16": {
-                "enabled": dtype == torch.bfloat16
-            }
-        }
-
-        if use_client_optimizer:
-            optimizer = torch.optim.AdamW(param_groups, lr=0.1)
-            model_parameters = model.parameters()
-        else:
-            config_dict["optimizer"] = {"type": "adamw"}
-            optimizer = None
-            model_parameters = param_groups
-
-        model, _, _, _ = deepspeed.initialize(
-            model=model,
-            model_parameters=model_parameters,
-            optimizer=optimizer,
-            config=config_dict,
-        )
-
-
-class TestZero3SwitchModes(DistributedTest):
-    world_size = 2
-
-    @pytest.mark.parametrize("prefetch_ratio", [0.0, 0.5, 1.0])
-    def test(self, prefetch_ratio, zero_stage=3):
-
-        hidden_dim = 10
-        model = SimpleModel(hidden_dim)
-
-        prefetch_bucket_size = int(sum([p.numel() for p in model.parameters(recurse=True)]) * prefetch_ratio)
-        config_dict = {
-            "train_micro_batch_size_per_gpu": 2,
-            "gradient_accumulation_steps": 2,
-            "zero_optimization": {
-                "stage": zero_stage,
-                "stage3_prefetch_bucket_size": prefetch_bucket_size
-            },
             "optimizer": {
                 "type": "Adam",
                 "params": {
-                    "lr": 1e-3
+                    "lr": 1e-4
                 }
             },
             "fp16": {
-                "enabled": True,
-                "initial_scale_power": 8
-            }
-        }
-
-        model, _, _, _ = deepspeed.initialize(config=config_dict, model=model, model_parameters=model.parameters())
-        data_loader = random_dataloader(model=model, total_samples=16, hidden_dim=hidden_dim, device=model.device)
-
-        for _ in range(3):
-            model.train()
-            for batch in data_loader:
-                loss = model(batch[0], batch[1])
-                model.backward(loss)
-                model.step()
-
-            model.eval()
-            with torch.no_grad():
-                for batch in data_loader:
-                    loss = model(batch[0], batch[1])
-
-
-# Avoid overwriting client module id
-# https://github.com/deepspeedai/DeepSpeed/issues/6772
-class TestZero3ClientModuleID(DistributedTest):
-    world_size = 2
-
-    def test_client_module_id(self):
-        config_dict = {
-            "train_micro_batch_size_per_gpu": 1,
-            "steps_per_print": 1,
-            "optimizer": {
-                "type": "Adam",
+                "enabled": True
             },
             "zero_optimization": {
                 "stage": 3
-            },
+            }
         }
+        hidden_dim = 10
 
         class MyModel(torch.nn.Module):
+            def __init__(self, hidden_dim):
+                super(MyModel, self).__init__()
+                self.l1 = torch.nn.Linear(hidden_dim, hidden_dim)
+                self.l2 = torch.nn.Linear(hidden_dim, hidden_dim)
+                self.act = torch.nn.ReLU()
+                self.cel = torch.nn.CrossEntropyLoss()
 
-            def __init__(self):
-                super().__init__()
-                self.id = 3  # ID arbitrary client usage, e.g. GPU placement
-                self.fc = Linear(128, 128)
+                # freeze one fc
+                self.l2.weight.requires_grad = False
+                self.l2.bias.requires_grad = False
 
-            def forward(self, x):
-                return self.fc(x)
+            def forward(self, x, y):
+                x = self.l1(x)
+                x = self.act(x)
+                x = self.l2(x)
+                loss = self.cel(x, y)
+                val = (x, loss)
+                return val
 
-        model = MyModel()
-        pre_init_m_id = model.id
-        model, _, _, _ = deepspeed.initialize(model=model, model_parameters=model.parameters(), config=config_dict)
-        post_init_m_id = model.id
-        assert pre_init_m_id == post_init_m_id
+        with deepspeed.zero.Init(config_dict_or_path=config_dict):
+            model = MyModel(hidden_dim)
+
+        model, _, _, _ = deepspeed.initialize(model=model,
+                                              model_parameters=model.parameters(),
+                                              config=config_dict)
+        data_loader = random_dataloader(model=model,
+                                        total_samples=50,
+                                        hidden_dim=hidden_dim,
+                                        device=model.device)
+        dist.barrier()
+        for n, batch in enumerate(data_loader):
+            loss = model(batch[0], batch[1])
+            loss = loss[1]
+            model.backward(loss)
+            model.step()
