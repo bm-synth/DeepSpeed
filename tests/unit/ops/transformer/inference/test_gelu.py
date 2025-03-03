@@ -9,11 +9,10 @@ import deepspeed
 from deepspeed.ops.op_builder import InferenceBuilder
 from deepspeed.ops.transformer import DeepSpeedInferenceConfig
 from deepspeed.ops.transformer.inference.op_binding.bias_gelu import BiasGeluOp
+from deepspeed.utils.torch import required_torch_version
 
 if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
     pytest.skip("Inference ops are not available on this system", allow_module_level=True)
-
-torch_minor_version = None
 
 
 def allclose(x, y):
