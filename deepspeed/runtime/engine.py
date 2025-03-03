@@ -46,6 +46,7 @@ import deepspeed.runtime.lr_schedules as lr_schedules
 from deepspeed.utils import logger, log_dist, init_distributed
 from deepspeed.utils.timer import ThroughputTimer, SynchronizedWallClockTimer
 from deepspeed.utils.debug import debug_extract_module_and_param_names
+from deepspeed.monitor.monitor import MonitorMaster
 from deepspeed.runtime.progressive_layer_drop import ProgressiveLayerDrop
 from deepspeed.runtime.eigenvalue import Eigenvalue
 from deepspeed.runtime.data_pipeline.curriculum_scheduler import CurriculumScheduler
@@ -182,8 +183,6 @@ class DeepSpeedEngine(Module):
                                                            " with model parallelism.")
 
         self._set_distributed_vars(args)
-
-        dist.configure(self._config)
 
         self.monitor = MonitorMaster(self._config.monitor_config)
 
@@ -440,113 +439,6 @@ class DeepSpeedEngine(Module):
 
     def curriculum_params(self):
         return self._config.curriculum_params
-
-    def tensorboard_enabled(self):
-        return self._config.tensorboard_enabled
-
-    def tensorboard_output_path(self):
-        return self._config.tensorboard_output_path
-
-    def tensorboard_job_name(self):
-        return self._config.tensorboard_job_name
-
-    def get_summary_writer(self,
-                           name="DeepSpeedJobName",
-                           base=os.path.join(os.path.expanduser("~"),
-                                             "tensorboard")):
-        if self.tensorboard_output_path():
-            base_dir = self.tensorboard_output_path()
-            job_name = self.tensorboard_job_name()
-            log_dir = os.path.join(base_dir, job_name)
-        else:
-            if self.tensorboard_job_name():
-                name = self.tensorboard_job_name()
-
-            # Infrastructure-specific job-id
-            if 'DLWS_JOB_ID' in os.environ:
-                infra_job_id = os.environ['DLWS_JOB_ID']
-            elif 'DLTS_JOB_ID' in os.environ:
-                infra_job_id = os.environ['DLTS_JOB_ID']
-            else:
-                infra_job_id = 'unknown-job-id'
-
-            summary_writer_dir_name = os.path.join(infra_job_id, "logs")
-            log_dir = os.path.join(base, summary_writer_dir_name, name)
-
-        os.makedirs(log_dir, exist_ok=True)
-        try:
-            # torch.utils.tensorboard will fail if `tensorboard` is not available,
-            # see their docs for more details: https://pytorch.org/docs/1.8.0/tensorboard.html
-            import tensorboard
-        except ImportError:
-            print(
-                'If you want to use tensorboard logging please `pip install tensorboard`'
-            )
-            raise
-        from torch.utils.tensorboard import SummaryWriter
-
-    def eigenvalue_gas_boundary_resolution(self):
-        return self._config.eigenvalue_gas_boundary_resolution
-
-    def eigenvalue_layer_name(self):
-        return self._config.eigenvalue_layer_name
-
-    def eigenvalue_layer_num(self):
-        return self._config.eigenvalue_layer_num
-
-    def curriculum_enabled_legacy(self):
-        return self._config.curriculum_enabled_legacy
-
-    def curriculum_params_legacy(self):
-        return self._config.curriculum_params_legacy
-
-    def data_efficiency_enabled(self):
-        return self._config.data_efficiency_enabled
-
-    def data_efficiency_config(self):
-        return self._config.data_efficiency_config
-
-    def data_sampling_enabled(self):
-        return self._config.data_efficiency_config[DATA_SAMPLING][DATA_SAMPLING_ENABLED]
-
-    def data_sampling_config(self):
-        return self._config.data_efficiency_config[DATA_SAMPLING]
-
-    def curriculum_learning_enabled(self):
-        return self._config.data_efficiency_config[DATA_SAMPLING][CURRICULUM_LEARNING][CURRICULUM_LEARNING_ENABLED]
-
-    def curriculum_learning_config(self):
-        return self._config.data_efficiency_config[DATA_SAMPLING][CURRICULUM_LEARNING]
-
-    def random_ltd_enabled(self):
-        return self._config.data_efficiency_config[DATA_ROUTING][RANDOM_LTD][RANDOM_LTD_ENABLED]
-
-    def random_ltd_config(self):
-        return self._config.data_efficiency_config[DATA_ROUTING][RANDOM_LTD]
-
-    def random_ltd_initialize(self):
-        assert self.random_ltd_enabled()
-        random_ltd_config = self.random_ltd_config()
-        random_ltd_queue = deque([x for x in sorted(random_ltd_config[RANDOM_LTD_LAYER_ID])])
-        count = 0
-        for name, layer in self.module.named_modules():
-            if isinstance(layer, RandomLayerTokenDrop):
-                if len(random_ltd_queue) != 0 and str(random_ltd_queue[0]) in name:  ###[1,2,3]
-                    layer.init_config(random_ltd_config, self.random_ltd_scheduler, count)
-                    random_ltd_queue.popleft()
-                    count += 1
-
-        if random_ltd_config[RANDOM_LTD_LAYER_NUM] != count:
-            raise ValueError(f'random_ltd_layer_num {random_ltd_config[RANDOM_LTD_LAYER_NUM]} must be \
-                equivalent to the len of random_ltd_layer_id {count}')
-
-        if random_ltd_config[RANDOM_LTD_LAYER_TOKEN_LR_SCHEDULE][RANDOM_LTD_LAYER_TOKEN_LR_ENABLED]:
-            assert self.client_lr_scheduler is None
-            raise ValueError(f'not yet support')
-            #self.lr_scheduler = lr_schedules.WarmupLayerTokenDecayLR(self.optimizer, self.random_ltd_scheduler)
-
-    def get_sequence_parallel_group(self):
-        return self.seq_parallel_group
 
     def wall_clock_breakdown(self):
         return self._config.wall_clock_breakdown
@@ -1913,9 +1805,7 @@ class DeepSpeedEngine(Module):
         if do_gradient_reduction and self.gradient_accumulation_steps() > 1 and scale_wrt_gas:
             loss = self._scale_loss_by_gas(loss.float())
 
-        # Log training loss
-        mean_loss = loss.mean().detach()
-        self.losses = mean_loss if self.losses is None else self.losses + mean_loss
+        # Log training Loss
         if self.monitor.enabled:
             if self.is_gradient_accumulation_boundary():
                 if self.global_rank == 0:
@@ -2137,7 +2027,9 @@ class DeepSpeedEngine(Module):
         if self.monitor.enabled:
             if self.is_gradient_accumulation_boundary():
                 if self.global_rank == 0:
-                    self.summary_events = [(f"Train/Samples/lr", self.get_lr()[0], self.global_samples)]
+                    self.summary_events = [(f"Train/Samples/lr",
+                                            self.get_lr()[0],
+                                            self.global_samples)]
 
                     if self.fp16_enabled() and hasattr(self.optimizer, "cur_scale"):
                         self.summary_events.append((

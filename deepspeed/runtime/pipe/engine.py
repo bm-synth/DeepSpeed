@@ -405,7 +405,8 @@ class PipelineEngine(DeepSpeedEngine):
 
         # Monitoring
         if self.global_rank == 0 and self.monitor.enabled:
-            self.summary_events = [(f'Train/Samples/train_loss', self.agg_train_loss.mean().item(),
+            self.summary_events = [(f'Train/Samples/train_loss',
+                                    self.agg_train_loss.mean().item(),
                                     self.global_samples)]
             self.monitor.write_events(self.summary_events)
 
@@ -497,7 +498,9 @@ class PipelineEngine(DeepSpeedEngine):
             eval_output = self._bcast_pipe_scalar(eval_output)
 
         if self.global_rank == 0 and self.monitor.enabled:
-            self.summary_events = [(f'Train/Samples/eval_loss', eval_output.mean().item(), self.global_samples)]
+            self.summary_events = [(f'Train/Samples/eval_loss',
+                                    eval_output.mean().item(),
+                                    self.global_samples)]
             self.monitor.write_events(self.summary_events)
 
         # Restore the training iterator
@@ -1261,10 +1264,13 @@ class PipelineEngine(DeepSpeedEngine):
         self.mem_status('AFTER STEP')
 
         if self.global_rank == 0 and self.monitor.enabled:
-            self.summary_events = [(f'Train/Samples/lr', self.get_lr()[0], self.global_samples)]
+            self.summary_events = [(f'Train/Samples/lr',
+                                    self.get_lr()[0],
+                                    self.global_samples)]
             if self.fp16_enabled() and hasattr(self.optimizer, 'cur_scale'):
-                self.summary_events.append(
-                    (f'Train/Samples/loss_scale', self.optimizer.cur_scale, self.global_samples))
+                self.summary_events.append((f'Train/Samples/loss_scale',
+                                            self.optimizer.cur_scale,
+                                            self.global_samples))
             self.monitor.write_events(self.summary_events)
 
         if self.wall_clock_breakdown():

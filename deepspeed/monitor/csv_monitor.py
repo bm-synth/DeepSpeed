@@ -1,8 +1,3 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
 from .monitor import Monitor
 import os
 
@@ -10,13 +5,13 @@ import deepspeed.comm as dist
 
 
 class csvMonitor(Monitor):
-
-    def __init__(self, csv_config):
-        super().__init__(csv_config)
+    def __init__(self, monitor_config):
+        super().__init__(monitor_config)
+        import csv
         self.filenames = []
-        self.enabled = csv_config.enabled
-        self.output_path = csv_config.output_path
-        self.job_name = csv_config.job_name
+        self.enabled = monitor_config.csv_monitor_config.enabled
+        self.output_path = monitor_config.csv_monitor_config.output_path
+        self.job_name = monitor_config.csv_monitor_config.job_name
         self.log_dir = self.setup_log_dir()
 
     def setup_log_dir(self, base=os.path.join(os.path.expanduser("~"), "csv_monitor")):
