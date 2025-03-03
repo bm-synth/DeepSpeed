@@ -15,6 +15,7 @@ from deepspeed.runtime.utils import (bwc_tensor_model_parallel_rank,
                                      get_global_norm,
                                      empty_cache,
                                      see_memory_usage,
+                                     inf,
                                      is_model_parallel_parameter,
                                      align_dense_tensors,
                                      all_gather_dp_groups)
