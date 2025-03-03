@@ -133,13 +133,13 @@ public:
                                 T* attn_layer_norm_var,
                                 T* attn_layer_norm_mean);
 
-    inline int GetBatchSize() const { return _batch_size; }
-    inline int GetNumHeads() const { return _heads; }
-    inline int GetSeqLength() const { return _seq_length; }
-    inline int GetIntermediateSize() const { return _intermediate_size; }
+    inline unsigned GetBatchSize() const { return _batch_size; }
+    inline unsigned GetNumHeads() const { return _heads; }
+    inline unsigned GetSeqLength() const { return _seq_length; }
+    inline unsigned GetIntermediateSize() const { return _intermediate_size; }
 
-    void SetSeqLength(int seq_len);
-    inline int GetHiddenSize() const { return _hidden_size; }
+    void SetSeqLength(unsigned seq_len);
+    inline unsigned GetHiddenSize() const { return _hidden_size; }
     void SetTrainingMode(bool training);
     inline bool IsTrainingMode() const { return _training; }
     inline bool GeluCheckpoint() const { return _gelu_checkpoint; }

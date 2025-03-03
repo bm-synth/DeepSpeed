@@ -581,7 +581,7 @@ void BertTransformerLayer<T>::SetIntermediateBuffers(uint8_t* attn_prob_dropout_
 }
 
 template <typename T>
-void BertTransformerLayer<T>::SetSeqLength(int seq_len)
+void BertTransformerLayer<T>::SetSeqLength(unsigned seq_len)
 {
     _seq_length = seq_len;
 
