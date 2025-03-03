@@ -18,6 +18,7 @@ build_win.bat
 The wheel will be located at: dist/*.whl
 """
 
+import os
 import torch
 from deepspeed import __version__ as ds_version
 from setuptools import setup, find_packages
@@ -122,183 +123,41 @@ extras_require['all'] = list(all_extras)
 
 cmdclass = {}
 
-# For any pre-installed ops force disable ninja.
-if torch_available:
-    use_ninja = is_env_set("DS_ENABLE_NINJA")
-    cmdclass['build_ext'] = get_accelerator().build_extension().with_options(use_ninja=use_ninja)
+TORCH_MAJOR = int(torch.__version__.split('.')[0])
+TORCH_MINOR = int(torch.__version__.split('.')[1])
 
-if torch_available:
-    TORCH_MAJOR = torch.__version__.split('.')[0]
-    TORCH_MINOR = torch.__version__.split('.')[1]
-else:
-    TORCH_MAJOR = "0"
-    TORCH_MINOR = "0"
+if not torch.cuda.is_available():
+    # Fix to allow docker buils, similar to https://github.com/NVIDIA/apex/issues/486
+    print(
+        "[WARNING] Torch did not find cuda available, if cross-compling or running with cpu only "
+        "you can ignore this message. Adding compute capability for Pascal, Volta, and Turing "
+        "(compute capabilities 6.0, 6.1, 6.2)")
+    if os.environ.get("TORCH_CUDA_ARCH_LIST", None) is None:
+        os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2;7.0;7.5"
 
-if torch_available and not get_accelerator().device_name() == 'cuda':
-    # Fix to allow docker builds, similar to https://github.com/NVIDIA/apex/issues/486.
-    print("[WARNING] Torch did not find cuda available, if cross-compiling or running with cpu only "
-          "you can ignore this message. Adding compute capability for Pascal, Volta, and Turing "
-          "(compute capabilities 6.0, 6.1, 6.2)")
-    if not is_env_set("TORCH_CUDA_ARCH_LIST"):
-        os.environ["TORCH_CUDA_ARCH_LIST"] = get_default_compute_capabilities()
+# Fix from apex that might be relevant for us as well, related to https://github.com/NVIDIA/apex/issues/456
+version_ge_1_1 = []
+if (TORCH_MAJOR > 1) or (TORCH_MAJOR == 1 and TORCH_MINOR > 0):
+    version_ge_1_1 = ['-DVERSION_GE_1_1']
+version_ge_1_3 = []
+if (TORCH_MAJOR > 1) or (TORCH_MAJOR == 1 and TORCH_MINOR > 2):
+    version_ge_1_3 = ['-DVERSION_GE_1_3']
+version_ge_1_5 = []
+if (TORCH_MAJOR > 1) or (TORCH_MAJOR == 1 and TORCH_MINOR > 4):
+    version_ge_1_5 = ['-DVERSION_GE_1_5']
+version_dependent_macros = version_ge_1_1 + version_ge_1_3 + version_ge_1_5
 
-ext_modules = []
-
-# Default to pre-install kernels to false so we rely on JIT on Linux, opposite on Windows.
-BUILD_OP_PLATFORM = 1 if sys.platform == "win32" else 0
-BUILD_OP_DEFAULT = int(get_env_if_set('DS_BUILD_OPS', BUILD_OP_PLATFORM))
-print(f"DS_BUILD_OPS={BUILD_OP_DEFAULT}")
-
-if BUILD_OP_DEFAULT:
-    assert torch_available, "Unable to pre-compile ops without torch installed. Please install torch before attempting to pre-compile ops."
-
-
-def command_exists(cmd):
-    if sys.platform == "win32":
-        safe_cmd = shlex.split(f'{cmd}')
-        result = subprocess.Popen(safe_cmd, stdout=subprocess.PIPE)
-        return result.wait() == 1
-    else:
-        safe_cmd = shlex.split(f"bash -c type {cmd}")
-        result = subprocess.Popen(safe_cmd, stdout=subprocess.PIPE)
-        return result.wait() == 0
-
-
-def op_envvar(op_name):
-    assert hasattr(ALL_OPS[op_name], 'BUILD_VAR'), \
-        f"{op_name} is missing BUILD_VAR field"
-    return ALL_OPS[op_name].BUILD_VAR
-
-
-def op_enabled(op_name):
-    env_var = op_envvar(op_name)
-    return int(get_env_if_set(env_var, BUILD_OP_DEFAULT))
-
-
-install_ops = dict.fromkeys(ALL_OPS.keys(), False)
-for op_name, builder in ALL_OPS.items():
-    op_compatible = builder.is_compatible()
-
-    # If op is requested but not available, throw an error.
-    if op_enabled(op_name) and not op_compatible:
-        env_var = op_envvar(op_name)
-        if not is_env_set(env_var):
-            builder.warning(f"Skip pre-compile of incompatible {op_name}; One can disable {op_name} with {env_var}=0")
-        continue
-
-    # If op is compatible but install is not enabled (JIT mode).
-    if is_rocm_pytorch and op_compatible and not op_enabled(op_name):
-        builder.hipify_extension()
-
-    # If op install enabled, add builder to extensions.
-    if op_enabled(op_name) and op_compatible:
-        assert torch_available, f"Unable to pre-compile {op_name}, please first install torch"
-        install_ops[op_name] = op_enabled(op_name)
-        ext_modules.append(builder.builder())
-
-print(f'Install Ops={install_ops}')
-
-# Write out version/git info.
-git_hash_cmd = shlex.split("bash -c \"git rev-parse --short HEAD\"")
-git_branch_cmd = shlex.split("bash -c \"git rev-parse --abbrev-ref HEAD\"")
-if command_exists('git') and not is_env_set('DS_BUILD_STRING'):
-    try:
-        result = subprocess.check_output(git_hash_cmd)
-        git_hash = result.decode('utf-8').strip()
-        result = subprocess.check_output(git_branch_cmd)
-        git_branch = result.decode('utf-8').strip()
-    except subprocess.CalledProcessError:
-        git_hash = "unknown"
-        git_branch = "unknown"
-else:
-    git_hash = "unknown"
-    git_branch = "unknown"
-
-if sys.platform == "win32":
-    shutil.rmtree('.\\deepspeed\\ops\\csrc', ignore_errors=True)
-    pathlib.Path('.\\deepspeed\\ops\\csrc').unlink(missing_ok=True)
-    shutil.copytree('.\\csrc', '.\\deepspeed\\ops\\csrc', dirs_exist_ok=True)
-    shutil.rmtree('.\\deepspeed\\ops\\op_builder', ignore_errors=True)
-    pathlib.Path('.\\deepspeed\\ops\\op_builder').unlink(missing_ok=True)
-    shutil.copytree('.\\op_builder', '.\\deepspeed\\ops\\op_builder', dirs_exist_ok=True)
-    shutil.rmtree('.\\deepspeed\\accelerator', ignore_errors=True)
-    pathlib.Path('.\\deepspeed\\accelerator').unlink(missing_ok=True)
-    shutil.copytree('.\\accelerator', '.\\deepspeed\\accelerator', dirs_exist_ok=True)
-    egg_info.manifest_maker.template = 'MANIFEST_win.in'
-
-# Parse the DeepSpeed version string from version.txt.
-version_str = open('version.txt', 'r').read().strip()
-
-# Build specifiers like .devX can be added at install time. Otherwise, add the git hash.
-# Example: `DS_BUILD_STRING=".dev20201022" python -m build --no-isolation`.
-
-# Building wheel for distribution, update version file.
-if is_env_set('DS_BUILD_STRING'):
-    # Build string env specified, probably building for distribution.
-    with open('build.txt', 'w') as fd:
-        fd.write(os.environ['DS_BUILD_STRING'])
-    version_str += os.environ['DS_BUILD_STRING']
-elif os.path.isfile('build.txt'):
-    # build.txt exists, probably installing from distribution.
-    with open('build.txt', 'r') as fd:
-        version_str += fd.read().strip()
-else:
-    # None of the above, probably installing from source.
-    version_str += f'+{git_hash}'
-
-torch_version = ".".join([TORCH_MAJOR, TORCH_MINOR])
-bf16_support = False
-# Set cuda_version to 0.0 if cpu-only.
-cuda_version = "0.0"
-nccl_version = "0.0"
-# Set hip_version to 0.0 if cpu-only.
-hip_version = "0.0"
-if torch_available and torch.version.cuda is not None:
-    cuda_version = ".".join(torch.version.cuda.split('.')[:2])
-    if sys.platform != "win32":
-        if isinstance(torch.cuda.nccl.version(), int):
-            # This will break if minor version > 9.
-            nccl_version = ".".join(str(torch.cuda.nccl.version())[:2])
-        else:
-            nccl_version = ".".join(map(str, torch.cuda.nccl.version()[:2]))
-    if hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_available():
-        bf16_support = torch.cuda.is_bf16_supported()
-if torch_available and hasattr(torch.version, 'hip') and torch.version.hip is not None:
-    hip_version = ".".join(torch.version.hip.split('.')[:2])
-torch_info = {
-    "version": torch_version,
-    "bf16_support": bf16_support,
-    "cuda_version": cuda_version,
-    "nccl_version": nccl_version,
-    "hip_version": hip_version
-}
-
-print(f"version={version_str}, git_hash={git_hash}, git_branch={git_branch}")
-with open('deepspeed/git_version_info_installed.py', 'w') as fd:
-    fd.write(f"version='{version_str}'\n")
-    fd.write(f"git_hash='{git_hash}'\n")
-    fd.write(f"git_branch='{git_branch}'\n")
-    fd.write(f"installed_ops={install_ops}\n")
-    fd.write(f"accelerator_name='{accelerator_name}'\n")
-    fd.write(f"torch_info={torch_info}\n")
-
-print(f'install_requires={install_requires}')
-print(f'ext_modules={ext_modules}')
-
-# Parse README.md to make long_description for PyPI page.
-thisdir = os.path.abspath(os.path.dirname(__file__))
-with open(os.path.join(thisdir, 'README.md'), encoding='utf-8') as fin:
-    readme_text = fin.read()
-
-if sys.platform == "win32":
-    scripts = ['bin/deepspeed.bat', 'bin/ds', 'bin/ds_report.bat', 'bin/ds_report']
-else:
-    scripts = [
-        'bin/deepspeed', 'bin/deepspeed.pt', 'bin/ds', 'bin/ds_ssh', 'bin/ds_report', 'bin/ds_bench', 'bin/dsr',
-        'bin/ds_elastic', 'bin/ds_nvme_tune', 'bin/ds_io'
-    ]
-
-start_time = time.time()
+ext_modules.append(
+    CUDAExtension(name='fused_lamb_cuda',
+                  sources=['csrc/fused_lamb_cuda.cpp',
+                           'csrc/fused_lamb_cuda_kernel.cu'],
+                  extra_compile_args={
+                      'cxx': [
+                          '-O3',
+                      ] + version_dependent_macros,
+                      'nvcc': ['-O3',
+                               '--use_fast_math'] + version_dependent_macros
+                  }))
 
 setup(name='deepspeed',
       version=ds_version,
