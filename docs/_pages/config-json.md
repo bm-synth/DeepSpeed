@@ -55,6 +55,13 @@ toc_label: "Contents"
     }
   }
 ```
+The Adam optimizer also supports the following two params keys/values in addition to the standard parameters from [torch.optim.Adam](https://pytorch.org/docs/stable/_modules/torch/optim/adam.html#Adam):
+
+| "params" key  | Description                                                                 | Default |
+| ------------- | --------------------------------------------------------------------------- | --------|
+| torch\_adam   | Use torch's implementation of adam instead of our fused adam implementation | false   |
+| adam\_w\_mode | Apply L2 regularization (also known as AdamW)                               | true    |
+
   Another example of ***optimizer*** with 1-bit Adam specific parameters is as follows.
 
 ```json
