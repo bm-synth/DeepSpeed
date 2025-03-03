@@ -181,25 +181,10 @@ class DeepSpeedEngine(Module):
         self.mesh_device = mesh_device
 
         if dist_init_required is False:
-            assert (dist.is_initialized()==True), "Torch distributed not initialized. Please set dist_init_required to True or initialize before calling deepspeed.initialize()"
-
-        # DeepSpeed will initialize torch distributed only if the user has not already intialized it.
-        if dist_init_required and not dist.is_initialized():
-            # discover using mpi4py if user specifies the flag
-            if hasattr(args, 'deepspeed_mpi') and args.deepspeed_mpi:
-                # if in Azure ML environment and user specified this flag, notify the user to remove the flag.
-                if self._in_aml():
-                    logger.warning(
-                        "Please remove the --deepspeed_mpi flag if running on AzureML.")
-                self._mpi_check(args, dist_init_required)
-            else:
-                # detect if we are in Azure ML environment
-                if self._in_aml():
-                    self._set_environment_variables_for_nccl_backend(args)
-
-            logger.info("Initializing torch distributed with backend: {}".format(
-                self.dist_backend))
-            dist.init_process_group(backend=self.dist_backend)
+            assert dist.is_initialized() is True, "Torch distributed not initialized. Please set dist_init_required to True or initialize before calling deepspeed.initialize()"
+        else:
+            # Initialize torch distributed if needed
+            init_distributed(dist_backend=self.dist_backend)
 
         self._do_args_sanity_check(args)
         self._configure_with_arguments(args, mpu)
