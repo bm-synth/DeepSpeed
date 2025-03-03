@@ -789,7 +789,7 @@ class TestZero3ParamPartitioningBase(DistributedTest):
 class TestZero3ParamPartitioningLargeParam(DistributedTest):
     world_size = 4
 
-    def test(self, init_context_manager: bool, param_sz: int = 8100) -> None:
+    def test(self, init_context_manager: bool, reduce_scatter: bool, param_sz: int = 8100) -> None:
 
         class LargeParamModel(Module):
 

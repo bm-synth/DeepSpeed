@@ -11,6 +11,7 @@ from enum import Enum
 import functools
 import itertools
 from typing import List
+import logging
 import torch
 from torch.distributed.distributed_c10d import _get_global_rank, group
 import torch.distributed as dist
