@@ -27,24 +27,8 @@ WARNING = f"{YELLOW} [WARNING] {END}"
 DEFAULT_TORCH_EXTENSION_PATH = "/tmp/torch_extensions"
 DEFAULT_COMPUTE_CAPABILITIES = "6.0;6.1;7.0"
 
-try:
-    import torch
-except ImportError:
-    print(f"{WARNING} unable to import torch, please install it if you want to pre-compile any deepspeed ops.")
-else:
-    TORCH_MAJOR = int(torch.__version__.split('.')[0])
-    TORCH_MINOR = int(torch.__version__.split('.')[1])
 
-
-class MissingCUDAException(Exception):
-    pass
-
-
-class CUDAMismatchException(Exception):
-    pass
-
-
-def installed_cuda_version(name=""):
+def installed_cuda_version():
     import torch.utils.cpp_extension
     cuda_home = torch.utils.cpp_extension.CUDA_HOME
     if cuda_home is None:
@@ -56,59 +40,25 @@ def installed_cuda_version(name=""):
     release = output_split[release_idx + 1].replace(',', '').split(".")
     # Ignore patch versions, only look at major + minor
     cuda_major, cuda_minor = release[:2]
+    installed_cuda_version = ".".join(release[:2])
     return int(cuda_major), int(cuda_minor)
 
 
-def get_default_compute_capabilities():
+def get_default_compute_capatabilities():
     compute_caps = DEFAULT_COMPUTE_CAPABILITIES
-    # Update compute capability according to: https://en.wikipedia.org/wiki/CUDA#GPUs_supported
-    import torch.utils.cpp_extension
-    if torch.utils.cpp_extension.CUDA_HOME is not None:
-        if installed_cuda_version()[0] == 11:
-            if installed_cuda_version()[1] >= 0:
-                compute_caps += ";8.0"
-            if installed_cuda_version()[1] >= 1:
-                compute_caps += ";8.6"
-            if installed_cuda_version()[1] >= 8:
-                compute_caps += ";9.0"
-        elif installed_cuda_version()[0] == 12:
-            compute_caps += ";8.0;8.6;9.0"
-            if installed_cuda_version()[1] >= 8:
-                compute_caps += ";10.0;12.0"
+    if installed_cuda_version()[0] >= 11:
+        compute_caps += ";8.0"
     return compute_caps
 
 
-# list compatible minor CUDA versions - so that for example pytorch built with cuda-11.0 can be used
-# to build deepspeed and system-wide installed cuda 11.2
-cuda_minor_mismatch_ok = {
-    10: ["10.0", "10.1", "10.2"],
-    11: ["11.0", "11.1", "11.2", "11.3", "11.4", "11.5", "11.6", "11.7", "11.8"],
-    12: ["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6",
-         "12.8"],  # There does not appear to be a CUDA Toolkit 12.7
-}
-
-
-def assert_no_cuda_mismatch(name=""):
-    cuda_major, cuda_minor = installed_cuda_version(name)
+def assert_no_cuda_mismatch():
+    cuda_major, cuda_minor = installed_cuda_version()
     sys_cuda_version = f'{cuda_major}.{cuda_minor}'
     torch_cuda_version = ".".join(torch.version.cuda.split('.')[:2])
     # This is a show-stopping error, should probably not proceed past this
     if sys_cuda_version != torch_cuda_version:
-        if (cuda_major in cuda_minor_mismatch_ok and sys_cuda_version in cuda_minor_mismatch_ok[cuda_major]
-                and torch_cuda_version in cuda_minor_mismatch_ok[cuda_major]):
-            print(f"Installed CUDA version {sys_cuda_version} does not match the "
-                  f"version torch was compiled with {torch.version.cuda} "
-                  "but since the APIs are compatible, accepting this combination")
-            return True
-        elif os.getenv("DS_SKIP_CUDA_CHECK", "0") == "1":
-            print(
-                f"{WARNING} DeepSpeed Op Builder: Installed CUDA version {sys_cuda_version} does not match the "
-                f"version torch was compiled with {torch.version.cuda}."
-                "Detected `DS_SKIP_CUDA_CHECK=1`: Allowing this combination of CUDA, but it may result in unexpected behavior."
-            )
-            return True
-        raise CUDAMismatchException(
-            f">- DeepSpeed Op Builder: Installed CUDA version {sys_cuda_version} does not match the "
+        raise Exception(
+            f"Installed CUDA version {sys_cuda_version} does not match the "
             f"version torch was compiled with {torch.version.cuda}, unable to compile "
             "cuda/cpp extensions without a matching cuda version.")
     return True
@@ -606,26 +556,11 @@ class OpBuilder(ABC):
 
 
 class CUDAOpBuilder(OpBuilder):
-
     def compute_capability_args(self, cross_compile_archs=None):
-        """
-        Returns nvcc compute capability compile flags.
+        if cross_compile_archs is None:
+            cross_compile_archs = get_default_compute_capatabilities()
 
-        1. `TORCH_CUDA_ARCH_LIST` takes priority over `cross_compile_archs`.
-        2. If neither is set default compute capabilities will be used
-        3. Under `jit_mode` compute capabilities of all visible cards will be used plus PTX
-
-        Format:
-
-        - `TORCH_CUDA_ARCH_LIST` may use ; or whitespace separators. Examples:
-
-        TORCH_CUDA_ARCH_LIST="6.1;7.5;8.6;9.0;10.0" pip install ...
-        TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0 7.5 8.0 8.6 9.0 10.0+PTX" pip install ...
-
-        - `cross_compile_archs` uses ; separator.
-
-        """
-        ccs = []
+        args = []
         if self.jit_mode:
             # Compile for underlying architectures since we know those at runtime
             for i in range(torch.cuda.device_count()):
@@ -637,35 +572,12 @@ class CUDAOpBuilder(OpBuilder):
             ccs[-1] += '+PTX'
         else:
             # Cross-compile mode, compile for various architectures
-            # env override takes priority
-            cross_compile_archs_env = os.environ.get('TORCH_CUDA_ARCH_LIST', None)
-            if cross_compile_archs_env is not None:
-                if cross_compile_archs is not None:
-                    print(
-                        f"{WARNING} env var 'TORCH_CUDA_ARCH_LIST={cross_compile_archs_env}' overrides 'cross_compile_archs={cross_compile_archs}'"
-                    )
-                cross_compile_archs = cross_compile_archs_env.replace(' ', ';')
-            else:
-                if cross_compile_archs is None:
-                    cross_compile_archs = get_default_compute_capabilities()
-            ccs = cross_compile_archs.split(';')
-
-        ccs = self.filter_ccs(ccs)
-        if len(ccs) == 0:
-            raise RuntimeError(
-                f"Unable to load {self.name} op due to no compute capabilities remaining after filtering")
-
-        args = []
-        self.enable_bf16 = True
-        for cc in ccs:
-            num = cc[0] + cc[1].split('+')[0]
-            args.append(f'-gencode=arch=compute_{num},code=sm_{num}')
-            if cc[1].endswith('+PTX'):
-                args.append(f'-gencode=arch=compute_{num},code=compute_{num}')
-
-            if int(cc[0]) <= 7:
-                self.enable_bf16 = False
-
+            for compute_capability in cross_compile_archs.split(';'):
+                compute_capability = compute_capability.replace('.', '')
+                args.append('-gencode')
+                args.append(
+                    f'arch=compute_{compute_capability},code=compute_{compute_capability}'
+                )
         return args
 
     def filter_ccs(self, ccs: List[str]):

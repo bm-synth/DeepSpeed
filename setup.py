@@ -32,32 +32,7 @@ except ImportError:
     raise ImportError('Unable to import torch, please visit https://pytorch.org/ '
                       'to see how to properly install torch on your system.')
 
-torch_available = True
-try:
-    import torch
-except ImportError:
-    torch_available = False
-    print('[WARNING] Unable to import torch, pre-compiling ops will be disabled. ' \
-        'Please visit https://pytorch.org/ to see how to properly install torch on your system.')
-
-from op_builder import get_default_compute_capabilities, OpBuilder
-from op_builder.all_ops import ALL_OPS, accelerator_name
-from op_builder.builder import installed_cuda_version
-
-from accelerator import get_accelerator
-
-# Fetch rocm state.
-is_rocm_pytorch = OpBuilder.is_rocm_pytorch()
-rocm_version = OpBuilder.installed_rocm_version()
-
-RED_START = '\033[31m'
-RED_END = '\033[0m'
-ERROR = f"{RED_START} [ERROR] {RED_END}"
-
-
-def abort(msg):
-    print(f"{ERROR} {msg}")
-    assert False, msg
+from op_builder import ALL_OPS, get_default_compute_capatabilities
 
 
 def fetch_requirements(path):
@@ -164,7 +139,7 @@ if not torch.cuda.is_available():
         "you can ignore this message. Adding compute capability for Pascal, Volta, and Turing "
         "(compute capabilities 6.0, 6.1, 6.2)")
     if os.environ.get("TORCH_CUDA_ARCH_LIST", None) is None:
-        os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2;7.0;7.5"
+        os.environ["TORCH_CUDA_ARCH_LIST"] = get_default_compute_capatabilities()
 
 # Fix from apex that might be relevant for us as well, related to https://github.com/NVIDIA/apex/issues/456
 version_ge_1_1 = []
@@ -188,129 +163,9 @@ print("SIMD_WIDTH = ", SIMD_WIDTH)
 
 ext_modules = []
 
-## Lamb ##
-if BUILD_MASK & DS_BUILD_LAMB:
-    ext_modules.append(
-        CUDAExtension(name='deepspeed.ops.lamb.fused_lamb_cuda',
-                      sources=[
-                          'csrc/lamb/fused_lamb_cuda.cpp',
-                          'csrc/lamb/fused_lamb_cuda_kernel.cu'
-                      ],
-                      include_dirs=['csrc/includes'],
-                      extra_compile_args={
-                          'cxx': [
-                              '-O3',
-                          ] + version_dependent_macros,
-                          'nvcc': ['-O3',
-                                   '--use_fast_math'] + version_dependent_macros
-                      }))
-
-## Adam ##
-if BUILD_MASK & DS_BUILD_CPU_ADAM:
-    ext_modules.append(
-        CUDAExtension(name='deepspeed.ops.adam.cpu_adam_op',
-                      sources=[
-                          'csrc/adam/cpu_adam.cpp',
-                          'csrc/adam/custom_cuda_kernel.cu',
-                      ],
-                      include_dirs=['csrc/includes',
-                                    '/usr/local/cuda/include'],
-                      extra_compile_args={
-                          'cxx': [
-                              '-O3',
-                              '-std=c++14',
-                              '-L/usr/local/cuda/lib64',
-                              '-lcudart',
-                              '-lcublas',
-                              '-g',
-                              '-Wno-reorder',
-                              '-march=native',
-                              '-fopenmp',
-                              SIMD_WIDTH
-                          ],
-                          'nvcc': [
-                              '-O3',
-                              '--use_fast_math',
-                              '-gencode',
-                              'arch=compute_61,code=compute_61',
-                              '-gencode',
-                              'arch=compute_70,code=compute_70',
-                              '-std=c++14',
-                              '-U__CUDA_NO_HALF_OPERATORS__',
-                              '-U__CUDA_NO_HALF_CONVERSIONS__',
-                              '-U__CUDA_NO_HALF2_OPERATORS__'
-                          ]
-                      }))
-
-## Transformer ##
-if BUILD_MASK & DS_BUILD_TRANSFORMER:
-    ext_modules.append(
-        CUDAExtension(name='deepspeed.ops.transformer.transformer_cuda',
-                      sources=[
-                          'csrc/transformer/ds_transformer_cuda.cpp',
-                          'csrc/transformer/cublas_wrappers.cu',
-                          'csrc/transformer/transform_kernels.cu',
-                          'csrc/transformer/gelu_kernels.cu',
-                          'csrc/transformer/dropout_kernels.cu',
-                          'csrc/transformer/normalize_kernels.cu',
-                          'csrc/transformer/softmax_kernels.cu',
-                          'csrc/transformer/general_kernels.cu'
-                      ],
-                      include_dirs=['csrc/includes'],
-                      extra_compile_args={
-                          'cxx': ['-O3',
-                                  '-std=c++14',
-                                  '-g',
-                                  '-Wno-reorder'],
-                          'nvcc': [
-                              '-O3',
-                              '--use_fast_math',
-                              '-gencode',
-                              'arch=compute_61,code=compute_61',
-                              '-gencode',
-                              'arch=compute_60,code=compute_60',
-                              '-gencode',
-                              'arch=compute_70,code=compute_70',
-                              '-std=c++14',
-                              '-U__CUDA_NO_HALF_OPERATORS__',
-                              '-U__CUDA_NO_HALF_CONVERSIONS__',
-                              '-U__CUDA_NO_HALF2_OPERATORS__'
-                          ]
-                      }))
-    ext_modules.append(
-        CUDAExtension(name='deepspeed.ops.transformer.stochastic_transformer_cuda',
-                      sources=[
-                          'csrc/transformer/ds_transformer_cuda.cpp',
-                          'csrc/transformer/cublas_wrappers.cu',
-                          'csrc/transformer/transform_kernels.cu',
-                          'csrc/transformer/gelu_kernels.cu',
-                          'csrc/transformer/dropout_kernels.cu',
-                          'csrc/transformer/normalize_kernels.cu',
-                          'csrc/transformer/softmax_kernels.cu',
-                          'csrc/transformer/general_kernels.cu'
-                      ],
-                      include_dirs=['csrc/includes'],
-                      extra_compile_args={
-                          'cxx': ['-O3',
-                                  '-std=c++14',
-                                  '-g',
-                                  '-Wno-reorder'],
-                          'nvcc': [
-                              '-O3',
-                              '--use_fast_math',
-                              '-gencode',
-                              'arch=compute_61,code=compute_61',
-                              '-gencode',
-                              'arch=compute_60,code=compute_60',
-                              '-gencode',
-                              'arch=compute_70,code=compute_70',
-                              '-std=c++14',
-                              '-U__CUDA_NO_HALF_OPERATORS__',
-                              '-U__CUDA_NO_HALF_CONVERSIONS__',
-                              '-U__CUDA_NO_HALF2_OPERATORS__',
-                              '-D__STOCHASTIC_MODE__'
-                          ]
-                      }))
+# Default to pre-install kernels to false so we rely on JIT
+BUILD_OP_DEFAULT = int(os.environ.get('DS_BUILD_OPS', 0))
+print(f"DS_BUILD_OPS={BUILD_OP_DEFAULT}")
 
 
 def command_exists(cmd):
