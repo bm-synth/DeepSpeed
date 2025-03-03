@@ -221,6 +221,9 @@ class PartitionedParameterCoordinator:
     @compiler.disable
     def reset_step(self) -> None:
         """indicate that we have completed one fwd+bwd for the model"""
+        if is_compiling():
+            return
+
         self._clean_inflight_param_registry()
 
         if not self.is_complete_trace():  # not self.trace_complete:

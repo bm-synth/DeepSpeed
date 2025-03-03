@@ -145,16 +145,6 @@ class DeepSpeedZeRoOffload(object):
             module.ds_inflight_param_registry = InflightParamRegistry()
         self.__inflight_param_registry = module.ds_inflight_param_registry
 
-        self.fast_sharding_for_leaf_module = False
-
-        if zero_module_granularity_threshold > 0:
-            self.min_granularity_value = sys.maxsize
-            self.min_granularity_layer = None
-            self.granularity_info = set()
-            self.z3_leaf_layers = []
-            self._set_z3_leaf_modules_by_threshold(module, zero_module_granularity_threshold)
-            self.fast_sharding_for_leaf_module = True
-
         self.param_coordinator = PartitionedParameterCoordinator(
             prefetch_bucket_sz=self._prefetch_bucket_sz,
             max_reuse_distance_in_numel=self._max_reuse_distance_in_numel,
@@ -165,7 +155,7 @@ class DeepSpeedZeRoOffload(object):
             timers=self.timers,
             zero_quantized_weights=self.zero_quantized_weights,
             zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights,
-            fast_sharding_for_leaf_module=self.fast_sharding_for_leaf_module)
+        )
 
         self.forward_hooks = []
         self.backward_hooks = []
@@ -243,7 +233,7 @@ class DeepSpeedZeRoOffload(object):
         self.module.register_forward_pre_hook(_start_of_forward_hook)
 
         #likely one of them should be enough but just to be safe
-        self._register_deepspeed_module(self.module)
+        self._register_hooks_recursively(self.module)
 
         # Add top module to stack trace
         global FWD_MODULE_STACK
