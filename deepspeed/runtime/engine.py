@@ -296,12 +296,15 @@ class DeepSpeedEngine(Module):
         self.flatten = _flatten_dense_tensors
         self.unflatten = _unflatten_dense_tensors
 
-    def _in_aml(self):
-        # read AzureML environment variable to detect if we are using an Azure ML environment
-        if 'AZUREML_EXPERIMENT_ID' in os.environ:
-            return True
-        else:
-            return False
+    def destroy(self):
+        if self.optimizer is not None and hasattr(self.optimizer, 'destroy'):
+            self.optimizer.destroy()
+
+    def _get_model_parameters(self):
+        if self.autotuning_profile_model_info():
+            self.autotuning_model_info = {}
+            num_params = 0
+            trainable_num_params = 0
 
             for p in self.module.parameters():
                 # since user code might call deepspeed.zero.Init() before deepspeed.initialize(), need to check the attrbuite to check if the parameter is partitioned in zero 3 already or not
