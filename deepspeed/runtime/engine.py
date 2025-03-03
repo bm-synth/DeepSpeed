@@ -934,21 +934,10 @@ class DeepSpeedEngine(Module):
 
     # Configure based on command line arguments
     def _configure_with_arguments(self, args, mpu):
-        # After the distributed backend is initialized we are guaranteed the LOCAL_RANK
-        # environment variable is set. We must align args.local_rank to this value for
-        # backwards compatibility with scripts relying on [args|self].local_rank containing
-        # the correct local rank info. _do_args_sanity_check will ensure this is the case.
-
-        if "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
-            ompi_local_rank = os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK")
-            local_rank = os.environ.get('LOCAL_RANK', ompi_local_rank)
-            assert ompi_local_rank == local_rank, f"LOCAL_RANK ({local_rank}) != OMPI_COMM_WORLD_LOCAL_RANK ({ompi_local_rank}), " \
-                "not sure how to proceed as we're seeing conflicting local rank info."
-            os.environ['LOCAL_RANK'] = local_rank
-
-        self.local_rank = int(os.environ['LOCAL_RANK'])
-        if hasattr(args, 'local_rank'):
-            args.local_rank = self.local_rank
+        self.local_rank = args.local_rank if hasattr(args, 'local_rank') else 0
+        config_file = args.deepspeed_config if hasattr(args,
+                                                       'deepspeed_config') else None
+        self._config = DeepSpeedConfig(config_file, mpu, param_dict=self.config_params)
 
     # Validate command line arguments
     def _do_args_sanity_check(self, args):
