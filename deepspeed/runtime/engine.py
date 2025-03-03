@@ -97,7 +97,7 @@ from ..moe.layer import MoE
 from ..git_version_info import version
 
 from deepspeed.profiling.flops_profiler.profiler import FlopsProfiler
-from deepspeed.utils.logging import print_json_dist
+from deepspeed.utils.logging import print_json_dist, print_configuration
 
 from deepspeed.inference.config import DtypeEnum
 
@@ -139,11 +139,56 @@ def split_half_float_double_csr(tensors):
     return buckets
 
 
-def print_configuration(args, name):
-    logger.info('{}:'.format(name))
-    for arg in sorted(vars(args)):
-        dots = '.' * (29 - len(arg))
-        logger.info('  {} {} {}'.format(arg, dots, getattr(args, arg)))
+FORWARD_MICRO_TIMER = 'forward_microstep'
+FORWARD_GLOBAL_TIMER = 'forward'
+BACKWARD_MICRO_TIMER = 'backward_microstep'
+BACKWARD_GLOBAL_TIMER = 'backward'
+BACKWARD_INNER_MICRO_TIMER = 'backward_inner_microstep'
+BACKWARD_INNER_GLOBAL_TIMER = 'backward_inner'
+BACKWARD_REDUCE_MICRO_TIMER = 'backward_allreduce_microstep'
+BACKWARD_REDUCE_GLOBAL_TIMER = 'backward_allreduce'
+STEP_MICRO_TIMER = 'step_microstep'
+STEP_GLOBAL_TIMER = 'step'
+
+
+class EngineTimers(object):
+    r"""Wallclock timers for DeepSpeedEngine"""
+    def __init__(self, enable_micro_timers, enable_global_timers):
+        self.forward_timers = []
+        self.backward_timers = []
+        self.backward_inner_timers = []
+        self.backward_reduce_timers = []
+        self.step_timers = []
+        self.global_timers = []
+        self.micro_timers = []
+
+        if enable_micro_timers:
+            self.forward_timers += [FORWARD_MICRO_TIMER]
+            self.backward_timers += [BACKWARD_MICRO_TIMER]
+            self.backward_inner_timers += [BACKWARD_INNER_MICRO_TIMER]
+            self.backward_reduce_timers += [BACKWARD_REDUCE_MICRO_TIMER]
+            self.step_timers += [STEP_MICRO_TIMER]
+            self.micro_timers += [
+                FORWARD_MICRO_TIMER,
+                BACKWARD_MICRO_TIMER,
+                BACKWARD_INNER_MICRO_TIMER,
+                BACKWARD_REDUCE_MICRO_TIMER,
+                STEP_MICRO_TIMER
+            ]
+
+        if enable_global_timers:
+            self.forward_timers += [FORWARD_GLOBAL_TIMER]
+            self.backward_timers += [BACKWARD_GLOBAL_TIMER]
+            self.backward_inner_timers += [BACKWARD_INNER_GLOBAL_TIMER]
+            self.backward_reduce_timers += [BACKWARD_REDUCE_GLOBAL_TIMER]
+            self.step_timers += [STEP_GLOBAL_TIMER]
+            self.global_timers += [
+                FORWARD_GLOBAL_TIMER,
+                BACKWARD_GLOBAL_TIMER,
+                BACKWARD_INNER_GLOBAL_TIMER,
+                BACKWARD_REDUCE_GLOBAL_TIMER,
+                STEP_GLOBAL_TIMER
+            ]
 
 
 class DeepSpeedEngine(Module):
