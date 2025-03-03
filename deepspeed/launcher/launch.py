@@ -118,6 +118,12 @@ def parse_args():
                         default=0,
                         help="main launching process pid, for internal pid tracking")
 
+    parser.add_argument(
+        "--enable_each_rank_log",
+        default="None",
+        type=str,
+        help="redirect the stdout and stderr from each rank into different log files")
+
     # positional
     parser.add_argument("training_script",
                         type=str,
@@ -221,7 +227,73 @@ def main():
         current_env["RANK"] = str(dist_rank)
         current_env["LOCAL_RANK"] = str(local_rank)
 
-        # spawn the processes
+    if not args.enable_elastic_training:
+        if args.enable_each_rank_log != "None":
+            # prepare the log path and the file name prefix
+            if os.path.isfile(args.enable_each_rank_log):
+                raise ValueError(
+                    f"{args.enable_each_rank_log} should not be a file, it should be a directory."
+                )
+            if not os.path.exists(args.enable_each_rank_log):
+                try:
+                    os.makedirs(args.enable_each_rank_log)
+                except Exception as e:
+                    print(e)
+                    raise ValueError(
+                        f"unable to create directory {args.enable_each_rank_log} for each rank log."
+                    )
+            log_name_prefix = time.strftime("%Y%m%d%H%M%S", time.localtime())
+
+        for local_rank in range(0, num_local_procs):
+            # each process's rank
+            dist_rank = global_rank_mapping[local_node][local_rank]
+            current_env["RANK"] = str(dist_rank)
+            current_env["LOCAL_RANK"] = str(local_rank)
+
+            # spawn the processes
+            cmd = []
+            if not args.no_python:
+                cmd = [sys.executable, "-u"]
+                if args.module:
+                    cmd.append("-m")
+            else:
+                if args.module:
+                    raise ValueError("Don't use both the '--no_python' flag"
+                                     " and the '--module' flag at the same time.")
+            cmd.append(args.training_script)
+            # A user may not want to pass local_rank as a keyword arg so we make this optional.
+            if not args.no_local_rank:
+                cmd.append(f"--local_rank={local_rank}")
+            cmd += args.training_script_args
+
+            if args.enable_each_rank_log != "None":
+                log_file = os.path.join(args.enable_each_rank_log,
+                                        f"{log_name_prefix}_rank{dist_rank}.log")
+                log_fd = open(log_file, 'w')
+                process = subprocess.Popen(cmd,
+                                           env=current_env,
+                                           stdout=log_fd,
+                                           stderr=log_fd)
+            else:
+                process = subprocess.Popen(cmd, env=current_env)
+
+            processes.append(process)
+    else:
+        from ..elasticity import DSElasticAgent
+        from torch.distributed.elastic.rendezvous import RendezvousParameters
+        from torch.distributed.elastic.agent.server.api import WorkerSpec
+        import torch.distributed.elastic.rendezvous.registry as rdzv_registry
+        from torch.distributed.elastic.multiprocessing import Std
+
+        if args.min_elastic_nodes == -1:
+            args.min_elastic_nodes = 1
+        if args.max_elastic_nodes == -1:
+            args.max_elastic_nodes = args.nnodes
+        assert args.max_elastic_nodes > 0 and  args.min_elastic_nodes > 0 , "Max and Min nodes should be positive"
+
+        current_env["NCCL_ASYNC_ERROR_HANDLING"] = str(1)
+
+        # Get config and arguments
         cmd = []
         if not args.no_python:
             cmd = [sys.executable, "-u"]
