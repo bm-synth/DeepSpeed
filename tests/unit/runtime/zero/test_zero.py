@@ -144,10 +144,10 @@ class TestZero3RepeatForwardLoop(DistributedTest):
             model.step()
 
 
-# testing the fix https://github.com/deepspeedai/DeepSpeed/pull/1227
-# also reproduces the https://github.com/deepspeedai/DeepSpeed/pull/1372
-@pytest.mark.parametrize("zero_stage", [2, 3])
-@pytest.mark.parametrize("freeze_params", [True, False])
+# testing the fix https://github.com/microsoft/DeepSpeed/pull/1227
+# also reproduces the https://github.com/microsoft/DeepSpeed/pull/1372
+@pytest.mark.parametrize('zero_stage', [2, 3])
+@pytest.mark.parametrize('freeze_params', [True, False])
 class TestZeroToFP32(DistributedTest):
     world_size = 2
 
@@ -176,7 +176,7 @@ class TestZeroToFP32(DistributedTest):
 
         class MyModel(torch.nn.Module):
 
-            def __init__(self, hidden_dim, n_layers):
+            def __init__(self, hidden_dim, n_layers, freeze_params):
                 super().__init__()
                 # to reproduce https://github.com/deepspeedai/DeepSpeed/pull/1372 it is important that
                 # the number of total elements is uneven:
@@ -204,6 +204,9 @@ class TestZeroToFP32(DistributedTest):
         model = MyModel(hidden_dim=hidden_dim, n_layers=n_layers, freeze_params=freeze_params)
 
         model, _, _, _ = deepspeed.initialize(config=config_dict, model=model, model_parameters=model.parameters())
+        # Flush zero stage 3 cache
+        model.empty_partition_cache()
+
         data_loader = random_dataloader(model=model, total_samples=16, hidden_dim=hidden_dim, device=model.device)
 
         for i, batch in enumerate(data_loader):
@@ -267,7 +270,7 @@ class TestZeroToFP32(DistributedTest):
 
         class MyModel(torch.nn.Module):
 
-            def __init__(self, hidden_dim, n_layers):
+            def __init__(self, hidden_dim, n_layers, freeze_params):
                 super().__init__()
                 self.ll = torch.nn.ModuleList(torch.nn.Linear(hidden_dim, hidden_dim) for i in range(n_layers))
                 self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
@@ -303,6 +306,8 @@ class TestZeroToFP32(DistributedTest):
                                               model_parameters=model.parameters(),
                                               optimizer=optim,
                                               config=config_dict)
+        model.empty_partition_cache()
+
         data_loader = random_dataloader(model=model, total_samples=16, hidden_dim=hidden_dim, device=model.device)
 
         for i, batch in enumerate(data_loader):

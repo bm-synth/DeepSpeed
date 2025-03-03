@@ -1337,7 +1337,7 @@ class PipelineEngine(DeepSpeedEngine):
         self.module.save_state_dict(self._curr_ckpt_path, checkpoint_engine=self.checkpoint_engine)
         return None
 
-    def load_module_state_dict(self, state_dict, strict=True, custom_load_fn=None):
+    def load_module_state_dict(self, checkpoint, strict=True, custom_load_fn=None):
         """Override hack to instead use a directory path.
 
         This is important because pipeline models checkpoint by layer instead of rank.
@@ -1349,6 +1349,7 @@ class PipelineEngine(DeepSpeedEngine):
             strict (bool, optional): Strict state loading. Defaults to True.
         """
         assert custom_load_fn is None, "custom_load_fn not supported w. pipeline parallelism"
+        state_dict = checkpoint['module']
         if (state_dict is not None) and (not isinstance(state_dict, str)):
             super().load_module_state_dict(state_dict, strict)
             return
