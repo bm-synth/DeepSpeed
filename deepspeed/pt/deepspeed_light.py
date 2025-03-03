@@ -1078,8 +1078,12 @@ class DeepSpeedLight(Module):
 
         self.load_module_state_dict(checkpoint['module'])
         if not self.zero_optimization():
-            self.optimizer.load_state_dict(checkpoint['optimizer'],
-                                           load_optimizer_states=load_optimizer_states)
+            if self.fp16_enabled():
+                self.optimizer.load_state_dict(
+                    checkpoint['optimizer'],
+                    load_optimizer_states=load_optimizer_states)
+            else:
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
 
         if self.lr_scheduler is not None:
             self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
