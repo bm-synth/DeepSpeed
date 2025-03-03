@@ -18,17 +18,18 @@ from ..profiling.config import DeepSpeedFlopsProfilerConfig
 TENSOR_CORE_ALIGN_SIZE = 8
 ONEBIT_ADAM_OPTIMIZER = 'onebitadam'
 ADAM_OPTIMIZER = 'adam'
+ADAMW_OPTIMIZER = 'adamw'
 LAMB_OPTIMIZER = 'lamb'
 ONEBIT_ADAM_OPTIMIZER = 'onebitadam'
 DEEPSPEED_OPTIMIZERS = [
     ADAM_OPTIMIZER,
+    ADAMW_OPTIMIZER,
     LAMB_OPTIMIZER,
     ONEBIT_ADAM_OPTIMIZER,
 ]
 
-# extra optimizer parameters for adam
+# extra optimizer parameters for adam/adamw
 TORCH_ADAM_PARAM = "torch_adam"
-ADAM_W_MODE_PARAM = "adam_w_mode"
 
 
 class DeepSpeedConfigError(Exception):

@@ -33,8 +33,9 @@ from deepspeed.runtime.zero.config import ZERO_OPTIMIZATION
 
 from deepspeed.runtime.fp16.fused_optimizer import FP16_Optimizer
 from deepspeed.runtime.fp16.unfused_optimizer import FP16_UnfusedOptimizer
-from deepspeed.runtime.config import DeepSpeedConfig, \
-    ADAM_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, DEEPSPEED_OPTIMIZERS
+from deepspeed.runtime.config import DeepSpeedConfig, DEEPSPEED_OPTIMIZERS, \
+    ADAM_OPTIMIZER, ADAMW_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, \
+    TORCH_ADAM_PARAM
 
 from deepspeed.runtime.dataloader import DeepSpeedDataLoader
 from deepspeed.runtime.constants import \
@@ -1176,24 +1177,20 @@ class DeepSpeedEngine(Module):
 
         if self.optimizer_name() in [ADAM_OPTIMIZER, ADAMW_OPTIMIZER]:
             torch_adam = optimizer_parameters.pop(TORCH_ADAM_PARAM, False)
-            adam_w_mode = optimizer_parameters.pop(ADAM_W_MODE, ADAM_W_MODE_DEFAULT)
-
-            # Optimizer name of Adam forces AdamW logic unless adam_w_mode is explicitly set
-            effective_adam_w_mode = self.optimizer_name() == ADAMW_OPTIMIZER or adam_w_mode
-
+            adam_w_mode = self.optimizer_name() == ADAMW_OPTIMIZER
+            # zero-offload  torch-adam  adam_w_mode optimizer
+            # T|F           T           T           torch.optim.AdamW
+            # T|F           T           F           torch.optim.Adam
+            # T             F           T|F         DeepSpeedCPUAdam(adam_w_mode)
+            # F             F           T|F         FusedAdam(adam_w_mode)
             if torch_adam:
                 if not effective_adam_w_mode:
                     optimizer = torch.optim.Adam(model_parameters, **optimizer_parameters)
                 else:
                     optimizer = torch.optim.AdamW(model_parameters, **optimizer_parameters)
             else:
-                if self.zero_use_cpu_optimizer():
-                    from deepspeed.ops.adam import DeepSpeedCPUAdam
-                    optimizer = DeepSpeedCPUAdam(model_parameters,
-                                                 **optimizer_parameters,
-                                                 adamw_mode=effective_adam_w_mode)
-                else:
-                    from deepspeed.ops.adam import FusedAdam
+                optimizer_parameters['adam_w_mode'] = adam_w_mode
+                optimizer = FusedAdam(model_parameters, **optimizer_parameters)
 
                     optimizer = FusedAdam(
                         model_parameters,
