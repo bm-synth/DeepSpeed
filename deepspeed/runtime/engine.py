@@ -2613,7 +2613,6 @@ class DeepSpeedEngine(Module):
 
         self.loaded_checkpoint_dp_world_size = checkpoint['dp_world_size']
 
-        optim_checkpoint = None
         if load_module_only:
             deepspeed_states = ['module']
             if self.optimizer is not None:
@@ -2654,7 +2653,6 @@ class DeepSpeedEngine(Module):
                 self.global_steps * self.train_batch_size())
             self.skipped_steps = checkpoint['skipped_steps']
             self.loaded_checkpoint_mp_world_size = checkpoint['mp_world_size']
-            self.loaded_checkpoint_dp_world_size = checkpoint['dp_world_size']
             deepspeed_states = [
                 'module', 'sparse_tensor_module_names', 'skipped_steps', 'global_steps', 'dp_world_size',
                 'mp_world_size', 'data_sampler', 'random_ltd'
