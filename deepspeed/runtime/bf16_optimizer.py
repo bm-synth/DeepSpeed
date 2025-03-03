@@ -14,9 +14,10 @@ from packaging import version as pkg_version
 from deepspeed.git_version_info import version
 from deepspeed.runtime.utils import (get_global_norm_of_tensors, clip_tensors_by_global_norm, DummyOptim,
                                      align_dense_tensors, all_gather_dp_groups, bwc_tensor_model_parallel_rank,
-                                     is_model_parallel_parameter, see_memory_usage, graph_process)
-
-from deepspeed.utils import link_hp_params, lazy_init_hp_params_optimizer_state, fragment_address, map_to_flat_opt_states
+                                     is_model_parallel_parameter, see_memory_usage, graph_process,
+                                     get_norm_with_moe_layers)
+from deepspeed.moe.utils import is_moe_param, is_moe_param_group
+from deepspeed.utils import link_hp_params, lazy_init_hp_params_optimizer_state, fragment_address, groups, map_to_flat_opt_states
 from deepspeed.checkpoint import enable_universal_checkpoint
 from deepspeed.checkpoint.constants import (DS_VERSION, PARTITION_COUNT, BASE_OPTIMIZER_STATE,
                                             SINGLE_PARTITION_OF_FP32_GROUPS, CLIP_GRAD, GROUP_PADDINGS,
@@ -106,6 +107,21 @@ class BF16_Optimizer(ZeROOptimizer):
         for hook in self._grad_acc_hooks:
             hook.remove()
         print_rank_0("Removed grad acc hooks")
+
+    def _configure_moe_settings(self):
+        assert any(
+            [is_moe_param_group(group) for group in self.optimizer.param_groups]
+        ), "The model has moe layers, but None of the param groups are marked as MoE. Create a param group with 'moe' key set to True before creating optimizer"
+
+        for i, group in enumerate(self.optimizer.param_groups):
+            if is_moe_param_group(group):
+                assert all([is_moe_param(param)
+                            for param in group['params']]), "All params in MoE group must be MoE params"
+                self.real_dp_process_group[i] = groups._get_expert_data_parallel_group(group['name'])
+        self.expert_gradients = {}
+        if self.has_moe_layers:
+            for key in groups._get_expert_data_parallel_group_dict().keys():
+                self.expert_gradients[key] = []
 
     def _configure_moe_settings(self):
         assert any(
