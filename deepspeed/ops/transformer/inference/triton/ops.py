@@ -3,10 +3,12 @@
 
 # DeepSpeed Team
 
+import deepspeed
+from deepspeed.ops.op_builder import InferenceBuilder
 import deepspeed.ops.transformer.inference.triton.matmul_ext as matmul_ext
-from deepspeed.ops.transformer.inference.op_binding.layer_norm import LayerNormOp
 from deepspeed.ops.transformer.inference.triton.layer_norm import layer_norm, layer_norm_residual
-from deepspeed.utils.types import ActivationFuncType
+
+inference_module = None
 
 
 def vector_matmul_func(input, weight, async_op, q_scale, q_int8, transposed_mode):
@@ -74,12 +76,15 @@ def mlp_gemm_func(input,
     if use_triton_ln:
         mlp_input = layer_norm_residual(input, input_bias, residual, gamma, beta, epsilon)
     else:
-        mlp_input = LayerNormOp.layer_norm_residual(input, input_bias, residual, gamma, beta, epsilon)
+        global inference_module
+        if inference_module is None:
+            inference_module = InferenceBuilder().load()
+        mlp_input = inference_module._layer_norm_residual(input, input_bias, residual, gamma, beta, epsilon)
 
     # activation
-    if ActivationFuncType(mlp_act_func_type) == ActivationFuncType.GELU:
+    if deepspeed.utils.types.ActivationFuncType(mlp_act_func_type) == deepspeed.utils.types.ActivationFuncType.GELU:
         activation = "gelu"
-    elif ActivationFuncType(mlp_act_func_type) == ActivationFuncType.ReLU:
+    elif deepspeed.utils.types.ActivationFuncType(mlp_act_func_type) == deepspeed.utils.types.ActivationFuncType.ReLU:
         activation = "relu"
     else:
         activation = ""
@@ -116,7 +121,10 @@ def qkv_gemm_func(
     if use_triton_ln:
         qkv_input = layer_norm(input, gamma, beta, epsilon)
     else:
-        qkv_input = LayerNormOp()(input, gamma, beta, epsilon)
+        global inference_module
+        if inference_module is None:
+            inference_module = InferenceBuilder().load()
+        qkv_input = inference_module.layer_norm(input, gamma, beta, epsilon)
 
     qkv_out = matmul_ext.matmul(qkv_input, weight, bias=(bias if add_bias else None), activation="", use_triton=True)
 

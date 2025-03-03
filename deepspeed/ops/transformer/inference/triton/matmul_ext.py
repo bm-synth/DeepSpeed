@@ -10,51 +10,12 @@ from filelock import FileLock
 import deepspeed.ops.transformer.inference.triton.triton_matmul_kernel as triton_matmul_kernel
 import pickle
 from io import open
-import deepspeed
-from pathlib import Path
-import atexit
-import subprocess
 
 
 # -----------------------------------------------------------------------------
 # util class/functions for triton
-def is_nfs_path(path):
-    if os.name == 'nt':
-        return False
-
-    # Normalize the path to get the absolute path
-    path = os.path.abspath(path)
-
-    # Use the 'df' command to find the file system type for the given path
-    try:
-        output = subprocess.check_output(['df', '-T', path], encoding='utf-8')
-    except subprocess.CalledProcessError:
-        return False  # Command failed
-
-    # Process the output of 'df -T' to check for 'nfs' in the filesystem type column
-    lines = output.strip().split('\n')
-    if len(lines) > 1:  # The first line is headers
-        fs_type = lines[1].split()[1].lower()  # File system type is the second column
-        return 'nfs' in fs_type
-    return False
-
-
-class TritonCacheDir:
-    _warning_printed = False
-
-    @staticmethod
-    def warn_if_nfs(cache_dir):
-        if is_nfs_path(cache_dir) and not TritonCacheDir._warning_printed:
-            print(
-                f"Warning: The cache directory for DeepSpeed Triton autotune, {cache_dir}, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path."
-            )
-            TritonCacheDir._warning_printed = True
-        return
-
-    @staticmethod
-    def default_cache_dir():
-        tmp_path = os.path.join(Path.home(), ".triton", "autotune")
-        return tmp_path
+def _default_cache_dir():
+    return os.path.join(os.environ["HOME"], ".triton", "autotune")
 
 
 def bias_add_activation(C, bias=None, activation=""):
@@ -86,10 +47,10 @@ class AutotuneCacheManager:
         self.file_path = None
         self.lock_path = None
         # if caching is enabled, get the lock and bin path
-        self.cache_dir = os.environ.get('TRITON_CACHE_DIR', TritonCacheDir.default_cache_dir())
-        TritonCacheDir.warn_if_nfs(self.cache_dir)
+        self.cache_dir = os.environ.get('TRITON_CACHE_DIR', _default_cache_dir())
         if self.cache_dir:
             os.makedirs(self.cache_dir, exist_ok=True)
+        if self.cache_dir:
             self.file_path = os.path.join(self.cache_dir, self.key + ".pickle")
             self.lock_path = self.file_path + ".lock"
 
@@ -102,7 +63,7 @@ class AutotuneCacheManager:
             with FileLock(self.lock_path):
                 with open(self.file_path + ".tmp", 'wb') as handle:
                     pickle.dump(table, handle)
-                os.replace(self.file_path + ".tmp", self.file_path)
+                os.rename(self.file_path + ".tmp", self.file_path)
 
     def load(self):
         if os.path.exists(self.file_path):
@@ -438,7 +399,7 @@ class Fp16Matmul(TritonMatmul):
                       activation=""):
         torch_output = __class__._ref_forward(A, B, ref_dtype=ref_dtype, bias=bias, activation=activation)
         triton_output = __class__.forward(A, B, use_triton=use_triton, bias=bias, activation=activation)
-        assert torch.allclose(triton_output.cpu().type(torch_output.dtype), torch_output.cpu(), rtol=tol)
+        assert triton.testing.allclose(triton_output.cpu().type(torch_output.dtype), torch_output.cpu(), tol=tol)
         print(f"{__class__.__name__}: PASSed the parity check")
         return triton_output, torch_output
 
@@ -460,21 +421,16 @@ class Fp16Matmul(TritonMatmul):
 
 # -----------------------------------------------------------------------------
 # mapping
-if deepspeed.HAS_TRITON:
-    fp16_matmul = Fp16Matmul()
-    matmul = MatmulExt.forward
-    matmul_4d = fp16_matmul._matmul_4d
-    score_4d_matmul = fp16_matmul._score_4d_matmul
-    context_4d_matmul = fp16_matmul._context_4d_matmul
-else:
-    fp16_matmul = None
-    matmul = None
-    matmul_4d = None
-    score_4d_matmul = None
-    context_4d_matmul = None
+matmul = MatmulExt.forward
+fp16_matmul = Fp16Matmul()
+matmul_4d = fp16_matmul._matmul_4d
+score_4d_matmul = fp16_matmul._score_4d_matmul
+context_4d_matmul = fp16_matmul._context_4d_matmul
+
+#
+import atexit
 
 
 @atexit.register
 def matmul_ext_update_autotune_table():
-    if deepspeed.HAS_TRITON:
-        fp16_matmul._update_autotune_table()
+    fp16_matmul._update_autotune_table()

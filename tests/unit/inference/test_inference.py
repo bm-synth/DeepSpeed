@@ -187,8 +187,13 @@ def enable_triton(request):
     return request.param
 
 
+"""
+This fixture will validate the configuration
+"""
+
+
 @pytest.fixture()
-def invalid_model_task_config(model_w_task, dtype, enable_cuda_graph):
+def invalid_model_task_config(model_w_task, dtype, enable_cuda_graph, enable_triton):
     model, task = model_w_task
     msg = ""
     if pkg_version.parse(torch.__version__) <= pkg_version.parse("1.2"):
@@ -212,6 +217,12 @@ def invalid_model_task_config(model_w_task, dtype, enable_cuda_graph):
         msg = f"Bloom models only support half precision, cannot use dtype {dtype}"
     elif ("bert" not in model.lower()) and enable_cuda_graph:
         msg = "Non bert/roberta models do no support CUDA Graph"
+    elif enable_triton and not (dtype in [torch.half]):
+        msg = "Triton is for fp16"
+    elif enable_triton and not deepspeed.HAS_TRITON:
+        msg = "triton needs to be installed for the test"
+    elif ("bert" not in model.lower()) and enable_triton:
+        msg = "Triton kernels do not support Non bert/roberta models yet"
     return msg
 
 
@@ -332,26 +343,18 @@ Tests
 class TestModelTask(DistributedTest):
     world_size = 1
 
-    def test(
-        self,
-        model_w_task,
-        dtype,
-        enable_cuda_graph,
-        enable_triton,
-        query,
-        inf_kwargs,
-        assert_fn,
-        perf_meas=True,
-    ):
-        invalid_test_msg = validate_test(model_w_task, dtype, enable_cuda_graph, enable_triton)
-        if invalid_test_msg:
-            pytest.skip(invalid_test_msg)
-
-        if dtype not in get_accelerator().supported_dtypes():
-            pytest.skip(f"Acceleraor {get_accelerator().device_name()} does not support {dtype}.")
-
-        if not deepspeed.ops.__compatible_ops__[InferenceBuilder.NAME]:
-            pytest.skip("This op had not been implemented on this system.", allow_module_level=True)
+    def test(self,
+             model_w_task,
+             dtype,
+             enable_cuda_graph,
+             enable_triton,
+             query,
+             inf_kwargs,
+             assert_fn,
+             invalid_model_task_config,
+             perf_meas=True):
+        if invalid_model_task_config:
+            pytest.skip(invalid_model_task_config)
 
         model, task = model_w_task
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -375,13 +378,18 @@ class TestModelTask(DistributedTest):
         get_accelerator().synchronize()
         bs_time = time.time() - start
 
-        pipe.model = deepspeed.init_inference(
-            pipe.model,
-            mp_size=1,
-            dtype=dtype,
-            replace_with_kernel_inject=True,
-            enable_cuda_graph=enable_cuda_graph,
-        )
+        args = {
+            'mp_size': 1,
+            'dtype': dtype,
+            'replace_with_kernel_inject': True,
+            'enable_cuda_graph': enable_cuda_graph,
+            'use_triton': enable_triton,
+            'triton_autotune': False,
+        }
+        if pipe.tokenizer.model_max_length < deepspeed.ops.transformer.inference.config.DeepSpeedInferenceConfig(
+        ).max_out_tokens:
+            args.update({'max_out_tokens': pipe.tokenizer.model_max_length})
+        pipe.model = deepspeed.init_inference(pipe.model, **args)
         check_injection(pipe.model)
         # Warm-up queries for perf measurement
         #for i in range(10):

@@ -13,3 +13,6 @@ recommonmark
 sphinx
 sphinx-rtd-theme
 torchvision
+transformers
+triton
+wandb
