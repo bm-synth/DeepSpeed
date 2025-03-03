@@ -145,9 +145,10 @@ all_acts = [
     ActivationType.ReGLU,
     ActivationType.SiGLU,
 ]
-all_tokens = [37]
+all_tokens = [1, 37]
 all_in_out_channels = [
     (4096, 4096),
+    (8192, 28672),
 ]
 
 
