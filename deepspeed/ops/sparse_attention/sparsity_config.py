@@ -702,7 +702,7 @@ class LocalSlidingWindowSparsityConfig(SparsityConfig):
         num_blocks = layout.shape[1]
         if (num_blocks < self.num_sliding_window_blocks):
             raise ValueError(
-                f'Number of sliding window blocks, {self.num_sliding_window_blocks}, must be smaller than overal number of blocks in a row, {num_blocks}!'
+                f'Number of sliding window blocks, {self.num_sliding_window_blocks}, must be smaller than overall number of blocks in a row, {num_blocks}!'
             )
 
         w = self.num_sliding_window_blocks // 2
