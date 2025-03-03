@@ -6,11 +6,10 @@
 import pytest
 import torch
 
-from deepspeed.inference.v2.allocator import on_device
-from deepspeed.inference.v2.inference_parameter import InferenceParameter
 from deepspeed.inference.v2.model_implementations.parameter_base import ParameterBase, ParamList
 from deepspeed.inference.v2.model_implementations.layer_container_base import LayerContainer
 from deepspeed.inference.v2.model_implementations.common_parameters import *
+from deepspeed.inference.v2.allocator import on_device
 
 from .utils import validate_device
 
@@ -26,12 +25,12 @@ class DummyInferenceModel:
         self._num_experts = experts_per_rank
 
     @property
-    def n_experts(self) -> int:
+    def num_experts(self) -> int:
         return self._num_experts
 
     @on_device
     def transform_moe_mlp_1_param(self, param: torch.Tensor) -> torch.Tensor:
-        return InferenceParameter.initialize(param)
+        return param
 
 
 @pytest.mark.inference_v2

@@ -7,7 +7,6 @@ import pytest
 import torch
 
 from deepspeed.inference.v2.allocator import on_device
-from deepspeed.inference.v2.inference_parameter import InferenceParameter
 from deepspeed.inference.v2.model_implementations.parameter_base import ParameterBase, ParamList
 from deepspeed.inference.v2.model_implementations.layer_container_base import LayerContainer
 
@@ -20,8 +19,7 @@ class MultiDependencyContainer(ParameterBase):
 
     @on_device
     def finalize(self) -> torch.Tensor:
-        param = torch.cat([self.dependency_1, self.dependency_2])
-        return InferenceParameter.initialize(param)
+        return torch.cat([self.dependency_1, self.dependency_2])
 
 
 class ListDependencyContainer(ParameterBase):
@@ -30,8 +28,7 @@ class ListDependencyContainer(ParameterBase):
 
     @on_device
     def finalize(self) -> torch.Tensor:
-        param = torch.cat(tuple(self.dependencies))
-        return InferenceParameter.initialize(param)
+        return torch.cat(tuple(self.dependencies))
 
 
 class MappingLayer(LayerContainer):
@@ -84,10 +81,10 @@ def test_mapping_syntax():
     for i in range(16):
         mapping_layer.set_dependency(f"model.list_vals.{i}.d", torch.ones(1) * i)
         if i != 16 - 1:
-            assert mapping_layer.is_populated == False
+            assert mapping_layer.is_initialized == False
 
-    assert isinstance(mapping_layer.list_depend, InferenceParameter)
-    assert mapping_layer.is_populated == True
+    assert isinstance(mapping_layer.list_depend, torch.Tensor)
+    assert mapping_layer.is_initialized == True
 
 
 @pytest.mark.inference_v2
@@ -99,22 +96,22 @@ def test_sub_mapping_syntax():
     mapping_layer.set_dependency("model.val.item.d_1", torch.ones(1))
     mapping_layer.set_dependency("model.val.item.d_2", torch.ones(1) * 2)
 
-    assert isinstance(mapping_layer.multi_depend, InferenceParameter)
+    assert isinstance(mapping_layer.multi_depend, torch.Tensor)
 
     mapping_layer.set_dependency("model.val.item2.d_1", torch.ones(1))
     mapping_layer.set_dependency("model.val.item2.d_2", torch.ones(1) * 2)
 
-    assert isinstance(mapping_layer.multi_depend2, InferenceParameter)
+    assert isinstance(mapping_layer.multi_depend2, torch.Tensor)
 
     # We want to check into double digits to make sure that this isn't specific
     # to single difit indexing.
     for i in range(16):
         mapping_layer.set_dependency(f"model.list_vals.{i}.d", torch.ones(1) * i)
         if i != 16 - 1:
-            assert mapping_layer.is_populated == False
+            assert mapping_layer.is_initialized == False
 
-    assert isinstance(mapping_layer.list_depend, InferenceParameter)
-    assert mapping_layer.is_populated == True
+    assert isinstance(mapping_layer.list_depend, torch.Tensor)
+    assert mapping_layer.is_initialized == True
 
 
 @pytest.mark.inference_v2
@@ -126,8 +123,8 @@ def test_double_mapping_syntax():
 
     # The single parameter setting should immediately make the parameter finalized
     # and the whole layer initialized.
-    assert isinstance(mapping_layer.multi_depend, InferenceParameter)
-    assert mapping_layer.is_populated == True
+    assert isinstance(mapping_layer.multi_depend, torch.Tensor)
+    assert mapping_layer.is_initialized == True
 
 
 @pytest.mark.inference_v2
