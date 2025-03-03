@@ -483,11 +483,18 @@ def replace_transformer_layer(orig_layer_impl,
                 data = mp_replace.copy(new_weight, child.weight.data)
                 new_bias = torch.empty((child.weight.shape[1] // mp_size),
                                        device=child.weight.device,
-                                       dtype=torch.half if fp16 else torch.float)
-                bias_data = None if child.bias is None else mp_replace.copy(
-                    new_bias,
-                    child.bias.data).to(torch.cuda.current_device())
-                return LinearLayer(data.to(torch.cuda.current_device()), bias_data)
+                                       dtype=child.weight.dtype)
+                if z_inference:
+                    with deepspeed.zero.GatheredParameters(child.bias, modifier_rank=0):
+                        bias_data = None if child.bias is None else mp_replace.copy(
+                            new_bias,
+                            child.bias.data).to(torch.cuda.current_device())
+                else:
+                    bias_data = None if child.bias is None else mp_replace.copy(
+                        new_bias,
+                        child.bias.data).to(torch.cuda.current_device())
+                return LinearLayer(weight=data.to(torch.cuda.current_device()),
+                                   bias=bias_data)
 
         def _slice_embedding(child, name, conv_linear_layer):
             mp_replace = ReplaceWithTensorSlicing(mp_group=mp_group)
@@ -565,10 +572,91 @@ def replace_transformer_layer(orig_layer_impl,
 
         return new_module
 
-    def set_lm_head(module):
-        if is_autotp_training_mode():
-            # we need to handle autoTP training mode separately.
-            return
+    replaced_module = replace_module(model=model,
+                                     orig_class=orig_layer_impl,
+                                     replace_fn=replace_fn,
+                                     _replace_policy=policy)
+
+    if checkpoint_dict is not None:
+        start_time = time.time()
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        checkpoint = checkpoint_dict['checkpoints']
+        ckpt_type = checkpoint_dict.get('parallelization', 'pp')
+        ckpt_mp_size = checkpoint_dict.get('mp_size', mp_size)
+        base_dir = checkpoint_dict.get('base_dir', '')
+
+        if ckpt_type == 'pp':
+            pbar = tqdm.tqdm(total=len(checkpoint),
+                             desc=f"Loading {len(checkpoint)} checkpoint shards")
+            for i in range(len(checkpoint)):
+                if not deepspeed.comm.is_initialized() or deepspeed.comm.get_rank() == 0:
+                    pbar.update(1)
+                sd = torch.load(checkpoint[i], map_location='cpu')
+                load_model_with_checkpoint(replaced_module, sd, mp_replace, ckpt_type)
+        else:
+            num_checkpoints = len(checkpoint) // ckpt_mp_size
+            assert world_size >= ckpt_mp_size,\
+                "Currently, merging checkpoints is not supported (when world_size is smaller than #checkpoints)!"
+            checkpoint_stride = world_size // ckpt_mp_size
+            if not deepspeed.comm.is_initialized() or deepspeed.comm.get_rank() == 0:
+                pbar = tqdm.tqdm(total=num_checkpoints,
+                                 desc=f"Loading {num_checkpoints} checkpoint shards")
+            for i in range(num_checkpoints):
+                if not deepspeed.comm.is_initialized() or deepspeed.comm.get_rank() == 0:
+                    pbar.update(1)
+
+                ckpt_index = i * ckpt_mp_size + (rank // checkpoint_stride)
+                ckpt_file = os.path.join(
+                    base_dir,
+                    checkpoint[ckpt_index]) if base_dir else checkpoint[ckpt_index]
+                sd = torch.load(ckpt_file, map_location='cpu')
+                load_model_with_checkpoint(replaced_module,
+                                           sd,
+                                           mp_replace,
+                                           ckpt_type,
+                                           rank % (world_size // ckpt_mp_size))
+        print(f"checkpoint loading time at rank {rank}: {time.time()-start_time} sec")
+
+    if save_mp_checkpoint_path is not None:
+        from collections import OrderedDict
+        import json
+
+        ckpt_name = checkpoint_dict['type']
+        if dist.is_initialized():
+            dist.barrier()
+        transformer_name = get_transformer_name(replaced_module)
+        non_tp_ckpt_name = f'{ckpt_name}-non-tp.pt'
+        ckpt_files = [non_tp_ckpt_name] * world_size
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print("Saving tp-sharded checkpoints")
+            torch.save(
+                OrderedDict({
+                    k: v
+                    for k,
+                    v in dict(replaced_module.state_dict()).items()
+                    if transformer_name not in k
+                }),
+                f'{save_mp_checkpoint_path}/{non_tp_ckpt_name}')
+            ckpt_files += [f'{ckpt_name}-tp_{r:0>2d}.pt' for r in range(world_size)]
+            config = json.dumps({
+                'type': ckpt_name,
+                'base_dir': f'{save_mp_checkpoint_path}',
+                'checkpoints': ckpt_files,
+                'version': 1.0,
+                'parallelization': 'tp',
+                'mp_size': world_size
+            })
+            with open(f"{save_mp_checkpoint_path}/{ckpt_name}_ds-inference_config.json",
+                      "w") as cfg:
+                cfg.write(config)
+        torch.save(
+            OrderedDict({
+                k: v
+                for k,
+                v in dict(replaced_module.state_dict()).items() if transformer_name in k
+            }),
+            f'{save_mp_checkpoint_path}/{ckpt_name}-tp_{rank:0>2d}.pt')
 
     if checkpoint is not None:
         pbar = tqdm.tqdm(total=len(checkpoint),
