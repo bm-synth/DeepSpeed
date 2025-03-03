@@ -114,6 +114,10 @@ class DistributedTest(ABC):
         return test_kwargs
 
     def _launch_procs(self, num_procs):
+        if torch.cuda.is_available() and torch.cuda.device_count() < num_procs:
+            pytest.skip(
+                f"Skipping test because not enough GPUs are available: {num_procs} required, {torch.cuda.device_count()} available"
+            )
         mp.set_start_method('forkserver', force=True)
         skip_msg = mp.Queue()  # Allows forked processes to share pytest.skip reason
         processes = []
