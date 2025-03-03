@@ -11,12 +11,8 @@ from deepspeed.utils.logging import log_dist
 
 from deepspeed.ops.transformer.inference.ds_mlp import DeepSpeedMLP
 from deepspeed.ops.transformer.inference.ds_attention import DeepSpeedSelfAttention, BloomSelfAttention
-from deepspeed.ops.transformer.inference.op_binding.workspace import WorkspaceOp
-from deepspeed.accelerator import get_accelerator
-import deepspeed
-if deepspeed.HAS_TRITON and get_accelerator().is_triton_supported():
-    from deepspeed.ops.transformer.inference.triton.mlp import TritonMLP
-    from deepspeed.ops.transformer.inference.triton.attention import TritonSelfAttention
+
+inference_cuda_module = None
 
 
 class DeepSpeedTransformerInference(nn.Module):
@@ -59,14 +55,25 @@ class DeepSpeedTransformerInference(nn.Module):
                 log_dist(f"Injecting Triton kernels ...", [0])
 
         if self.config.bigscience_bloom:
-            self.attention = BloomSelfAttention(self.config, mp_group, quantize_scales, quantize_groups, merge_count)
-            assert not self.config.use_triton
+            self.attention = BloomSelfAttention(self.config,
+                                                mp_group,
+                                                quantize_scales,
+                                                quantize_groups,
+                                                merge_count,
+                                                qkv_merging)
         else:
-            if deepspeed.HAS_TRITON and self.config.use_triton:
-                self.attention = TritonSelfAttention(self.config)
-            else:
-                self.attention = DeepSpeedSelfAttention(self.config, mp_group, quantize_scales, quantize_groups,
-                                                        merge_count)
+            self.attention = DeepSpeedSelfAttention(self.config,
+                                                    mp_group,
+                                                    quantize_scales,
+                                                    quantize_groups,
+                                                    merge_count,
+                                                    qkv_merging)
+        self.mlp = DeepSpeedMLP(self.config,
+                                mp_group,
+                                quantize_scales,
+                                quantize_groups,
+                                merge_count,
+                                mlp_extra_grouping)
 
         device = torch.cuda.current_device()  #if config.bigscience_bloom else 'cpu'
         self.norm_w = nn.Parameter(torch.empty(self.config.hidden_size,
