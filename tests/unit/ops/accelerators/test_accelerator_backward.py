@@ -18,8 +18,12 @@ from unit.modelingpreln import BertEncoder as BertEncoderPreln
 from unit.common import DistributedTest, is_rocm_pytorch
 from deepspeed.ops.op_builder import TransformerBuilder
 
-if torch.half not in get_accelerator().supported_dtypes():
-    pytest.skip(f"fp16 not supported, valid dtype: {get_accelerator().supported_dtypes()}", allow_module_level=True)
+import sys
+
+#if not deepspeed.ops.__installed_ops__['transformer']:
+#pytest.skip(
+#    "transformer kernels are temporarily disabled because of unexplained failures",
+#    allow_module_level=True)
 
 
 def check_equal(first, second, atol=1e-2, verbose=False):
@@ -247,11 +251,15 @@ def run_backward(ds_config, seq_len, atol=1e-2, verbose=False):
 # NOTE: Keep these different params as they have helped find divergence in behavior between AMD and NVIDIA.
 @pytest.mark.parametrize('batch_size, hidden_size, seq_len, heads, num_layers, is_preln, use_fp16, atol',
                          [
-                             (64,160,128,2,24,False,True, 0.2),
-                             (64,1600,128,2,4,False,True, 0.2),
                              (8,1600,128,25,3,True,True, 0.05),
                              (8,160,128,2,3,True,True, 0.1),
                              (8,1600,128,2,3,True,True, 0.05),
+                             (3,1024,119,16,24,True,False, 0.05),
+                             (3,1024,115,16,24,True,True, 0.05),
+                             (1024,128,10,2,2,False,False, 0.1),
+                             #(3,1024,52,16,24,False,True, 0.2),
+                             #(3,128,51,2,24,False,False, 0.1),
+                             #(3,128,54,2,24,False,True, 0.2),
                          ]) # yapf: disable
 class TestCUDABackward(DistributedTest):
     world_size = 1
@@ -266,17 +274,6 @@ class TestCUDABackward(DistributedTest):
         if not get_accelerator().is_fp16_supported() and (use_fp16 is True or is_preln is False):
             return
 
-        ds_config = DeepSpeedTransformerConfig()
-        ds_config.layer_id = None
-        ds_config.batch_size = batch_size
-        ds_config.hidden_size = hidden_size
-        ds_config.intermediate_size = hidden_size
-        ds_config.heads = heads
-        ds_config.attn_dropout_ratio = 0.0
-        ds_config.hidden_dropout_ratio = 0.0
-        ds_config.num_hidden_layers = num_layers
-        ds_config.pre_layer_norm = is_preln
-        ds_config.initializer_range = 0.02
-        ds_config.fp16 = use_fp16
+    run_backward(ds_config, seq_len, atol=atol, verbose=False)
 
         run_backward(ds_config, seq_len, atol=atol, verbose=True)

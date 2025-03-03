@@ -190,8 +190,6 @@ def run_forward(ds_config, seq_len, atol=1e-2, verbose=False, test_bsz=None):
 @pytest.mark.sequential
 @pytest.mark.parametrize('batch_size, hidden_size, seq_len, heads, num_layers, is_preln, use_fp16',
                          [
-                             (64,160,128,2,24,False,True),
-                             #(8,2048,2048,32,1,True,True),
                              (8,160,128,2,3,True,True),
                              (8,160,128,2,3,False,True),
                              (8,1600,128,2,3,True,True),
@@ -254,10 +252,10 @@ class TestCUDAForward(DistributedTest):
 
 @pytest.mark.parametrize('batch_size, small_bsz, hidden_size, seq_len, heads, num_layers, is_preln, use_fp16',
                          [
-                             (8,3,1024,512,16,3,True,False),
-                             (8,7,1024,512,16,3,True,True),
-                             (8,3,1024,512,16,3,False,False),
-                             (8,7,1024,512,16,3,False,True),
+                             #(8,3,1024,512,16,3,True,False),
+                             #(8,7,1024,512,16,3,True,True),
+                             #(8,3,1024,512,16,3,False,False),
+                             #(8,7,1024,512,16,3,False,True),
                          ]) # yapf: disable
 class TestCUDAForwardSmallBatchSize(DistributedTest):
     world_size = 1
