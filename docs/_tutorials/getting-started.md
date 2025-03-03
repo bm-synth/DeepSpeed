@@ -31,7 +31,7 @@ distributed data parallel or mixed precision training are done
 appropriately under the hood. In addition to wrapping the model, DeepSpeed can
 construct and manage the training optimizer, data loader, and the learning rate
 scheduler based on the parameters passed to `deepspeed.initialize` and the
-DeepSpeed [configuration file](#deepspeed-configuration). Note that DeepSpeed automatically executes the learning rate schedule at every training step.
+DeepSpeed [configuration file](#deepspeed-configuration).
 
 If you already have a distributed environment setup, you'd need to replace:
 
