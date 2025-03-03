@@ -1,40 +1,34 @@
 name: Formatting
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      'staging**'
   pull_request:
     branches:
       '**'
-  merge_group:
-    branches: [ master ]
-  schedule:
-    - cron: "0 0 * * *"
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
 
   # formatting and basic install on cpu-only machine
-  unit-tests:
-    runs-on: ubuntu-22.04
+  formatting:
+    runs-on: ubuntu-20.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
 
       - name: environment
         run: |
           which python
           python --version
+          pip install torch==1.9.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+          python -c "import torch; print('torch:', torch.__version__, torch)"
 
-      - name: Install dependencies
+      - name: Install deepspeed
         run: |
-          # Previously we would do pip install .[dev] but this is causing out of
-          # space errors start with torch 2.1.0 release
-          grep -E "clang-format|pre-commit" requirements/requirements-dev.txt | xargs pip install
+          pip install .[dev]
+          ds_report
 
       - name: Formatting checks
         run: |
-          pip show pre-commit clang-format
-          pre-commit run --all-files
+           pre-commit run --all-files
