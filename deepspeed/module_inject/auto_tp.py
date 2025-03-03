@@ -250,7 +250,8 @@ class AutoTP():
         for key, submodule in module._modules.items():
             if isinstance(submodule, nn.Linear):
                 layer_list = layer_list + [parent + "." + key]
-            elif isinstance(submodule, nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
+            elif isinstance(submodule,
+                            nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
                 layer_list = layer_list + ["ln"]
             else:
                 layer_list = layer_list + AutoTP.get_layers(key, submodule)
@@ -267,21 +268,6 @@ class AutoTP():
         policy_list.append(tuple([type(new_module), new_gems]))
         return policy_list
 
-    def kernel_supported(module_list):
-        policy = []
-        for plcy in replace_policies:
-            # instantiate a throw-away policy in order to populate the _orig_layer_class
-            _ = plcy(None)
-            if isinstance(plcy._orig_layer_class, list):
-                for orig_layer_class in plcy._orig_layer_class:
-                    policy.append(orig_layer_class)
-            elif plcy._orig_layer_class is not None:
-                policy.append(plcy._orig_layer_class)
-        for child in module_list:
-            if child.__class__ in policy:
-                return True
-        return False
-
     def tp_parser(model):
         policy_list = []
         module_list = []
@@ -297,7 +283,9 @@ class AutoTP():
             for key, submodule in module._modules.items():
                 if isinstance(submodule, nn.Linear):
                     layer_list = layer_list + ["." + key]
-                elif isinstance(submodule, nn.LayerNorm) or key in norm_layer_name_list:
+                elif isinstance(
+                        submodule,
+                        nn.LayerNorm) or key == 'LayerNorm' or key == 'layer_norm':
                     layer_list = layer_list + ["ln"]
                 else:
                     layer_list = layer_list + AutoTP.get_layers(key, submodule)
@@ -307,25 +295,6 @@ class AutoTP():
                         gem_list = gem_list + [layer_list[i - 1]]
                 elif 'out_proj' in layer:
                     gem_list = gem_list + [layer]
-                elif 'o_proj' in layer:
-                    gem_list = gem_list + [layer]
-                elif 'down_proj' in layer:
-                    gem_list = gem_list + [layer]
-                elif 'attention.dense' in layer and 'GPTNeoX' in str(model):
-                    gem_list = gem_list + [layer]
-                elif 'self_attention.dense' in layer and 'falcon' in str(
-                        type(module)):  # this is a hack to get the right linear layer for this model!
-                    gem_list = gem_list + [layer]
-                # Mixtral-7x8b used w2*act(w1*w3) linear. need to replace w2 to linearallreduce.
-                elif 'w2' in layer and 'Mixtral' in str(type(module)):
-                    gem_list = gem_list + [layer]
-                elif 'self_attn.dense' in layer and 'Phi' in str(type(module)):
-                    gem_list = gem_list + [layer]
-                elif 'self_attention.dense' in layer and 'ChatGLM' in str(model):
-                    gem_list = gem_list + [layer]
-                elif 'dense_4h_to_h' in layer and 'ChatGLM' in str(model):
-                    gem_list = gem_list + [layer]
-
             layer_list = []
             if gem_list != []:
                 gem_list = list(set(gem_list))
