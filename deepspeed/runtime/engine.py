@@ -177,6 +177,7 @@ class DeepSpeedEngine(Module):
         self._step_applied = False
         self._global_grad_norm = None
         self._is_gradient_accumulation_boundary = None
+        self.scale_wrt_gas = None
 
         # for debug purposes - can then debug print: debug_get_module_name(module)
         debug_extract_module_and_param_names(model)
@@ -1867,12 +1868,22 @@ class DeepSpeedEngine(Module):
                 grads = None
                 self.buffered_allreduce_fallback(grads=grads, elements_per_buffer=bucket_size)
 
-    def backward(self, loss, allreduce_gradients=True, release_loss=False):
+    @instrument_w_nvtx
+    def backward(self,
+                 loss,
+                 allreduce_gradients=True,
+                 release_loss=False,
+                 scale_wrt_gas=True):
         r"""Execute backward pass on the loss
         Arguments:
             loss: Torch tensor on which to execute backward propagation
             allreduce_gradients: is deprecated, ignored, and will soon be removed'
         """
+
+        see_memory_usage("Engine before backward", force=self.memory_breakdown())
+
+        if self.scale_wrt_gas is not None:
+            scale_wrt_gas = self.scale_wrt_gas
 
         if not allreduce_gradients:
             logger.warning(
@@ -1880,16 +1891,7 @@ class DeepSpeedEngine(Module):
             )
 
         # scale loss w.r.t. gradient accumulation if needed
-        if self.gradient_accumulation_steps() > 1:
-            loss = self._scale_loss(loss.float())
-
-        if self.scale_wrt_gas is not None:
-            scale_wrt_gas = self.scale_wrt_gas
-
-        do_gradient_reduction = self.enable_backward_allreduce and not self.inside_no_sync_ctxt
-
-        # scale loss w.r.t. gradient accumulation if reduction is not disabled
-        if do_gradient_reduction and self.gradient_accumulation_steps() > 1 and scale_wrt_gas:
+        if self.gradient_accumulation_steps() > 1 and scale_wrt_gas:
             loss = self._scale_loss_by_gas(loss.float())
 
         # Log training Loss
