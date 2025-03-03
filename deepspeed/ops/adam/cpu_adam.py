@@ -4,9 +4,10 @@ Copyright 2020 The Microsoft DeepSpeed Team
 
 import math
 import torch
-import importlib
-
-ds_opt_adam = None
+import time
+from pathlib import Path
+from ..op_builder import CPUAdamBuilder
+from deepspeed.utils.logging import should_log_le
 
 
 class DeepSpeedCPUAdam(torch.optim.Optimizer):
@@ -77,7 +78,8 @@ class DeepSpeedCPUAdam(torch.optim.Optimizer):
                                      betas[1],
                                      eps,
                                      weight_decay,
-                                     adamw_mode)
+                                     adamw_mode,
+                                     should_log_le("info"))
 
     def __del__(self):
         # need to destroy the C++ object explicitly to avoid a memory leak when deepspeed.initialize
