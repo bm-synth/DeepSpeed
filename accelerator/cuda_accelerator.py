@@ -25,7 +25,7 @@ class CUDA_Accelerator(DeepSpeedAccelerator):
 
     def __init__(self):
         self._name = 'cuda'
-        self._communication_backend_name = 'nccl'
+        self._communication_backend_name = 'nccl' if sys.platform != 'win32' else 'gloo'
         self._compile_backend = "inductor"
         if pynvml is None:
             self._init_pynvml()
