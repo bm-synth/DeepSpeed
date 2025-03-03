@@ -501,9 +501,6 @@ def main(args=None):
 
     multi_node_exec = len(active_resources) > 1
 
-    if multi_node_exec and not shutil.which('pdsh'):
-        raise RuntimeError("pdsh is not installed, unable to proceed")
-
     if not multi_node_exec:
         deepspeed_launch = [
             sys.executable, "-u", "-m", "deepspeed.launcher.launch", f"--world_info={world_info_base64}",
