@@ -1673,6 +1673,7 @@ class DeepSpeedEngine(Module):
                     zero_quantized_weights=self.zero_quantized_weights(),
                     zero_quantized_nontrainable_weights=self.zero_quantized_nontrainable_weights(),
                     zero_module_granularity_threshold=self.zero_module_granularity_threshold(),
+                    zeropp_loco_param=self.zeropp_loco_param(),
                 )
 
         else:
