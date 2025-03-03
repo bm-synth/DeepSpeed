@@ -2,7 +2,7 @@
 title: "Azure empowers easy-to-use, high-performance, and hyperscale model training using DeepSpeed"
 excerpt: ""
 date: 2022-07-26 00:09:00
-tags: training azure English
+tags: training, azure
 ---
 
 ## Introduction
@@ -13,13 +13,13 @@ Large-scale transformer-based deep learning models trained on large amounts of d
 
 *Figure 1: Landscape of large models and hardware capabilities*
 
-To train these models, users needed to set up and maintain a complex distributed training infrastructure that usually required several manual and error-prone steps. These lead to a subpar experience both in terms of usability and performance. We recently [announced](https://azure.microsoft.com/en-us/blog/azure-empowers-easytouse-highperformance-and-hyperscale-model-training-using-deepspeed/) how we are making great strides to simplify this and enable easy-to-use and high-performance training at 1K+ GPU scale on Azure.
+To train these models, users needed to set up and maintain a complex distributed training infrastructure that usually required several manual and error-prone steps. These lead to a subpar experience both in terms of usability and performance. We recently [announced](https://azure.microsoft.com/en-us/blog/azure-empowers-easytouse-highperformance-and-hyperscale-model-training-using-deepspeed/) (update link to Azure blog) how we are making great strides to simplify this and enable easy-to-use and high-performance training at 1K+ GPU scale on Azure.
 
 In this extended post, we share the details of how DeepSpeed users can train trillion-parameter models with a new easy-to-use, streamlined, scalable, and high-performance distributed training experience on Azure. We also share details of the experimental setup, model configurations, additional performance trends, and guide our users on how to run these experiments in their own environments.
 
 ## Making distributed training faster and easier on Azure using DeepSpeed
 
-We compare the existing manual and error-prone workflow with our proposed easy-to-use workflow for DeepSpeed on Azure in *Figure 2*. Customers can now use easy-to-use [training pipelines](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed) to launch training jobs at scale. The new workflow reduces the number of steps from 11 to just 1 if users rely on the recommended [AzureML](https://azure.microsoft.com/en-us/services/machine-learning/) [recipes](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed/azureml).
+We compare the existing manual and error-prone workflow with our proposed easy-to-use workflow for DeepSpeed on Azure in *Figure 2*. Customers can now use easy-to-use [training pipelines](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples) to launch training jobs at scale. The new workflow reduces the number of steps from 11 to just 1 if users rely on the recommended [AzureML](https://azure.microsoft.com/en-us/services/machine-learning/) [recipes](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples/azureml).
 
 
 ![Workflow](/assets/images/old-vs-new-azure.png){: .align-center}
@@ -29,7 +29,7 @@ We compare the existing manual and error-prone workflow with our proposed easy-t
 For users who have custom environments built using Azure VMs or [Azure VMSS](https://docs.microsoft.com/en-us/azure/virtual-machine-scale-sets/overview), only two steps are needed:
 
 - 1) Run the cluster setup script (to be released in the next few weeks)
-- 2) Use the Azure VMSS [recipes](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed/azure) to launch training.
+- 2) Use the Azure VMSS [recipes](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples/azure) to launch training.
 
 ## Key Performance Benefits
 We already shared a summary of our key performance results in the Azure [announcement](https://azure.microsoft.com/en-us/blog/azure-empowers-easytouse-highperformance-and-hyperscale-model-training-using-deepspeed/). We enable the capability to train 2x larger model sizes (2 trillion vs. 1 trillion parameters), scale to 2x more GPUs (1024 vs. 512), and offer up to 1.8x higher compute throughput/GPU (150 TFLOPs vs. 81 TFLOPs) compared to other [cloud providers](https://medium.com/pytorch/training-a-1-trillion-parameter-model-with-pytorch-fully-sharded-data-parallel-on-aws-3ac13aa96cff).
@@ -48,7 +48,7 @@ We share the details of our experimental setup and some of the best practices we
 We used [NDm A100 v4-series](https://docs.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series) instances in our experiments. Each instance includes two socket AMD EPYC 7V12 64-Core CPUs, 1.7TB main memory and eight A100 80GB GPUs. The system has a balanced PCIe topology connecting 4 GPU devices to each CPU socket. Each GPU within the VM is provided with its own dedicated, topology-agnostic 200 Gb/s NVIDIA Mellanox HDR InfiniBand connection providing an accelerated 200 Gbps high speed fabric. The DeepSpeed library exploits offload capabilities where the activation and optimizer states are allocated in the main memory. Hence, 1.7TB memory capacity per node helps us to scale to large model sizes.
 
 ### Training setup using AzureML
-Users can directly use the AzureML studio and use our published [recipes](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed/azureml) to run experiments without any additional setup. This is the easiest and recommended way of running experiments on Azure.
+Users can directly use the AzureML studio and use our published [recipes](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples/azureml) to run experiments without any additional setup. This is the easiest and recommended way of running experiments on Azure.
 
 ### Training setup using Azure VMSS
 
@@ -59,7 +59,7 @@ A cluster is created using Azure Virtual Machine Scale Sets (VMSS) to provision 
 | ------------------------------:  | :----------------: |
 | PyTorch | 	1.10.2 (installed from source) |
 | DeepSpeed |	0.6.2 (installed from source) |
-| Megatron-LM |	[https://github.com/deepspeedai/Megatron-DeepSpeed](https://github.com/deepspeedai/Megatron-DeepSpeed) |
+| Megatron-LM |	[https://github.com/microsoft/Megatron-DeepSpeed](https://github.com/microsoft/Megatron-DeepSpeed) |
 | Apex |	0.1 |
 | NCCL |	2.12.10 |
 | CUDNN |	8.2.4.15 |
@@ -122,14 +122,14 @@ The 2T parameter model consists of 160 layers, 32k hidden dimension, and 128 att
 
 We recognize that DeepSpeed users are diverse and have different environments. In this tutorial, our focus is on making things simpler for users who plan to run large model training experiments on Azure.
 
-> The easiest way to do model training on Azure is via the Azure ML recipes. The job submission and data preparation scripts have been made available [here](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed/azureml). Users simply need to setup their Azure ML workspace following the [guide](https://github.com/Azure/azureml-examples/tree/main/python-sdk#set-up) and submit experiment using the aml_submit.py file.
+> The easiest way to do model training on Azure is via the Azure ML recipes. The job submission and data preparation scripts have been made available [here](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples/azureml). Users simply need to setup their Azure ML workspace following the [guide](https://github.com/Azure/azureml-examples/tree/main/python-sdk#set-up) and submit experiment using the aml_submit.py file.
 
-Some users have customized environments built on top of Azure VMs and VMSS based clusters. To simplify training on such setups, we are working on an easy-to-use cluster setup script that will be published in the next few weeks. If you already have a cluster setup running, you can use the [azure recipes](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/main/examples_deepspeed/azure) for the 175B and the 1T model. The recipes can easily be modified to train other model configurations.
+Some users have customized environments built on top of Azure VMs and VMSS based clusters. To simplify training on such setups, we are working on an easy-to-use cluster setup script that will be published in the next few weeks. If you already have a cluster setup running, you can use the [azure recipes](https://github.com/microsoft/Megatron-DeepSpeed/tree/main/examples/azure) for the 175B and the 1T model. The recipes can easily be modified to train other model configurations.
 
 ## Acknowledgement
 
 This blog post was written by the DeepSpeed team in collaboration with the AzureML and the AzureHPC team. We would like to acknowledge several individuals who made this work possible:
-- AzureHPC team: Russell J. Hewett, Kushal Datta, Prabhat Ram, Jithin Jose, and Nidhi Chappell
+- AzureHPC team: Russell Hewett, Kushal Datta, Prabhat Ram, Jithin Jose, and Nidhi Chappell
 - AzureML team: Vijay Aski, Razvan Tanase, Miseon Park, Savita Mittal, Ravi Shankar Kolli, Prasanth Pulavarthi, and Daniel Moth
 - DeepSpeed team: Ammar Ahmad Awan, Jeff Rasley, Samyam Rajbhandari, Martin Cai, and Yuxiong He
 - CTO office: Gopi Kumar and Luis Vargas
