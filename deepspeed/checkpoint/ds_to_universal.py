@@ -199,31 +199,17 @@ def _merge_zero_shards(param_base_path, state, tp_degree, slice_shape=None):
     slices = []
     for tp_index in range(tp_degree):
         prefix_path = os.path.join(param_base_path, str(tp_index), f"{state}")
-        paths = glob.glob(f"{prefix_path}.*")
-
+        paths = sorted(list(glob.glob(f"{prefix_path}.*")))
         if len(paths) == 0:
             continue
 
-        pattern = re.compile(f"{prefix_path}\\.([0-9]+)")
-        dp_indices = set()
-        for p in paths:
-            m = pattern.match(p)
-            if m:
-                dp_indices.add(int(m.group(1)))
-            else:
-                raise ValueError(f"Cannot parse dp_rank from {p}")
-
-        paths = [f"{prefix_path}.{dp_index_to_str(dp_index)}" for dp_index in sorted(list(dp_indices))]
-        shards = [torch.load(p, weights_only=False) for p in paths]
+        shards = [torch.load(p) for p in paths]
 
         if state == "step":
             assert all(v == shards[0] for v in shards), "All shards must have the same step value"
             slice = shards[0]
         else:
-            if slice_shape is None:
-                slice = torch.cat(shards, dim=0)
-            else:
-                slice = torch.cat(shards, dim=0).reshape(slice_shape)
+            slice = torch.cat(shards, dim=0).reshape(slice_shape)
 
         slices.append(slice)
     return slices
@@ -255,17 +241,6 @@ def merge_tp_slices(ds_checkpoint, dir, slice_dir, tp_degree, name_and_shape):
             unmatched_patterns.discard(pattern_)
             return pattern_
         return None
-
-    def get_matched_sub_params_pattern(name_):
-        for subparam_shape_dict in parameter_with_sub_params:
-            subparam_shape = SubparamShape(**subparam_shape_dict)
-            for pattern_ in subparam_shape.patterns:
-                if re.match(pattern_, name_):
-                    unmatched_patterns.discard(pattern_)
-                    return subparam_shape
-        return None
-
-    matched_sub_params_shape = get_matched_sub_params_pattern(name)
 
     step_merged = _merge_zero_shards(slice_base_path, "step", tp_degree, shape)
     if step_merged:
@@ -346,17 +321,21 @@ def merge_zero3_slices(dp_degree, dir, slice_dir, name):
 
 
 def _do_parallel_work(do_work, work_chunks, num_workers):
-    results = []
     if num_workers > 1:
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            future_list = [executor.submit(do_work, work) for work in work_chunks]
-            for f in tqdm.tqdm(future_list):
-                results.append(f.result())
+        pool = multiprocessing.Pool(num_workers)
+        results = []
+        for batch in tqdm.tqdm(work_chunks):
+            res = pool.map(do_work, batch)
+            results.extend(res)
+        pool.close()
+        pool.join()
     else:
         # No parallel pass for unit testing
         # We can't create child processes in tests
-        for work in tqdm.tqdm(work_chunks):
-            results.append(do_work(work))
+        results = []
+        for batch in tqdm.tqdm(work_chunks):
+            res = [do_work(x) for x in batch]
+            results.extend(res)
     return results
 
 
