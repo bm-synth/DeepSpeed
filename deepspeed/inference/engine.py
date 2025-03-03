@@ -139,22 +139,12 @@ class InferenceEngine(Module):
         self.module.to(device)
 
         if self.mp_world_size > 1:
-            self.model_orig_fwd = self.module.forward
-            self.module.forward = self.forward
-        else:
-            if config.replace_with_kernel_inject:
-                # 2. DeepSpeed Kernel Injection
-                self._apply_injection_policy(config)
-            elif config.tensor_parallel.tp_size > 1:
-                # 3. Automatic Tensor Parallelism
-                parser_dict = AutoTP.tp_parser(model)
-                print("AutoTP: ", parser_dict)
-                for client_module, injection_policy in parser_dict:
-                    if isinstance(injection_policy, str):
-                        config.injection_policy_tuple = (injection_policy, )
-                    else:
-                        config.injection_policy_tuple = injection_policy
-                    self._apply_injection_policy(config, client_module)
+            _rng_state = torch.cuda.get_rng_state().to(torch.cuda.current_device())
+            dist.broadcast(_rng_state, 0)
+            torch.cuda.set_rng_state(_rng_state.cpu())
+
+        if self.mp_world_size > 1:
+            assert not self.enable_cuda_graph, "Cuda graph is not supported for model parallelism"
 
     def _get_model_config_generate(self):
         self.config = getattr(self.module, 'config', None)
@@ -580,37 +570,6 @@ class InferenceEngine(Module):
 
     def _create_cuda_graph(self, *inputs, **kwargs):
         # warmup to create the workspace and cublas handle
-        cuda_stream = get_accelerator().Stream()
-        cuda_stream.wait_stream(get_accelerator().current_stream())
-        with get_accelerator().stream(cuda_stream):
-            for i in range(3):
-                ret = self.module(*inputs, **kwargs)
-        get_accelerator().current_stream().wait_stream(cuda_stream)
-
-        # create cuda_graph and assign static_inputs and static_outputs
-        self._cuda_graphs = get_accelerator().create_graph()
-        self.static_inputs = inputs
-        self.static_kwargs = kwargs
-
-        with get_accelerator().capture_to_graph(self._cuda_graphs):
-            self.static_output = self.module(*self.static_inputs, **self.static_kwargs)
-
-        self.cuda_graph_created = True
-
-    def _graph_replay(self, *inputs, **kwargs):
-        for i in range(len(inputs)):
-            if torch.is_tensor(inputs[i]):
-                self.static_inputs[i].copy_(inputs[i])
-        for k in kwargs:
-            if torch.is_tensor(kwargs[k]):
-                kwargs[k] = kwargs[k].to(torch.cuda.current_device())
-                if self.mp_world_size > 1:
-                    if not kwargs[k].is_contiguous():
-                        kwargs[k] = kwargs[k].contiguous()
-                    dist.broadcast(kwargs[k], 0)
-
-    def _create_cuda_graph(self, *inputs, **kwargs):
-        # warmup to create the workspace and cublas handle
         cuda_stream = torch.cuda.Stream()
         cuda_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(cuda_stream):
@@ -645,32 +604,15 @@ class InferenceEngine(Module):
             *inputs: Variable length input list
             **kwargs: variable length keyword arguments
         """
-        if self.mp_world_size > 1:
-            if self.mpu is None:
-                for input in inputs:
-                    if torch.is_tensor(input):
-                        input = input.to(torch.cuda.current_device())
-                        if not input.is_contiguous():
-                            input = input.contiguous()
-                        dist.broadcast(input, 0)
-                for k in kwargs:
-                    if torch.is_tensor(kwargs[k]):
-                        kwargs[k] = kwargs[k].to(torch.cuda.current_device())
-                        if self.mp_world_size > 1:
-                            if not kwargs[k].is_contiguous():
-                                kwargs[k] = kwargs[k].contiguous()
-                            dist.broadcast(kwargs[k], 0)
-
-        else:
-            if self.enable_cuda_graph:
-                if self.cuda_grah_created:
-                    outputs = self._graph_replay(*inputs, **kwargs)
-                else:
-                    self._create_cuda_graph(*inputs, **kwargs)
-                    outputs = self._graph_replay(*inputs, **kwargs)
+        if self.enable_cuda_graph:
+            if self.cuda_graph_created:
+                outputs = self._graph_replay(*inputs, **kwargs)
             else:
-                outputs = self.module(*inputs, **kwargs)
-            #outputs = self.module(*inputs, **kwargs)
+                self._create_cuda_graph(*inputs, **kwargs)
+                outputs = self._graph_replay(*inputs, **kwargs)
+        else:
+            outputs = self.module(*inputs, **kwargs)
+
         return outputs
 
     def _generate(self, *inputs, **kwargs):
