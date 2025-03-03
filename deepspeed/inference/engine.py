@@ -9,6 +9,7 @@ import os
 from torch.nn.modules import Module
 from packaging import version as pkg_version
 from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
+from deepspeed.utils.timer import SynchronizedWallClockTimer
 
 from ..runtime.state_dict_factory import SDLoaderFactory
 from ..runtime.weight_quantizer import WeightQuantization
@@ -21,6 +22,8 @@ from ..moe.layer import MoE
 
 import torch.distributed as dist
 import deepspeed.utils.groups as groups
+
+INFERENCE_MODEL_TIMER = "model-forward-inference"
 
 
 class InferenceEngine(Module):
@@ -148,11 +151,14 @@ class InferenceEngine(Module):
         if self.mp_world_size > 1:
             assert not self.enable_cuda_graph, "Cuda graph is not supported for model parallelism"
 
-    def profile_model_time(self):
+    def profile_model_time(self, use_cuda_events=True):
         if not self.model_profile_enabled and not self.enable_cuda_graph:
             self.module.register_forward_pre_hook(self._pre_forward_hook)
             self.module.register_forward_hook(self._post_forward_hook)
         self.model_profile_enabled = True
+        self.use_cuda_events = use_cuda_events
+        if self.use_cuda_events:
+            self.timers = SynchronizedWallClockTimer()
 
     def _get_model_config_generate(self, config):
         self.config = getattr(self.module, 'config', None) if config is None else config
@@ -164,13 +170,21 @@ class InferenceEngine(Module):
                 self.module.transformer._prepare_attn_mask = lambda attention_mask, *args, **kwargs: attention_mask
 
     def _pre_forward_hook(self, module, *inputs, **kwargs):
-        torch.cuda.synchronize()
-        self._start = time.time()
+        if self.use_cuda_events:
+            self.timers(INFERENCE_MODEL_TIMER).start()
+        else:
+            torch.cuda.synchronize()
+            self._start = time.time()
 
     def _post_forward_hook(self, module, input, output):
-        torch.cuda.synchronize()
-        self._end = time.time()
-        self._model_times.append(self._end - self._start)
+        if self.use_cuda_events:
+            self.timers(INFERENCE_MODEL_TIMER).stop()
+            elapsed_time = self.timers(INFERENCE_MODEL_TIMER).elapsed(reset=True)
+        else:
+            torch.cuda.synchronize()
+            self._end = time.time()
+            elapsed_time = self._end - self._start
+        self._model_times.append(elapsed_time)
 
     def _create_model_parallel_group(self):
         # Call the init process
