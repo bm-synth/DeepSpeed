@@ -201,18 +201,69 @@ class FlopsProfiler(object):
         print(
             "\n-------------------------- DeepSpeed Flops Profiler --------------------------"
         )
-        print("Summary of forward pass:")
-        print('{:<30}  {:<8}'.format('Profile step: ', profile_step))
-        print('{:<30}  {:<8}'.format('Number of parameters: ',
-                                     params_to_string(total_params)))
-        print('{:<30}  {:<8}'.format('Number of multiply-accumulate operations (MACs): ',
-                                     num_to_string(total_flops)))
-        print('{:<30}  {:<8}'.format(
-            'Number of floating point operations ( = 2 * MACs): ',
-            num_to_string(2 * total_flops)))
-        print('{:<30}  {:<8}'.format('Latency: ', duration_to_string(total_duration)))
-        print('{:<30}  {:<8}'.format('Floating point operations per second(FLOPS): ',
-                                     flops_to_string(2 * total_flops / total_duration)))
+        print(f'Profile Summary at step {profile_step}:')
+        print(
+            "Notations:\ndata parallel size (dp_size), model parallel size(mp_size),\nnumber of parameters (params), number of multiply-accumulate operations(MACs),\nnumber of floating point operations (flops), floating point operations per second (FLOPS),\nfwd latency (forward propagation latency), bwd latency (backward propagation latency),\nstep (weights update latency), iter latency (sum of fwd, bwd and step latency)\n"
+        )
+        if self.ds_engine:
+            print('{:<60}  {:<8}'.format('world size: ', self.ds_engine.world_size))
+            print('{:<60}  {:<8}'.format('data parallel size: ',
+                                         self.ds_engine.dp_world_size))
+            print('{:<60}  {:<8}'.format('model parallel size: ',
+                                         self.ds_engine.mp_world_size))
+            print('{:<60}  {:<8}'.format(
+                'batch size per GPU: ',
+                self.ds_engine.train_micro_batch_size_per_gpu()))
+
+        print('{:<60}  {:<8}'.format('params per gpu: ', params_to_string(total_params)))
+        print('{:<60}  {:<8}'.format(
+            'params of model = params per GPU * mp_size: ',
+            params_to_string(total_params *
+                             (self.ds_engine.mp_world_size) if self.ds_engine else 1)))
+
+        print('{:<60}  {:<8}'.format('fwd MACs per GPU: ', num_to_string(total_flops)))
+        print('{:<60}  {:<8}'.format('fwd flops per GPU = 2 * fwd MACs per GPU: ',
+                                     num_to_string(2 * total_flops)))
+
+        print('{:<60}  {:<8}'.format(
+            'fwd flops of model = fwd flops per GPU * mp_size: ',
+            num_to_string(2 * total_flops *
+                          (self.ds_engine.mp_world_size) if self.ds_engine else 1)))
+
+        fwd_latency = self.get_total_duration()
+        if self.ds_engine and self.ds_engine.wall_clock_breakdown():
+            fwd_latency = self.ds_engine.timers('forward').elapsed(False)
+        print('{:<60}  {:<8}'.format('fwd latency: ', duration_to_string(fwd_latency)))
+        print('{:<60}  {:<8}'.format(
+            'fwd FLOPS per GPU = fwd flops per GPU / fwd latency: ',
+            flops_to_string(2 * total_flops / fwd_latency)))
+
+        if self.ds_engine and self.ds_engine.wall_clock_breakdown():
+            bwd_latency = self.ds_engine.timers('backward').elapsed(False)
+            step_latency = self.ds_engine.timers('step').elapsed(False)
+            print('{:<60}  {:<8}'.format('bwd latency: ',
+                                         duration_to_string(bwd_latency)))
+            print('{:<60}  {:<8}'.format(
+                'bwd FLOPS per GPU = 2 * fwd flops per GPU / bwd latency: ',
+                flops_to_string(2 * 2 * total_flops / bwd_latency)))
+            print('{:<60}  {:<8}'.format(
+                'fwd+bwd FLOPS per GPU = 3 * fwd flops per GPU / (fwd+bwd latency): ',
+                flops_to_string(3 * 2 * total_flops / (fwd_latency + bwd_latency))))
+
+            print('{:<60}  {:<8}'.format('step latency: ',
+                                         duration_to_string(step_latency)))
+
+            iter_latency = fwd_latency + bwd_latency + step_latency
+            print('{:<60}  {:<8}'.format('iter latency: ',
+                                         duration_to_string(iter_latency)))
+            print('{:<60}  {:<8}'.format(
+                'FLOPS per GPU = 3 * fwd flops per GPU / iter latency: ',
+                flops_to_string(3 * 2 * total_flops / iter_latency)))
+
+            samples_per_iter = self.ds_engine.train_micro_batch_size_per_gpu(
+            ) * self.ds_engine.world_size
+            print('{:<60}  {:<8.2f}'.format('samples/second: ',
+                                            samples_per_iter / iter_latency))
 
         def flops_repr(module):
             params = module.__params__
@@ -265,7 +316,7 @@ class FlopsProfiler(object):
                 "Each module profile is listed after its name in the following order: \nnumber of parameters, percentage of total parameters, number of multiply-accumulate operations (MACs), percentage of total MACs, latency, percentage of total latency, number of floating point operations per second (FLOPS, computed as 2 * MACs / latency)."
             )
             print(
-                "Note: \n1. A module can have torch.nn.functional (e.g. to compute logits) along with submodules, thus making the difference between the parent's MACs(or latency) and the sum of its submodules'.\n2. Number of floating point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.\n"
+                "\nNote: 1. A module can have torch.nn.module or torch.nn.functional to compute logits (e.g. CrossEntropyLoss). They are not counted as submodules, thus not to be printed out. However they make up the difference between a parent's MACs (or latency) and the sum of its submodules'.\n2. Number of floating point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.\n3. The fwd latency listed in the top module's profile is directly captured at the module forward function in PyTorch, thus it's less than the fwd latency shown above which is captured in DeepSpeed.\n"
             )
             print(self.model)
 
