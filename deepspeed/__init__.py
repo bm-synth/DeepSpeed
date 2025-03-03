@@ -44,8 +44,8 @@ __git_hash__ = git_hash
 __git_branch__ = git_branch
 
 
-def initialize(args,
-               model,
+def initialize(args=None,
+               model=None,
                optimizer=None,
                model_parameters=None,
                training_data=None,
@@ -56,8 +56,7 @@ def initialize(args,
     r"""Initialize the DeepSpeed Engine.
 
     Arguments:
-        args: a dictionary containing local_rank and deepspeed_config
-            file location
+        args: an object containing local_rank and deepspeed_config fields. This is optional if `config_params` is passed.
 
         model: Required: nn.module class before apply any wrappers
 
@@ -82,9 +81,11 @@ def initialize(args,
             mini-batch of Tensor(s).  Used when using batched loading from a
             map-style dataset.
 
-    Return:
-        The following tuple is returned by this function.
-        tuple: engine, engine.optimizer, engine.training_dataloader, engine.lr_scheduler
+        config_params: Optional: Instead of requiring args.deepspeed_config you can pass your deepspeed config
+            as a dictionary instead.
+
+    Returns:
+        A tuple of ``engine``, ``optimizer``, ``training_dataloader``, ``lr_scheduler``
 
         engine: DeepSpeed runtime engine which wraps the client model for distributed training.
 
@@ -104,15 +105,31 @@ def initialize(args,
         __git_branch__),
           flush=True)
 
-    engine = DeepSpeedLight(args=args,
-                            model=model,
-                            optimizer=optimizer,
-                            model_parameters=model_parameters,
-                            training_data=training_data,
-                            lr_scheduler=lr_scheduler,
-                            mpu=mpu,
-                            dist_init_required=dist_init_required,
-                            collate_fn=collate_fn)
+    assert model is not None, "deepspeed.initialize requires a model"
+
+    if not isinstance(model, PipelineModule):
+        engine = DeepSpeedEngine(args=args,
+                                 model=model,
+                                 optimizer=optimizer,
+                                 model_parameters=model_parameters,
+                                 training_data=training_data,
+                                 lr_scheduler=lr_scheduler,
+                                 mpu=mpu,
+                                 dist_init_required=dist_init_required,
+                                 collate_fn=collate_fn,
+                                 config_params=config_params)
+    else:
+        assert mpu is None, "mpu must be None with pipeline parallelism"
+        engine = PipelineEngine(args=args,
+                                model=model,
+                                optimizer=optimizer,
+                                model_parameters=model_parameters,
+                                training_data=training_data,
+                                lr_scheduler=lr_scheduler,
+                                mpu=model.mpu(),
+                                dist_init_required=dist_init_required,
+                                collate_fn=collate_fn,
+                                config_params=config_params)
 
     return_items = [
         engine,
