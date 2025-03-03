@@ -15,6 +15,7 @@ import json
 import base64
 import time
 import signal
+import psutil
 from collections import defaultdict
 from typing import Dict
 from argparse import ArgumentParser, REMAINDER
@@ -246,7 +247,7 @@ def main():
         for process in processes:
             logger.info(f"Killing subprocess {process.pid}")
             try:
-                process.kill()
+                terminate_process_tree(process.pid)
             except Exception:
                 pass
         if last_return_code is not None:
