@@ -1,13 +1,7 @@
 name: python
 
 on:
-  push:
-    branches:
-      - 'master'
-      - 'staging**'
-    paths-ignore:
-      - 'docs/**'
-      - 'blogs/**'
+  workflow_dispatch:
   pull_request:
     branches:
       '**'

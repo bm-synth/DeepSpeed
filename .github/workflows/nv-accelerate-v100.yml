@@ -1,12 +1,7 @@
 name: nv-accelerate-v100
 
 on:
-  push:
-    branches:
-      - 'master'
-      - 'staging**'
-    paths-ignore:
-      - 'docs/**'
+  workflow_dispatch:
   pull_request:
     paths-ignore:
       - 'docs/**'

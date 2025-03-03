@@ -1,10 +1,7 @@
 name: Formatting
 
 on:
-  push:
-    branches:
-      - 'master'
-      - 'staging**'
+  workflow_dispatch:
   pull_request:
     branches:
       '**'
