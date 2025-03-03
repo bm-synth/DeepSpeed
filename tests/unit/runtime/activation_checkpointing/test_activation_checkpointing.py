@@ -8,6 +8,7 @@
 import pytest
 import torch
 import deepspeed
+from deepspeed.pipe import PipelineModule, LayerSpec
 from deepspeed.accelerator import get_accelerator
 from copy import deepcopy
 from unit.common import DistributedTest
