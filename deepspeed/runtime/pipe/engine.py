@@ -41,9 +41,6 @@ PIPE_SEND_GRAD_TIMER = 'pipe_send_grad'
 PIPE_RECV_INPUT_TIMER = 'pipe_recv_input'
 PIPE_RECV_GRAD_TIMER = 'pipe_recv_grad'
 
-# The buffer size to store the meta data for each tensor.
-TENSOR_META_SIZE = 256
-
 
 def is_even(number):
     return number % 2 == 0
@@ -238,8 +235,6 @@ class PipelineEngine(DeepSpeedEngine):
             self.timers(STEP_MICRO_TIMER).start()
             self.timers(STEP_MICRO_TIMER).stop()
 
-        self.dynamic_shape = self.module.dynamic_shape
-
     def set_has_attention_mask(self, value):
         assert isinstance(value, bool)
         self.has_attention_mask = value
@@ -358,20 +353,19 @@ class PipelineEngine(DeepSpeedEngine):
         self.total_loss = None
 
         # Do the work
-        self.timers('train_batch').start()
+        self.timers(TRAIN_BATCH_TIMER).start()
         sched = schedule.TrainSchedule(micro_batches=self.micro_batches,
                                        stages=self.num_stages,
                                        stage_id=self.stage_id)
         self._exec_schedule(sched)
 
-        with torch.no_grad():
-            self.agg_train_loss = self._aggregate_total_loss()
+        self.timers(TRAIN_BATCH_TIMER).stop()
 
         self.timers(TRAIN_BATCH_TIMER).stop()
 
         if self.steps_per_print() is not None and self.global_steps % self.steps_per_print() == 0:
             if self.global_rank == 0:
-                elapsed = self.timers('train_batch').elapsed(reset=True) / 1000.0
+                elapsed = self.timers(TRAIN_BATCH_TIMER).elapsed(reset=True) / 1000.0
                 iter_time = elapsed / self.steps_per_print()
                 tput = self.train_batch_size() / iter_time
                 print(f'steps: {self.global_steps} '
@@ -386,7 +380,12 @@ class PipelineEngine(DeepSpeedEngine):
             self.monitor.write_events(self.summary_events)
 
         if self.wall_clock_breakdown() and self.global_steps % self.steps_per_print() == 0:
-            self.timers.log(['pipe_send_output', 'pipe_send_grad', 'pipe_recv_input', 'pipe_recv_grad'])
+            self.timers.log([
+                PIPE_SEND_OUTPUT_TIMER,
+                PIPE_SEND_GRAD_TIMER,
+                PIPE_RECV_INPUT_TIMER,
+                PIPE_RECV_GRAD_TIMER,
+            ])
 
         # TODO: should return precisely what loss returned and allow others to be queried?
         return self.agg_train_loss
@@ -1124,7 +1123,7 @@ class PipelineEngine(DeepSpeedEngine):
         self.pipe_buffers['inputs'][buffer_id] = recvd
 
         if self.wall_clock_breakdown():
-            self.timers(PIPE_RECV_INPUT_TIMER).stop()
+            self.timers(PIPE_RECV_GRAD_TIMER).stop()
 
     def _exec_recv_grads(self, buffer_id):
         if self.wall_clock_breakdown():
@@ -1207,11 +1206,21 @@ class PipelineEngine(DeepSpeedEngine):
             self.timers(STEP_GLOBAL_TIMER).stop()
             if self.global_steps % self.steps_per_print() == 0:
                 self.timers.log([
-                    'batch_input', 'forward_microstep', 'backward_microstep', 'backward_inner_microstep',
-                    'backward_allreduce_microstep', 'backward_tied_allreduce_microstep', 'step_microstep'
+                    BATCH_INPUT_TIMER,
+                    FORWARD_MICRO_TIMER,
+                    BACKWARD_MICRO_TIMER,
+                    BACKWARD_INNER_MICRO_TIMER,
+                    BACKWARD_REDUCE_MICRO_TIMER,
+                    STEP_MICRO_TIMER,
                 ])
             if self.global_steps % self.steps_per_print() == 0:
-                self.timers.log(['forward', 'backward', 'backward_inner', 'backward_allreduce', 'step'])
+                self.timers.log([
+                    FORWARD_GLOBAL_TIMER,
+                    BACKWARD_GLOBAL_TIMER,
+                    BACKWARD_INNER_GLOBAL_TIMER,
+                    BACKWARD_REDUCE_GLOBAL_TIMER,
+                    STEP_GLOBAL_TIMER,
+                ])
 
     def _zero_grads(self, inputs):
         if isinstance(inputs, torch.Tensor):

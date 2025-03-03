@@ -17,6 +17,15 @@ from deepspeed.utils import groups, logger, log_dist
 from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, CLIP_GRAD
 from deepspeed.accelerator import get_accelerator
 
+OVERFLOW_CHECK_TIMER = 'overflow_check'
+COMPUTE_NORM_TIMER = 'compute_norm'
+UNSCALE_AND_CLIP_TIMER = 'unscale_and_clip'
+BASIC_STEP_TIMER = 'basic_step'
+UPDATE_FP16_TIMER = 'update_fp16'
+
+OVERFLOW_TIMERS = [COMPUTE_NORM_TIMER, OVERFLOW_CHECK_TIMER]
+STEP_TIMERS = OVERFLOW_TIMERS + [UNSCALE_AND_CLIP_TIMER, BASIC_STEP_TIMER, UPDATE_FP16_TIMER]
+
 
 class FP16_Optimizer(DeepSpeedOptimizer):
     """
@@ -198,55 +207,6 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         self.custom_loss_scaler = True
         self.external_loss_scale = loss_scale
 
-    def _require_avoid_recompute_norm(self, p, tensor_model_parallel_rank):
-        # for filtering  replicated tensors from tensor
-        if hasattr(p, PIPE_REPLICATED) and p.ds_pipe_replicated:
-            return True
-        if (tensor_model_parallel_rank > 0) and not is_model_parallel_parameter(p):
-            return True
-
-    def _get_norm_mask_idx(self, group):
-        """The function preserves the parallel information for norm
-        from unflattened gradients.
-
-        Args:
-            group (Iterable[Tensor] ): params group
-
-        Returns:
-            torch.Tensor: A 2D tensor containing index ranges for each group,
-                      where each row represents a [start index, end index].
-        """
-        group_mask_idx_list = []
-        grad_flat_st_idx = 0
-        grad_flat_en_idx = 0
-
-        for p in group:
-            grad_flat_en_idx = grad_flat_st_idx + p.numel()
-            if p.grad is not None and self._require_avoid_recompute_norm(p, bwc_tensor_model_parallel_rank(self.mpu)):
-                # merge range
-                if len(group_mask_idx_list) > 0 and grad_flat_st_idx == group_mask_idx_list[-1][-1]:
-                    group_mask_idx_list[-1][-1] = grad_flat_en_idx
-                else:
-                    group_mask_idx_list.append([grad_flat_st_idx, grad_flat_en_idx])
-            grad_flat_st_idx = grad_flat_en_idx
-
-        return torch.tensor(group_mask_idx_list, device=get_accelerator().current_device_name())
-
-    def set_lr(self, lr):
-        """Set the learning rate."""
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] = lr
-
-    def get_lr(self):
-        """Return the current learning rate."""
-        return self.optimizer.param_groups[0]["lr"]
-
-    def override_loss_scale(self, loss_scale):
-        if loss_scale != self.external_loss_scale:
-            logger.info(f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}')
-        self.custom_loss_scaler = True
-        self.external_loss_scale = loss_scale
-
     def step(self, closure=None):
         """
         Not supporting closure.
@@ -278,29 +238,6 @@ class FP16_Optimizer(DeepSpeedOptimizer):
             self.timers.log(OVERFLOW_TIMERS)
             return self.overflow
 
-        # First determine if there is overflow.
-        self.start_timers([OVERFLOW_CHECK])
-        fp16_params = []
-        for i, group in enumerate(self.fp16_groups):
-            fp16_params.extend([p for p in group if p.grad is not None])
-        self.overflow = self.overflow_checker.has_overflow(fp16_params)
-        self.stop_timers([OVERFLOW_CHECK])
-        prev_scale = self.cur_scale
-        self._update_scale(self.overflow)
-        if self.overflow:
-            if self.verbose:
-                log_dist(
-                    "Overflow detected. Skipping step. Attempted loss "
-                    f"scale: {prev_scale}, reducing to {self.cur_scale}",
-                    ranks=[0])
-            # Clear gradients
-            for i, group in enumerate(self.fp16_groups):
-                for p in group:
-                    p.grad = None
-
-            self.log_timers(OVERFLOW_TIMERS)
-            return self.overflow
-
         grads_groups_flat = []
         for i, group in enumerate(self.fp16_groups):
             data_type = self.fp32_groups_flat[i].dtype
@@ -317,36 +254,16 @@ class FP16_Optimizer(DeepSpeedOptimizer):
             self.fp32_groups_flat[i].grad = grads_groups_flat[i]
             param_group = self.optimizer.param_groups[i]
 
-        self.start_timers([COMPUTE_NORM])
+        self.timers(COMPUTE_NORM_TIMER).start()
 
         all_groups_norm = get_grad_norm(self.fp32_groups_flat, mpu=self.mpu)
 
-        self.stop_timers([COMPUTE_NORM])
+        self.timers(COMPUTE_NORM_TIMER).stop()
 
         if self.has_moe_layers:
             all_groups_norm = self._get_norm_with_moe_layers(all_groups_norm)
 
         scaled_global_grad_norm = get_global_norm(norm_list=[all_groups_norm])
-
-        # Stash unscaled gradient norm
-        self._global_grad_norm = scaled_global_grad_norm / self.cur_scale
-
-        self.start_timers([UNSCALE_AND_CLIP])
-        self.unscale_and_clip_grads(grads_groups_flat, scaled_global_grad_norm)
-        self.stop_timers([UNSCALE_AND_CLIP])
-
-        all_groups_norm = get_flattened_grad_norm(non_experts_grads_for_norm,
-                                                  mpu=self.mpu,
-                                                  grad_norm_mask=self.flatten_grad_norm_mask_list)
-
-        if self.has_moe_layers:
-            all_groups_norm = get_norm_with_moe_layers(all_groups_norm,
-                                                       mpu=self.mpu,
-                                                       expert_tensors=expert_grads_for_norm,
-                                                       norm_type=self.norm_type)
-
-        scaled_global_grad_norm = get_global_norm(norm_list=[all_groups_norm])
-        self.timers(COMPUTE_NORM_TIMER).stop()
 
         # Stash unscaled gradient norm
         self._global_grad_norm = scaled_global_grad_norm / self.cur_scale
@@ -370,6 +287,8 @@ class FP16_Optimizer(DeepSpeedOptimizer):
             for p, q in zip(self.fp16_groups[i], updated_params):
                 p.data.copy_(q.data)
         self.has_executed_step = True
+        self.timers(UPDATE_FP16_TIMER).stop()
+
         self.timers(UPDATE_FP16_TIMER).stop()
 
         self.timers.log(STEP_TIMERS)
