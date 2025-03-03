@@ -15,29 +15,26 @@ from unit.simple_model import random_dataloader, SimpleModel
 import deepspeed
 from deepspeed.runtime.zero.offload_config import OffloadDeviceEnum, OffloadStateTypeEnum
 from deepspeed.utils import safe_get_local_fp32_param, safe_get_local_optimizer_state
-from deepspeed.runtime.zero.offload_states import get_state_devices
 
 
 def validate_device(model, device: torch.device, include) -> None:
-
-    def compare_device(state) -> bool:
-        devices = get_state_devices(model, state)
-        return len(devices) == 1 and device in devices
-
-    for state in OffloadStateTypeEnum:
-        if include is None or state in include:
-            if state == OffloadStateTypeEnum.contiguous_grad_buffer and device == torch.device("cpu"):
-                assert len(get_state_devices(model,
-                                             state)) == 0, f"State {state} must be removed after offload_states()"
-            else:
-                assert compare_device(state), f"State {state} is not on device {device}"
+    # Make sure the model parameters are offloaded
+    if include is None or OffloadStateTypeEnum.hp_params in include:
+        assert all(safe_get_local_fp32_param(p).device == device for p in model.parameters())
+    if include is None or OffloadStateTypeEnum.lp_params in include:
+        assert all(p.ds_tensor.device == device for p in model.parameters())
+    if include is None or OffloadStateTypeEnum.lp_grads in include:
+        assert model.optimizer.grad_partitions_flat_buffer.device == device
+    if include is None or OffloadStateTypeEnum.optim_states in include:
+        assert all(safe_get_local_optimizer_state(p, "exp_avg").device == device for p in model.parameters())
+        assert all(safe_get_local_optimizer_state(p, "exp_avg_sq").device == device for p in model.parameters())
 
 
-def run_model(model, param_groups, config_dict, hidden_dim, dtype, include, pin_memory, non_blocking):
+def run_model(model, config_dict, hidden_dim, dtype, include, pin_memory, non_blocking):
     # Currently we only support OffloadDeviceEnum.cpu
     offload_device = OffloadDeviceEnum.cpu
 
-    model, _, _, _ = deepspeed.initialize(model=model, model_parameters=param_groups, config=config_dict)
+    model, _, _, _ = deepspeed.initialize(model=model, model_parameters=model.parameters(), config=config_dict)
     data_loader = random_dataloader(model=model,
                                     total_samples=10,
                                     hidden_dim=hidden_dim,
@@ -124,12 +121,5 @@ class TestOffloadStates(DistributedTest):
         with deepspeed.zero.Init(config_dict_or_path=config_dict):
             model = SimpleModel(hidden_dim, nlayers=4)
 
-        param_groups = [{
-            "params": [p for n, p in model.named_parameters() if not 'bias' in n],
-            "weight_decay": 0.1
-        }, {
-            "params": [p for n, p in model.named_parameters() if 'bias' in n],
-            "weight_decay": 0.0
-        }]
         include = None if included_state is None else [included_state]
-        run_model(model, param_groups, config_dict, hidden_dim, torch.bfloat16, include, pin_memory, non_blocking)
+        run_model(model, config_dict, hidden_dim, torch.bfloat16, include, pin_memory, non_blocking)
