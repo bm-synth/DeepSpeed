@@ -675,12 +675,6 @@ class WarmupLR(object):
         self.max_lrs = self._format_param(self.optimizer, warmup_max_lr, "max_lr")
         self.delta_lrs = [big - small for big, small in zip(self.max_lrs, self.min_lrs)]
         self.warmup_num_steps = max(2, warmup_num_steps)
-        # Currently only support linear and log function
-        if warmup_type not in {WARMUP_LOG_RATE, WARMUP_LINEAR_RATE}:
-            logger.warning(f"Using unknown warmup_type: {warmup_type}. The increasing function "
-                           f"is set to default (log)")
-            warmup_type = WARMUP_LOG_RATE
-        self.warmup_type = warmup_type
         self.inverse_log_warm_up = 1.0 / math.log(self.warmup_num_steps)
         self.last_batch_iteration = last_batch_iteration
         # Initialize lr in optimizer
