@@ -31,15 +31,18 @@ def load_hp_checkpoint_state(self, folder, tp_rank, tp_world_size):
         if match:
             hp_keys.append(match.group(1))
 
+    hp_keys = []
+    for file in os.listdir(folder):
+        # We expect files named something like "exp_avg.pt", "exp_avg_sq.pt", "fp32.pt"
+        pattern = r'(.+).pt'
+        match = re.search(pattern, file)
+        if match:
+            hp_keys.append(match.group(1))
+
     step = None
     for key in hp_keys:
         ckpt_file = os.path.join(folder, f"{key}.pt")
-        ckpt_dict = torch.load(ckpt_file, weights_only=False)
-
-        if key == "step":
-            step = ckpt_dict
-            continue
-
+        ckpt_dict = torch.load(ckpt_file)
         full_hp_param = ckpt_dict[PARAM]
 
         # need to deal with slices that were averaged.
@@ -137,8 +140,6 @@ def load_hp_checkpoint_state(self, folder, tp_rank, tp_world_size):
                 f'Load checkpoint {key} dst numel {tp_hp_fragment.numel()} != src numel {lp_frag_address.numel}'
 
             hp_mapping.optim_fragment[key] = tp_hp_fragment.clone().detach()
-
-    return step
 
 
 def enable_universal_checkpoint(param_list):
