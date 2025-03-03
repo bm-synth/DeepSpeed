@@ -15,7 +15,6 @@ import json
 import base64
 import time
 import signal
-import psutil
 from collections import defaultdict
 from typing import Dict
 from argparse import ArgumentParser, REMAINDER
@@ -207,135 +206,36 @@ def main():
         current_env["RANK"] = str(dist_rank)
         current_env["LOCAL_RANK"] = str(local_rank)
 
-    if not args.enable_elastic_training:
-        if args.enable_each_rank_log != "None":
-            # prepare the log path and the file name prefix
-            if os.path.isfile(args.enable_each_rank_log):
-                raise ValueError(f"{args.enable_each_rank_log} should not be a file, it should be a directory.")
-            if not os.path.exists(args.enable_each_rank_log):
+        # spawn the processes
+        cmd = [
+            sys.executable,
+            "-u",
+            args.training_script,
+            "--local_rank={}".format(local_rank)
+        ] + args.training_script_args
+
+        sig_names = {2: "SIGINT", 15: "SIGTERM"}
+        last_return_code = None
+
+        def sigkill_handler(signum, frame):
+            for process in processes:
+                print(f"Killing subprocess {process.pid}")
                 try:
-                    os.makedirs(args.enable_each_rank_log)
+                    process.kill()
                 except Exception as e:
-                    print(e)
-                    raise ValueError(f"unable to create directory {args.enable_each_rank_log} for each rank log.")
-            log_name_prefix = time.strftime("%Y%m%d%H%M%S", time.localtime())
+                    pass
+            if last_return_code is not None:
+                raise subprocess.CalledProcessError(returncode=last_return_code, cmd=cmd)
+            if signum in sig_names:
+                print(f"Main process received {sig_names[signum]}, exiting")
+            sys.exit(1)
 
-        for local_proc in range(0, num_local_procs):
-            # each process's rank
-            dist_rank = global_rank_mapping[local_node][local_proc]
-            local_rank = dist_rank % num_local_procs
-            current_env["RANK"] = str(dist_rank)
-            current_env["LOCAL_RANK"] = str(local_rank)
+        # pass SIGINT/SIGTERM to children if the parent is being terminated
+        signal.signal(signal.SIGINT, sigkill_handler)
+        signal.signal(signal.SIGTERM, sigkill_handler)
 
-            # spawn the processes
-            cmd = []
-            if args.bind_cores_to_rank:
-                cores_per_rank, numactl_cmd = get_numactl_cmd(args.bind_core_list, num_local_procs, local_rank)
-                current_env["OMP_NUM_THREADS"] = f"{cores_per_rank}"
-                cmd = cmd + numactl_cmd
-            if not args.no_python:
-                cmd.append(sys.executable)
-                cmd.append("-u")
-                if args.module:
-                    cmd.append("-m")
-            else:
-                if args.module:
-                    raise ValueError("Don't use both the '--no_python' flag"
-                                     " and the '--module' flag at the same time.")
-            cmd.append(args.training_script)
-            # A user may not want to pass local_rank as a keyword arg so we make this optional.
-            if not args.no_local_rank:
-                cmd.append(f"--local_rank={local_rank}")
-            cmd += args.training_script_args
-
-            if args.enable_each_rank_log != "None":
-                log_file = os.path.join(args.enable_each_rank_log, f"{log_name_prefix}_rank{dist_rank}.log")
-                log_fd = open(log_file, 'w')
-                process = subprocess.Popen(cmd, env=current_env, stdout=log_fd, stderr=log_fd)
-            else:
-                process = subprocess.Popen(cmd, env=current_env)
-            # logs the command from processes
-            logger.info(f"process {process.pid} spawned with command: {cmd}")
-            processes.append(process)
-    else:
-        from ..elasticity import DSElasticAgent
-        from torch.distributed.elastic.rendezvous import RendezvousParameters
-        from torch.distributed.elastic.agent.server.api import WorkerSpec
-        import torch.distributed.elastic.rendezvous.registry as rdzv_registry
-        from torch.distributed.elastic.multiprocessing import Std
-
-        if args.min_elastic_nodes == -1:
-            args.min_elastic_nodes = 1
-        if args.max_elastic_nodes == -1:
-            args.max_elastic_nodes = args.nnodes
-        assert args.max_elastic_nodes > 0 and args.min_elastic_nodes > 0, "Max and Min nodes should be positive"
-
-        current_env["NCCL_ASYNC_ERROR_HANDLING"] = str(1)
-
-        # Get config and arguments
-        cmd = []
-        if not args.no_python:
-            cmd = [sys.executable, "-u"]
-            if args.module:
-                cmd.append("-m")
-        else:
-            if args.module:
-                raise ValueError("Don't use both the '--no_python' flag"
-                                 " and the '--module' flag at the same time.")
-        cmd.append(args.training_script)
-        cmd += args.training_script_args
-        cmd_args = cmd[1:]
-
-        rdzv_configs: Dict[str, str] = {'timeout': 100}
-        run_id = os.environ.get("ELASTIC_RUN_ID", ELASTIC_TRAINING_ID_DEFAULT)
-
-        # Creating config for rendezvous class
-        rdzv_parameters = RendezvousParameters(backend='c10d',
-                                               endpoint=args.master_addr + ":" + str(args.master_port),
-                                               run_id=run_id,
-                                               min_nodes=args.min_elastic_nodes,
-                                               max_nodes=args.max_elastic_nodes,
-                                               **rdzv_configs)
-
-        spec = WorkerSpec(
-            role='trainer',
-            local_world_size=num_local_procs,
-            entrypoint=cmd[0],
-            args=cmd[1:],
-            rdzv_handler=rdzv_registry.get_rendezvous_handler(rdzv_parameters),
-            max_restarts=100,
-            monitor_interval=5,
-            redirects=Std.from_str("0"),
-            tee=Std.from_str("0"),
-            master_addr=None,
-            master_port=None,
-        )
-        agent = DSElasticAgent(spec, current_env)
-        agent.run()
-
-    sig_names = {2: "SIGINT", 15: "SIGTERM"}
-    last_return_code = None
-
-    def sigkill_handler(signum, frame):
-        for process in processes:
-            logger.info(f"Killing subprocess {process.pid}")
-            try:
-                terminate_process_tree(process.pid)
-            except Exception:
-                pass
-        if last_return_code is not None:
-            logger.error(f"{cmd} exits with return code = {last_return_code}")
-            sys.exit(last_return_code)
-        if signum in sig_names:
-            logger.info(f"Main process received {sig_names[signum]}, exiting")
-        if args.save_pid:
-            if os.path.isfile(pid_file):
-                os.remove(pid_file)
-        sys.exit(1)
-
-    # pass SIGINT/SIGTERM to children if the parent is being terminated
-    signal.signal(signal.SIGINT, sigkill_handler)
-    signal.signal(signal.SIGTERM, sigkill_handler)
+        process = subprocess.Popen(cmd, env=current_env)
+        processes.append(process)
 
     alive_processes = set(processes)
     while len(alive_processes):
@@ -350,7 +250,6 @@ def main():
                     sigkill_handler(signal.SIGTERM, None)  # not coming back
                 else:
                     # exited cleanly
-                    logger.info(f"Process {process.pid} exits successfully.")
                     finished_processes.append(process)
         alive_processes = set(alive_processes) - set(finished_processes)
 
