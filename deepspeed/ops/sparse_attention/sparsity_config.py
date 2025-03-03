@@ -443,7 +443,8 @@ class BigBirdSparsityConfig(SparsityConfig):
         self.num_global_blocks = num_global_blocks
 
         if (attention != 'unidirectional' and attention != 'bidirectional'):
-            raise NotImplementedError('only \"uni/bi-directional\" attentions are supported for now!')
+            raise NotImplementedError(
+                'only \"uni/bi-directional\" attentions are supported for now!')
         self.attention = attention
 
     def set_random_layout(self, h, layout):
@@ -465,7 +466,10 @@ class BigBirdSparsityConfig(SparsityConfig):
             )
 
         for row in range(0, num_blocks):
-            sample_range = range(0, num_blocks) if self.attention == 'bidirectional' else range(0, row + 1)
+            sample_range = range(
+                0,
+                num_blocks) if self.attention == 'bidirectional' else range(0,
+                                                                            row + 1)
             rnd_cols = random.sample(sample_range, self.num_random_blocks)
             layout[h, row, rnd_cols] = 1
         return layout
