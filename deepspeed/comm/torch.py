@@ -101,8 +101,13 @@ class TorchBackend(Backend):
         so no need to wrap all the functions. We can keep adding wrappers as
         needed.
     """
-
-    def __init__(self, backend, timeout, init_method, rank=-1, world_size=-1, name='torch'):
+    def __init__(self,
+                 backend,
+                 timeout,
+                 init_method,
+                 rank=-1,
+                 world_size=-1,
+                 name='torch'):
         super(TorchBackend, self).__init__()
         self.shm_comm_op = build_shm_op()
         self.has_all_reduce_coalesced = has_all_reduce_coalesced()
@@ -116,14 +121,14 @@ class TorchBackend(Backend):
         # it is not so we can run on a single GPU without doing any init_process_group
         self.single_gpu_mode = True
         self.init_process_group(backend, timeout, init_method, rank, world_size)
-        if self.shm_comm_op != None:
-            self.shm_comm_op.initialize(self.get_world_size(), self.get_rank())
 
-    def init_process_group(self, backend, timeout, init_method):
+    def init_process_group(self, backend, timeout, init_method, rank, world_size):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend,
                                                  timeout=timeout,
-                                                 init_method=init_method)
+                                                 init_method=init_method,
+                                                 rank=rank,
+                                                 world_size=world_size)
         self.using_mpi = torch.distributed.get_backend() == 'mpi'
 
     @classmethod
