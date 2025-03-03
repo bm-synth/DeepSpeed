@@ -63,9 +63,15 @@ class DeepSpeedDiffusersTransformerBlock(nn.Module):
         self.gated_activation = GatedActivationOp()
         self.layer_norm = LayerNormOp()
 
-    def forward(self, hidden_states, context=None, timestep=None, **kwargs):
-        # In v0.12.0 of diffuser, several new kwargs were added. Capturing
-        # those with kwargs to maintain backward compatibility
+    def forward(self,
+                hidden_states,
+                context=None,
+                encoder_hidden_states=None,
+                timestep=None):
+        # In v0.11.0 of diffusers, the kwarg was changed from 'context' to 'encoder_hidden_states'
+        # This is so we can support older and newer versions of diffusers
+        if context == None and encoder_hidden_states != None:
+            context = encoder_hidden_states
 
         # In v0.11.0 of diffusers, the kwarg was changed from 'context' to 'encoder_hidden_states'
         # This is so we can support older and newer versions of diffusers
