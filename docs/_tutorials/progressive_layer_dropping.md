@@ -1,9 +1,9 @@
 ---
 title: "Accelerating Training of Transformer-Based Language Models with Progressive Layer Dropping"
-tags: training
+
 ---
 
-In this tutorial, we are going to introduce the progressive layer dropping (PLD) in DeepSpeed and provide examples on how to use PLD. PLD allows to train Transformer networks such as BERT 24% faster under the same number of samples and 2.5 times faster to get similar accuracy on downstream tasks. Detailed description of PLD and the experimental results are available in our [technical report](https://arxiv.org/pdf/2010.13369.pdf).
+In this tutorial, we are going to introduce the progressive layer dropping (PLD) in DeepSpeed and provide examples on how to use PLD. PLD allows to train Transformer networks such as BERT 24% faster under the same number of samples and 2.5 times faster to get similar accuracy on downstream tasks. Detailed description of PLD and the experimental results are available in our [technical report](git push --set-upstream origin staging-pld-v1).
 
 To illustrate how to use PLD in DeepSpeed, we show how to enable PLD to pre-train a BERT model and fine-tune the pre-trained model on the GLUE datasets.
 
@@ -18,7 +18,7 @@ already been modified to use DeepSpeed. The  `ds_train_bert_progressive_layer_dr
 bash ds_train_bert_progressive_layer_drop_bsz4k_seq128.sh
 ```
 
-Most of the flags in the above script should be familiar if you have stepped through the BERT pre-training [tutorial](/tutorials/bert-pretraining/). To enable training with PLD, one needs to enable PLD in both the client script and in the DeepSpeed engine. To enable PLD in the client script, one needs to add the following command line flag to enable progressive layer dropping on Transformer blocks.
+Most of the flags in the above script should be familiar if you have stepped through the BERT pre-training [tutorial](/tutorials/bert-pretraining/). To enable training with PLD, one needs to enable PLD in both the client script and in the DeepSpeed engine. To enable PLD in the client script, one needs to add the following command line flag to enable progressive layer dropping on Transformer blocks.  
 
 ```bash
 --progressive_layer_drop
@@ -95,7 +95,7 @@ Note that the above configuration assumes training on 64 X 32GB V100 GPUs. Each 
 
 Table 1. Pre-training hyperparameters
 
-**Note:** DeepSpeed now supports PreLayerNorm as the default way for training BERT, because of its ability to avoid vanishing gradient, stabilize optimization, and performance gains, as described in our fastest BERT training [blog post](https://www.deepspeed.ai/2020/05/27/fastest-bert-training.html). We therefore support the switchable Transformer block directly on the BERT with PreLayerNorm. The implementation can be found at "example\bing_bert\nvidia\modelingpreln_layerdrop.py".
+**Note:** DeepSpeed now supports PreLayerNorm as the default way for training BERT, because of its ability to avoid vanishing gradient, stablize optimization, and performance gains, as described in our fastest BERT training [blog post](https://www.deepspeed.ai/news/2020/05/27/fastest-bert-training.html). We therefore support the switchable Transformer block directly on the the BERT with PreLayerNorm. The implementation can be found at "example\bing_bert\nvidia\modelingpreln_layerdrop.py".
 
 ## Fine-tuning with DeepSpeed on GLUE Tasks
 
