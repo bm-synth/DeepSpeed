@@ -158,9 +158,9 @@ TORCH_MAJOR = int(torch.__version__.split('.')[0])
 TORCH_MINOR = int(torch.__version__.split('.')[1])
 
 if not torch.cuda.is_available():
-    # Fix to allow docker buils, similar to https://github.com/NVIDIA/apex/issues/486
+    # Fix to allow docker builds, similar to https://github.com/NVIDIA/apex/issues/486
     print(
-        "[WARNING] Torch did not find cuda available, if cross-compling or running with cpu only "
+        "[WARNING] Torch did not find cuda available, if cross-compiling or running with cpu only "
         "you can ignore this message. Adding compute capability for Pascal, Volta, and Turing "
         "(compute capabilities 6.0, 6.1, 6.2)")
     if os.environ.get("TORCH_CUDA_ARCH_LIST", None) is None:
@@ -367,9 +367,39 @@ if command_exists('git'):
 else:
     git_hash = "unknown"
     git_branch = "unknown"
-print(f"version={VERSION}+{git_hash}, git_hash={git_hash}, git_branch={git_branch}")
-with open('deepspeed/git_version_info.py', 'w') as fd:
-    fd.write(f"version='{VERSION}+{git_hash}'\n")
+
+# Parse the DeepSpeed version string from version.txt
+version_str = open('version.txt', 'r').read().strip()
+
+# Build specifiers like .devX can be added at install time. Otherwise, add the git hash.
+# example: DS_BUILD_STR=".dev20201022" python setup.py sdist bdist_wheel
+#version_str += os.environ.get('DS_BUILD_STRING', f'+{git_hash}')
+
+# Building wheel for distribution, update version file
+
+if 'DS_BUILD_STRING' in os.environ:
+    # Build string env specified, probably building for distribution
+    with open('build.txt', 'w') as fd:
+        fd.write(os.environ.get('DS_BUILD_STRING'))
+    version_str += os.environ.get('DS_BUILD_STRING')
+elif os.path.isfile('build.txt'):
+    # build.txt exists, probably installing from distribution
+    with open('build.txt', 'r') as fd:
+        version_str += fd.read().strip()
+else:
+    # None of the above, probably installing from source
+    version_str += f'+{git_hash}'
+
+torch_version = ".".join([TORCH_MAJOR, TORCH_MINOR])
+# Set cuda_version to 0.0 if cpu-only
+cuda_version = "0.0"
+if torch.version.cuda is not None:
+    cuda_version = ".".join(torch.version.cuda.split('.')[:2])
+torch_info = {"version": torch_version, "cuda_version": cuda_version}
+
+print(f"version={version_str}, git_hash={git_hash}, git_branch={git_branch}")
+with open('deepspeed/git_version_info_installed.py', 'w') as fd:
+    fd.write(f"version='{version_str}'\n")
     fd.write(f"git_hash='{git_hash}'\n")
     fd.write(f"git_branch='{git_branch}'\n")
     fd.write(f"installed_ops={install_ops}\n")
