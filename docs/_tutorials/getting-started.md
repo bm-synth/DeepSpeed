@@ -2,7 +2,7 @@
 title: 'Getting Started'
 permalink: /getting-started/
 excerpt: 'First steps with DeepSpeed'
-tags: getting-started
+date: 2020-05-15
 ---
 
 ## Installation
@@ -32,7 +32,7 @@ distributed data parallel or mixed precision training are done
 appropriately under the hood. In addition to wrapping the model, DeepSpeed can
 construct and manage the training optimizer, data loader, and the learning rate
 scheduler based on the parameters passed to `deepspeed.initialize` and the
-DeepSpeed [configuration file](#deepspeed-configuration).
+DeepSpeed [configuration file](#deepspeed-configuration). Note that DeepSpeed automatically executes the learning rate schedule at every training step.
 
 If you already have a distributed environment setup, you'd need to replace:
 
@@ -49,7 +49,6 @@ deepspeed.init_distributed()
 The default is to use the NCCL backend, which DeepSpeed has been thoroughly tested with, but you can also [override the default](https://deepspeed.readthedocs.io/en/latest/initialize.html#distributed-initialization).
 
 But if you don't need the distributed environment setup until after `deepspeed.initialize()` you don't have to use this function, as DeepSpeed will automatically initialize the distributed environment during its `initialize`. Regardless, you will need to remove `torch.distributed.init_process_group` if you already had it in place.
-
 
 ### Training
 
@@ -81,7 +80,7 @@ pre-defined learning rate scheduler:
   engine automatically handles scaling the loss to avoid precision loss in the
   gradients.
 
-- **Learning Rate Scheduler**: when using a DeepSpeed's learning rate scheduler (specified in the `ds_config.json` file), DeepSpeed calls the `step()` method of the scheduler at every training step (when `model_engine.step()` is executed). When not using DeepSpeed's learning rate scheduler:
+- **Learning Rate Scheduler**: when using a DeepSpeed's learning rate scheduler (specified in the `ds_config.json` file), DeepSpeed calls the `step()` method of the scheduler at every training step (when `model_engine.step()` is executed). When not using a DeepSpeed's learning rate scheduler:
   - if the schedule is supposed to execute at every training step, then the user can pass the scheduler to `deepspeed.initialize` when initializing the DeepSpeed engine and let DeepSpeed manage it for update or save/restore.
   - if the schedule is supposed to execute at any other interval (e.g., training epochs), then the user should NOT pass the scheduler to DeepSpeed during initialization and must manage it explicitly.
 
@@ -238,15 +237,17 @@ executing from and also in your home directory (`~/`).
 As a concrete example, some clusters require special NCCL variables to set
 prior to training. The user can simply add these variables to a
 `.deepspeed_env` file in their home directory that looks like this:
+
 ```
 NCCL_IB_DISABLE=1
 NCCL_SOCKET_IFNAME=eth0
 ```
+
 DeepSpeed will then make sure that these environment variables are set when
 launching each process on every node across their training job.
 
+### MPI and AzureML Compatibility
 
-### MPI Compatibility
 As described above, DeepSpeed provides its own parallel launcher to help launch
 multi-node/multi-gpu training jobs. If you prefer to launch your training job
 using MPI (e.g., mpirun), we provide support for this. It should be noted that
@@ -280,6 +281,7 @@ as the hostname.
 Also note that `CUDA_VISIBLE_DEVICES` can't be used with DeepSpeed to control
 which devices should be used. For example, to use only gpu1 of the current
 node, do:
+
 ```bash
 deepspeed --include localhost:1 ...
 ```
