@@ -159,6 +159,7 @@ The following model families have been successfully tested with automatic tensor
 - plbart
 - qwen
 - qwen2
+- qwen2-moe
 - reformer
 - roberta
 - roformer
