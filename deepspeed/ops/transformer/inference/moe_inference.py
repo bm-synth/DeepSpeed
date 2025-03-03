@@ -202,7 +202,11 @@ class DeepSpeedMoEInference(nn.Module):
         self.config.specialized_mode = specialized_mode
 
         DeepSpeedMoEInference.layer_id += 1
-        self.attention = DeepSpeedSelfAttention(self.config, mp_group, quantize_scales, quantize_groups, merge_count)
+        self.attention = DeepSpeedSelfAttention(self.config,
+                                                mp_group,
+                                                quantize_scales,
+                                                quantize_groups,
+                                                merge_count)
         self.attn_nw = nn.Parameter(torch.Tensor(self.config.hidden_size))
         self.attn_nb = nn.Parameter(torch.Tensor(self.config.hidden_size))
 

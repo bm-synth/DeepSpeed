@@ -59,7 +59,6 @@ class DeepSpeedSelfAttention(nn.Module):
         self.norm_factor = math.sqrt(self.config.hidden_size // self.config.heads)
         if not config.use_mup:
             self.norm_factor = math.sqrt(self.norm_factor)
-        self.qkv_merging = qkv_merging
 
         if self.config.scale_attn_by_inverse_layer_idx is True:
             self.norm_factor *= math.sqrt(self.config.layer_id + 1)

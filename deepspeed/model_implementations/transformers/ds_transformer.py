@@ -65,15 +65,13 @@ class DeepSpeedTransformerInference(nn.Module):
                                                 mp_group,
                                                 quantize_scales,
                                                 quantize_groups,
-                                                merge_count,
-                                                qkv_merging)
+                                                merge_count)
         else:
             self.attention = DeepSpeedSelfAttention(self.config,
                                                     mp_group,
                                                     quantize_scales,
                                                     quantize_groups,
-                                                    merge_count,
-                                                    qkv_merging)
+                                                    merge_count)
         self.mlp = DeepSpeedMLP(self.config,
                                 mp_group,
                                 quantize_scales,
