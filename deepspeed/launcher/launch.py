@@ -144,9 +144,11 @@ def main():
     node_list = list(world_info.keys())
     args.nnodes = len(node_list)
     local_node = node_list[args.node_rank]
-    local_accelerator_ids = world_info[local_node]
-    num_local_procs = len(local_accelerator_ids)
-    logger.info(f"nnodes={args.nnodes}, num_local_procs={num_local_procs}, node_rank={args.node_rank}")
+    local_gpu_ids = world_info[local_node]
+    num_local_procs = len(local_gpu_ids)
+    logger.info(
+        f"nnodes={args.nnodes}, num_local_procs={num_local_procs}, node_rank={args.node_rank}"
+    )
 
     global_rank_mapping = defaultdict(list)
     curr_global_rank = 0
@@ -159,10 +161,8 @@ def main():
             curr_global_rank += 1
     logger.info(f"global_rank_mapping={global_rank_mapping}")
     logger.info(f"dist_world_size={dist_world_size}")
-
-    get_accelerator().set_visible_devices_envs(current_env, local_accelerator_ids)
-    for env in get_accelerator().visible_devices_envs():
-        logger.info(f"Setting {env}={current_env[env]}")
+    current_env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, local_gpu_ids))
+    logger.info(f"Setting CUDA_VISIBLE_DEVICES={current_env['CUDA_VISIBLE_DEVICES']}")
 
     # set PyTorch distributed related environmental variables
     current_env["MASTER_ADDR"] = args.master_addr
@@ -200,6 +200,7 @@ def main():
                     current_env[key] = val
 
     processes = []
+    cmd = []
     for local_rank in range(0, num_local_procs):
         # each process's rank
         dist_rank = global_rank_mapping[local_node][local_rank]
@@ -207,35 +208,33 @@ def main():
         current_env["LOCAL_RANK"] = str(local_rank)
 
         # spawn the processes
-        cmd = [
-            sys.executable,
-            "-u",
-            args.training_script,
-            "--local_rank={}".format(local_rank)
-        ] + args.training_script_args
-
-        sig_names = {2: "SIGINT", 15: "SIGTERM"}
-        last_return_code = None
-
-        def sigkill_handler(signum, frame):
-            for process in processes:
-                print(f"Killing subprocess {process.pid}")
-                try:
-                    process.kill()
-                except Exception as e:
-                    pass
-            if last_return_code is not None:
-                raise subprocess.CalledProcessError(returncode=last_return_code, cmd=cmd)
-            if signum in sig_names:
-                print(f"Main process received {sig_names[signum]}, exiting")
-            sys.exit(1)
-
-        # pass SIGINT/SIGTERM to children if the parent is being terminated
-        signal.signal(signal.SIGINT, sigkill_handler)
-        signal.signal(signal.SIGTERM, sigkill_handler)
+        cmd = [sys.executable,
+               "-u",
+               args.training_script,
+               f"--local_rank={local_rank}"] + args.training_script_args
 
         process = subprocess.Popen(cmd, env=current_env)
         processes.append(process)
+
+    sig_names = {2: "SIGINT", 15: "SIGTERM"}
+    last_return_code = None
+
+    def sigkill_handler(signum, frame):
+        for process in processes:
+            logger.info(f"Killing subprocess {process.pid}")
+            try:
+                process.kill()
+            except Exception:
+                pass
+        if last_return_code is not None:
+            raise subprocess.CalledProcessError(returncode=last_return_code, cmd=cmd)
+        if signum in sig_names:
+            logger.info(f"Main process received {sig_names[signum]}, exiting")
+        sys.exit(1)
+
+    # pass SIGINT/SIGTERM to children if the parent is being terminated
+    signal.signal(signal.SIGINT, sigkill_handler)
+    signal.signal(signal.SIGTERM, sigkill_handler)
 
     alive_processes = set(processes)
     while len(alive_processes):
@@ -250,6 +249,7 @@ def main():
                     sigkill_handler(signal.SIGTERM, None)  # not coming back
                 else:
                     # exited cleanly
+                    logger.info(f"Process {process.pid} exits successfully.")
                     finished_processes.append(process)
         alive_processes = set(alive_processes) - set(finished_processes)
 
