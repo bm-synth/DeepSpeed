@@ -15,14 +15,10 @@ By default will install deepspeed and all third party dependencies across all ma
 hostfile (hostfile: /job/hostfile). If no hostfile exists, will only install locally
 
 [optional]
-    -l, --local_only        Install only on local machine
-    -s, --pip_sudo          Run pip install with sudo (default: no sudo)
-    -r, --allow_sudo        Allow script to be run by root (probably don't want this, instead use --pip_sudo)
-    -n, --no_clean          Do not clean prior build state, by default prior build files are removed before building wheels
-    -m, --pip_mirror        Use the specified pip mirror (default: the default pip mirror)
+    -d, --deepspeed_only    Install only deepspeed and no third party dependencies
+    -t, --third_party_only  Install only third party dependencies and not deepspeed
+    -l, --local_only        Installs only on local machine
     -H, --hostfile          Path to MPI-style hostfile (default: /job/hostfile)
-    -e, --examples          Checkout deepspeed example submodule (no install)
-    -v, --verbose           Verbose logging
     -h, --help              This help text
   """
 }
@@ -32,12 +28,6 @@ local_only=0
 pip_sudo=0
 entire_dlts_job=1
 hostfile=/job/hostfile
-pip_mirror=""
-skip_requirements=0
-allow_sudo=0
-no_clean=0
-verbose=0
-examples=0
 
 while [[ $# -gt 0 ]]
 do
@@ -47,38 +37,13 @@ case $key in
     local_only=1;
     shift
     ;;
-    -s|--pip_sudo)
-    pip_sudo=1;
-    shift
-    ;;
-    -m|--pip_mirror)
-    pip_mirror=$2;
-    shift
-    shift
-    ;;
-    -v|--verbose)
-    verbose=1;
-    shift
-    ;;
-    -r|--allow_sudo)
-    allow_sudo=1;
-    shift
-    ;;
-    -n|--no_clean)
-    no_clean=1;
-    shift
-    ;;
     -H|--hostfile)
     hostfile=$2
     if [ ! -f $2 ]; then
-        echo "User-provided hostfile does not exist at $hostfile, exiting"
+        echo "User provided hostfile does not exist at $hostfile, exiting"
         exit 1
     fi
     shift
-    shift
-    ;;
-    -e|--examples)
-    examples=1
     shift
     ;;
     -h|--help)
@@ -103,62 +68,47 @@ if [ "$allow_sudo" == "0" ]; then
     fi
 fi
 
-if [ "$examples" == "1" ]; then
-    git submodule update --init --recursive
-    exit 0
-fi
+echo "Updating git hash/branch info"
+echo "git_hash = '$(git rev-parse --short HEAD)'" > deepspeed/version_info.py
+echo "git_branch = '$(git rev-parse --abbrev-ref HEAD)'" >> deepspeed/version_info.py
+cat deepspeed/version_info.py
 
-if [ "$verbose" == "1" ]; then
-    VERBOSE="-v"
-    PIP_VERBOSE=""
-else
-    VERBOSE=""
-    PIP_VERBOSE="--disable-pip-version-check"
-fi
-
-rm_if_exist() {
-    echo "Attempting to remove $1"
-    if [ -f $1 ]; then
-        rm $VERBOSE $1
-    elif [ -d $1 ]; then
-        rm -rf $VERBOSE $1
-    fi
-}
-
-if [ "$no_clean" == "0" ]; then
-    # remove deepspeed build files
-    rm_if_exist deepspeed/git_version_info_installed.py
-    rm_if_exist dist
-    rm_if_exist build
-    rm_if_exist deepspeed.egg-info
-fi
-
-if [ "$pip_sudo" == "1" ]; then
-    PIP_SUDO="sudo -H"
-else
-    PIP_SUDO=""
-fi
-
-if [ "$pip_mirror" != "" ]; then
-    PIP_INSTALL="pip install $VERBOSE $PIP_VERBOSE -i $pip_mirror"
-else
-    PIP_INSTALL="pip install $VERBOSE $PIP_VERBOSE"
-fi
-
+install_apex='sudo -H pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" third_party/apex'
 
 if [ ! -f $hostfile ]; then
-    echo "No hostfile exists at $hostfile, installing locally"
-    local_only=1
+        echo "No hostfile exists at $hostfile, installing locally"
+        local_only=1
 fi
 
-echo "Building deepspeed wheel"
-python -m build $VERBOSE --wheel --no-isolation
+# Build wheels
+if [ "$third_party_install" == "1" ]; then
+    echo "Checking out sub-module(s)"
+    git submodule update --init --recursive
+
+    echo "Building apex wheel"
+    cd third_party/apex
+    python setup.py --cpp_ext --cuda_ext bdist_wheel
+    cd -
+fi
+if [ "$deepspeed_install" == "1" ]; then
+    echo "Installing deepspeed"
+    python setup.py bdist_wheel
+fi
+
 
 if [ "$local_only" == "1" ]; then
-    echo "Installing deepspeed"
-#    $PIP_SUDO pip uninstall -y deepspeed
-    $PIP_SUDO $PIP_INSTALL dist/deepspeed*.whl
-    ds_report
+    if [ "$third_party_install" == "1" ]; then
+        echo "Installing apex"
+        sudo -H pip uninstall -y apex
+        sudo -H pip install third_party/apex/dist/apex*.whl
+    fi
+    if [ "$deepspeed_install" == "1" ]; then
+        echo "Installing deepspeed"
+        sudo -H pip uninstall -y deepspeed
+        sudo -H pip install dist/deepspeed*.whl
+        python -c 'import deepspeed; print("deepspeed info:", deepspeed.__version__, deepspeed.__git_branch__, deepspeed.__git_hash__)'
+        echo "Installation is successful"
+    fi
 else
     local_path=`pwd`
     if [ -f $hostfile ]; then
@@ -167,16 +117,23 @@ else
         echo "hostfile not found, cannot proceed"
         exit 1
     fi
-    export PDSH_RCMD_TYPE=ssh
+    export PDSH_RCMD_TYPE=ssh;
     tmp_wheel_path="/tmp/deepspeed_wheels"
 
-    pdsh -w $hosts "if [ -d $tmp_wheel_path ]; then rm $tmp_wheel_path/*; else mkdir -pv $tmp_wheel_path; fi"
-    pdcp -w $hosts requirements/requirements.txt ${tmp_wheel_path}/
-
-    echo "Installing deepspeed"
-    pdsh -w $hosts "$PIP_SUDO pip uninstall -y deepspeed"
-    pdcp -w $hosts dist/deepspeed*.whl $tmp_wheel_path/
-    pdsh -w $hosts "$PIP_SUDO $PIP_INSTALL $tmp_wheel_path/deepspeed*.whl"
-    pdsh -w $hosts "ds_report"
-    pdsh -w $hosts "if [ -d $tmp_wheel_path ]; then rm $tmp_wheel_path/*.whl; rm $tmp_wheel_path/*.txt; rmdir $tmp_wheel_path; fi"
+    pdsh -w $hosts "if [ -d $tmp_wheel_path ]; then rm $tmp_wheel_path/*.whl; else mkdir -pv $tmp_wheel_path; fi"
+    if [ "$third_party_install" == "1" ]; then
+        pdsh -w $hosts "sudo -H pip uninstall -y apex"
+        pdcp -w $hosts third_party/apex/dist/apex*.whl $tmp_wheel_path/
+        pdsh -w $hosts "sudo -H pip install $tmp_wheel_path/apex*.whl"
+        pdsh -w $hosts 'python -c "import apex"'
+    fi
+    if [ "$deepspeed_install" == "1" ]; then
+        echo "Installing deepspeed"
+        pdsh -w $hosts "sudo -H pip uninstall -y deepspeed"
+        pdcp -w $hosts dist/deepspeed*.whl $tmp_wheel_path/
+        pdsh -w $hosts "sudo -H pip install $tmp_wheel_path/deepspeed*.whl"
+        pdsh -w $hosts "python -c 'import deepspeed; print(\"deepspeed info:\", deepspeed.__version__, deepspeed.__git_branch__, deepspeed.__git_hash__)'"
+        echo "Installation is successful"
+    fi
+    pdsh -w $hosts "if [ -d $tmp_wheel_path ]; then rm $tmp_wheel_path/*.whl; rmdir $tmp_wheel_path; fi"
 fi
