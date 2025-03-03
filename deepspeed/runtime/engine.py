@@ -19,6 +19,8 @@ from torch.distributed.distributed_c10d import _get_global_rank
 
 from typing import Callable, Dict, Optional, Union, Iterable
 
+import deepspeed
+
 from deepspeed.runtime.utils import see_memory_usage, get_ma_status, DummyOptim
 from deepspeed.runtime.zero.stage2 import FP16_DeepSpeedZeroOptimizer
 from deepspeed.runtime.zero.stage1 import FP16_DeepSpeedZeroOptimizer_Stage1
@@ -3327,8 +3329,6 @@ class DeepSpeedEngine(Module):
         Returns:
         OrderedDict: The consolidated state dictionary if the current process rank is 0, otherwise None.
         """
-        import deepspeed
-
         if not self.zero_optimization_partition_weights():
             raise ValueError("this function requires ZeRO-3 mode")
 
@@ -3370,85 +3370,14 @@ class DeepSpeedEngine(Module):
                 if child is not None:
                     get_layer_state_dict(child, prefix + name + ".")
 
-        get_layer_state_dict(self.module, prefix="")
-
-        # ensure that all GPU communication tasks are completed before the process exits
-        get_accelerator().synchronize()
-        return state_dict
-
-    def _consolidated_16bit_state_dict(self, exclude_frozen_parameters=False):
-        """
-        Consolidate the 16-bit state dictionary.
-        """
-        if self.zero_optimization_stage() == ZeroStageEnum.weights:
-            return self._zero3_consolidated_16bit_state_dict(exclude_frozen_parameters)
-        elif self.autotp_size() > 1:
-            return self._replace_module_consolidated_state_dict()
-
-        raise ValueError("consolidated_16bit_state_dict is only applicable to cases where weights are partitioned, "
-                         "including Zero Stage 3 and tensor parallelism.")
-
-    def _zero3_consolidated_16bit_state_dict(self, exclude_frozen_parameters=False):
-        """
-        Get a full non-partitioned state_dict with fp16 weights on cpu.
-        Important: this function must be called on all ranks and not just rank 0.
-        This is similar to nn.Module.state_dict (modelled after _save_to_state_dict), but:
-        1. consolidates the weights from different partitions on gpu0
-        2. works on one layer at a time to require as little gpu0 memory as possible, by
-        moving the already consolidated weights to cpu
-        3. takes care to keep the shared params shared when gradually copying the params to cpu
-        Returns:
-            a consolidated fp16 ``state_dict`` on cpu on rank 0, ``None`` on other ranks
-        """
-        if not self.zero_optimization_partition_weights():
-            raise ValueError("this function requires ZeRO-3 mode")
-
-        state_dict = OrderedDict() if dist.get_rank() == 0 else None
-        shared_params = {}
-
-        def get_layer_state_dict(module, prefix=""):
-            # gather one layer at a time to be memory-efficient
-            # must use modifier_rank=0 to release GPU memory after each layer gathered
-            #see_memory_usage("before GatheredParameters", force=True)
-            with deepspeed.zero.GatheredParameters(list(module.parameters(recurse=False)), modifier_rank=0):
-                if dist.get_rank() == 0:
-                    # handle params
-                    for name, param in module.named_parameters(recurse=False):
-                        if param is None or (exclude_frozen_parameters and not param.requires_grad):
-                            continue
-                        key = prefix + name
-                        # can't rely on param.data_ptr() as it will be reused as weights gets
-                        # gathered and reduced, but param.ds_id is unique across all zero weights
-                        # (and shared params will have the same param.ds_id)
-                        if param.ds_id in shared_params:
-                            # shared weights
-                            #print(f"`{key}` is shared with `{shared_params[param.ds_id]}`")
-                            state_dict[key] = state_dict[shared_params[param.ds_id]]
-                        else:
-                            state_dict[key] = param.detach().cpu()
-                            shared_params[param.ds_id] = key
-                        #print(f"param {param.ds_id} {param.shape} {key} ")
-
-                    # now buffers - not sure if need to take care of potentially shared weights here
-                    for name, buf in module.named_buffers(recurse=False):
-                        if (buf is not None and name not in module._non_persistent_buffers_set):
-                            state_dict[prefix + name] = buf.detach().cpu()
-            #see_memory_usage("after GatheredParameters", force=True)
-
-            for name, child in module.named_children():
-                if child is not None:
-                    get_layer_state_dict(child, prefix + name + ".")
-
         # Prepare for checkpoint save by ensuring all parameters are partitioned
-        if self._optimizer_has_ckpt_event_prologue():
-            self.optimizer.checkpoint_event_prologue()
+        self.optimizer.checkpoint_event_prologue()
 
         see_memory_usage("before get_layer_state_dict", force=False)
         get_layer_state_dict(self.module, prefix="")
         see_memory_usage("after get_layer_state_dict", force=False)
 
-        if self._optimizer_has_ckpt_event_epilogue():
-            self.optimizer.checkpoint_event_epilogue()
+        self.optimizer.checkpoint_event_epilogue()
 
         return state_dict
 
