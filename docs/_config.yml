@@ -83,35 +83,13 @@ defaults:
   - scope:
       path: "_pages"
     values:
-      permalink: /docs/:basename/
-      toc: true
-      toc_label: "Contents"
+      permalink: /docs/:title:output_ext
   - scope:
       path: ""
       type: posts
     values:
-      layout: single-full
-      author_profile: false
-      read_time: false
-      comments: false
-      share: true
-      related: false
-      toc: true
-      toc_label: "Contents"
-      toc_sticky: true
-      show_date: true
-  - scope:
-      path: ""
-      type: tutorials
-    values:
       layout: single
-      toc_sticky: true
-
-
-analytics:
-  provider: "google-gtag"
-  google:
-    tracking_id: "UA-169781858-1"
+      share: true
 
 timezone: America/Los_Angeles
 breadcrumbs: true

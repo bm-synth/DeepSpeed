@@ -7,13 +7,10 @@ tags: getting-started
 
 ## Installation
 
-* Installing is as simple as `pip install deepspeed`, [see more details](/tutorials/advanced-install/).
-* To get started with DeepSpeed on AzureML, please see the [AzureML Examples GitHub](https://github.com/Azure/azureml-examples/tree/main/cli/jobs/deepspeed)
-* DeepSpeed has direct integrations with [HuggingFace Transformers](https://github.com/huggingface/transformers) and [PyTorch Lightning](https://github.com/PyTorchLightning/pytorch-lightning). HuggingFace Transformers users can now easily accelerate their models with DeepSpeed through a simple ``--deepspeed`` flag + config file [See more details](https://huggingface.co/docs/transformers/deepspeed). PyTorch Lightning provides easy access to DeepSpeed through the Lightning Trainer [See more details](https://pytorch-lightning.readthedocs.io/en/stable/advanced/multi_gpu.html?highlight=deepspeed#deepspeed).
-* DeepSpeed on AMD can be used via our [ROCm images](https://hub.docker.com/r/deepspeed/rocm501/tags), e.g., `docker pull deepspeed/rocm501:ds060_pytorch110`.
-* DeepSpeed also supports Intel Xeon CPU, Intel Data Center Max Series XPU, Intel Gaudi HPU, Huawei Ascend NPU etc, please refer to the [accelerator setup guide](/tutorials/accelerator-setup-guide/)
-
-
+* Please see our [Azure tutorial](/tutorials/azure/) to get started with DeepSpeed on Azure!
+* If you're not on Azure, we recommend using our docker image via `docker pull deepspeed/deepspeed:latest` which contains a pre-installed version of DeepSpeed and all the necessary dependencies.
+* If you want to install DeepSpeed manually, we provide an install script
+* `install.sh` to help install on a local machine or across an entire cluster.
 
 ## Writing DeepSpeed Models
 
@@ -141,7 +138,7 @@ waiting to synchronize with other processes if it's called just for the process 
 DeepSpeed features can be enabled, disabled, or configured using a config JSON
 file that should be specified as `args.deepspeed_config`. A sample config file
 is shown below. For a full set of features see [ API
-doc](/docs/config-json/).
+doc](/docs/config_json/).
 
 ```json
 {
