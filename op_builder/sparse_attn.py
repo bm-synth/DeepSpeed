@@ -33,41 +33,16 @@ class SparseAttnBuilder(OpBuilder):
         #command_status = list(map(self.command_exists, required_commands))
         #deps_compatible = all(command_status)
 
-        if self.is_rocm_pytorch():
-            if verbose:
-                self.warning(f'{self.NAME} is not compatible with ROCM')
-            return False
-
-        try:
-            import torch
-        except ImportError:
-            if verbose:
-                self.warning(f"unable to import torch, please install it first")
-            return False
-
-        # torch-cpu will not have a cuda version
-        if torch.version.cuda is None:
-            cuda_compatible = False
-            if verbose:
-                self.warning(f"{self.NAME} cuda is not available from torch")
-        else:
-            major, minor = torch.version.cuda.split('.')[:2]
-            cuda_compatible = (int(major) == 10 and int(minor) >= 1) or (int(major) >= 11)
-            if not cuda_compatible:
-                if verbose:
-                    self.warning(f"{self.NAME} requires CUDA version 10.1+")
-
         # torch-cpu will not have a cuda version
         if torch.version.cuda is None:
             cuda_compatible = False
             self.warning(f"{self.NAME} cuda is not available from torch")
         else:
             major, minor = torch.version.cuda.split('.')[:2]
-            cuda_compatible = int(major) == 10 and int(minor) >= 1
+            cuda_compatible = (int(major) == 10
+                               and int(minor) >= 1) or (int(major) >= 11)
             if not cuda_compatible:
-                self.warning(
-                    f"{self.NAME} requires CUDA version 10.1+, does not currently support >=11 or <10.1"
-                )
+                self.warning(f"{self.NAME} requires CUDA version 10.1+")
 
         TORCH_MAJOR = int(torch.__version__.split('.')[0])
         TORCH_MINOR = int(torch.__version__.split('.')[1])
@@ -85,5 +60,4 @@ class SparseAttnBuilder(OpBuilder):
                 self.warning(f"please install triton==1.0.0 if you want to use sparse attention")
             return False
 
-        return super().is_compatible(
-        ) and deps_compatible and torch_compatible and cuda_compatible
+        return super().is_compatible() and torch_compatible and cuda_compatible

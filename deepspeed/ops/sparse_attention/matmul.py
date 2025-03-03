@@ -329,16 +329,46 @@ class _sparse_matmul(torch.autograd.Function):
             F16TK += [64] if is_64_multiple else []
             TK = {torch.float32: F32TK, torch.float16: F16TK}[dtype]
             num_lock = 1
-            meta = {
-                'TM': block * pack,
-                'TN': block * pack,
-                'BLOCK': block,
-                'TK': TK[0],
-                'TZ': 1,
-                'SDD': True,
-                'DSD': False,
-                'DDS': False
-            }
+            key = (block,
+                   a.dtype,
+                   b.dtype,
+                   trans_a,
+                   trans_b,
+                   trans_c,
+                   pack,
+                   is_32_multiple,
+                   is_64_multiple)
+            if key not in _sparse_matmul.sdd_cache:
+                F32TK = [8, 16]
+                F16TK = [16]
+                F16TK += [32] if is_32_multiple else []
+                F16TK += [64] if is_64_multiple else []
+                TK = {torch.float32: F32TK, torch.float16: F16TK}[dtype]
+                defines = {
+                    'TM': block * pack,
+                    'TN': block * pack,
+                    'TMN': block * block * pack * pack,
+                    'BLOCK': block,
+                    'TK': 32,
+                    'TYPE': dtype,
+                    'STRIDE_AM': '1' if trans_a else 'lda',
+                    'STRIDE_AK': 'lda' if trans_a else '1',
+                    'STRIDE_BN': 'ldb' if trans_b else '1',
+                    'STRIDE_BK': '1' if trans_b else 'ldb',
+                    'STRIDE_CM': 'ldc',
+                    'STRIDE_CN': '1',
+                    'SDD': True,
+                    'TZ': 1,
+                    'NAME': 'sdd_kernel'
+                }
+                _sparse_matmul.sdd_cache[key] = triton.kernel(
+                    matmul,
+                    defines=defines,
+                    device=torch.device('cuda'),
+                    num_warps=4)
+                #_sparse_matmul.sdd_cache[key] = triton.kernel(src, defines=defines, num_warps=[1, 2, 4])
+
+            kernel = _sparse_matmul.sdd_cache[key]
             # create output
             locks = _sparse_matmul.get_locks(2 * width * AS0 * num_lock, a.device)
             # maximum grid size is 65535
@@ -347,31 +377,32 @@ class _sparse_matmul(torch.autograd.Function):
             max_width = 49152
             total = 0 if bench else None
             for off_width in range(0, width, max_width):
-                grid = lambda meta: [meta['TZ'], min(max_width, width - off_width), batch_size]
-                _kernel[grid](a,
-                              b,
-                              c,
-                              a.stride(0),
-                              a.stride(1),
-                              a.stride(3 if trans_a else 2),
-                              a.stride(2 if trans_a else 3),
-                              b.stride(0),
-                              b.stride(1),
-                              b.stride(3 if trans_b else 2),
-                              b.stride(2 if trans_b else 3),
-                              c.stride(0),
-                              c.stride(0),
-                              c.stride(2),
-                              c.stride(3),
-                              a_outer,
-                              a_outer,
-                              a_inner,
-                              off_width,
-                              lut,
-                              locks,
-                              num_lock,
-                              num_warps=4,
-                              **meta)
+                current = kernel(
+                    a.data_ptr(),
+                    b.data_ptr(),
+                    c.data_ptr(),
+                    a.stride(2),
+                    b.stride(2),
+                    block,
+                    a.stride(0),
+                    b.stride(0),
+                    c.stride(0),
+                    a.stride(1),
+                    b.stride(1),
+                    c.stride(0),
+                    AS2,
+                    AS2,
+                    AS3,
+                    off_width,
+                    lut.data_ptr(),
+                    locks.data_ptr(),
+                    num_lock,
+                    grid=lambda opt: [opt.TZ,
+                                      min(max_width,
+                                          width - off_width),
+                                      AS0])
+                total = total + current if bench else None
+            time[0] = total
         # save for backward pass
         return c
 
@@ -485,7 +516,31 @@ class _sparse_matmul(torch.autograd.Function):
         BS2 = block * spdims[1 if trans_b else 2]
         dtype = a.dtype
         # kernel
-        meta = {'TN': block, 'TM': 128, 'TK': 16, 'BLOCK': block, 'TZ': 1, 'SDD': False, 'DSD': False, 'DDS': True}
+        key = (block, a.dtype, b.dtype, trans_a, trans_b, trans_c)
+        if key not in _sparse_matmul.dds_cache:
+            #TM = (64, 128) if dtype == torch.float32 else (64, 128, 256)
+            TK = 8 if dtype == torch.float32 else 16
+            defines = {
+                'TM': 128,
+                'TN': block,
+                'TK': TK,
+                'BLOCK': block,
+                'TYPE': dtype,
+                'STRIDE_AM': 1 if trans_a else 'lda',
+                'STRIDE_AK': 'lda' if trans_a else 1,
+                'STRIDE_BN': block if trans_b else 1,
+                'STRIDE_BK': 1 if trans_b else block,
+                'STRIDE_CM': '1' if trans_c else 'ldc',
+                'STRIDE_CN': 'ldc' if trans_c else '1',
+                'NAME': 'dds_kernel',
+                'DDS': True
+            }
+            _sparse_matmul.dds_cache[key] = triton.kernel(matmul,
+                                                          defines=defines,
+                                                          device=torch.device('cuda'),
+                                                          num_warps=4)
+            #_sparse_matmul.dds_cache[key] = triton.kernel(src, defines=defines, num_warps=[4])
+        kernel = _sparse_matmul.dds_cache[key]
         # output
         CS0 = AS0
         CS1 = AS1
@@ -493,31 +548,29 @@ class _sparse_matmul(torch.autograd.Function):
         CS3 = AS2 if trans_c else BS2
         locks = _sparse_matmul.get_locks(2 * AS0 * AS2 // 32 * num_locks, a.device)
         c = torch.empty((CS0, CS1, CS2, CS3), dtype=dtype, device=a.device)
-        grid = lambda meta: [width, triton.cdiv(AS2, meta['TM']), AS0]
-        _kernel[grid](a,
-                      b,
-                      c,
-                      a.stride(0),
-                      a.stride(1),
-                      a.stride(3 if trans_a else 2),
-                      a.stride(2 if trans_a else 3),
-                      b.stride(0),
-                      b.stride(1),
-                      b.stride(3 if trans_b else 2),
-                      b.stride(2 if trans_b else 3),
-                      c.stride(0),
-                      c.stride(1),
-                      c.stride(3 if trans_c else 2),
-                      c.stride(2 if trans_c else 3),
-                      AS2,
-                      BS2,
-                      0,
-                      0,
-                      lut,
-                      locks,
-                      num_locks,
-                      num_warps=4,
-                      **meta)
+        time[0] = kernel(a.data_ptr(),
+                         b.data_ptr(),
+                         c.data_ptr(),
+                         a.stride(2),
+                         block,
+                         c.stride(2),
+                         a.stride(0),
+                         b.stride(0),
+                         c.stride(0),
+                         a.stride(1),
+                         b.stride(1),
+                         c.stride(1),
+                         AS2,
+                         BS2,
+                         0,
+                         0,
+                         lut.data_ptr(),
+                         locks.data_ptr(),
+                         num_locks,
+                         grid=lambda opt: [width,
+                                           triton.cdiv(AS2,
+                                                       opt.TM),
+                                           AS0])
         return c
 
     @staticmethod
@@ -536,8 +589,31 @@ class _sparse_matmul(torch.autograd.Function):
         BS3 = b.size(2 if trans_b else 3)
         dtype = a.dtype
         # kernel
-
-        meta = {'TM': block, 'TN': 128, 'TK': 16, 'BLOCK': block, 'TZ': 1, 'SDD': False, 'DSD': True, 'DDS': False}
+        key = (block, a.dtype, b.dtype, trans_a, trans_b, trans_c)
+        if key not in _sparse_matmul.dsd_cache:
+            #TN = (64, 128) if dtype == torch.float32 else (64, 128, 256)
+            TK = 8 if dtype == torch.float32 else 16
+            defines = {
+                'TM': block,
+                'TN': 128,
+                'TK': TK,
+                'BLOCK': block,
+                'TYPE': dtype,
+                'STRIDE_AM': 1 if trans_a else block,
+                'STRIDE_AK': block if trans_a else 1,
+                'STRIDE_BN': 'ldb' if trans_b else '1',
+                'STRIDE_BK': '1' if trans_b else 'ldb',
+                'STRIDE_CM': '1' if trans_c else 'ldc',
+                'STRIDE_CN': 'ldc' if trans_c else '1',
+                'NAME': 'dsd_kernel',
+                'DSD': True
+            }
+            _sparse_matmul.dsd_cache[key] = triton.kernel(matmul,
+                                                          defines=defines,
+                                                          device=torch.device('cuda'),
+                                                          num_warps=4)
+            #_sparse_matmul.dsd_cache[key] = triton.kernel(src, defines=defines, num_warps=[4])
+        kernel = _sparse_matmul.dsd_cache[key]
         # output
         CS0 = BS0
         CS1 = BS1
@@ -545,31 +621,29 @@ class _sparse_matmul(torch.autograd.Function):
         CS3 = AS1 if trans_c else BS3
         locks = _sparse_matmul.get_locks(2 * BS0 * BS3 // 32 * num_locks, a.device)
         c = torch.empty((CS0, CS1, CS2, CS3), dtype=dtype, device=a.device)
-        grid = lambda meta: [width, triton.cdiv(BS3, meta['TN']), BS0]
-        _kernel[grid](a,
-                      b,
-                      c,
-                      a.stride(0),
-                      a.stride(1),
-                      a.stride(3 if trans_a else 2),
-                      a.stride(2 if trans_a else 3),
-                      b.stride(0),
-                      b.stride(1),
-                      b.stride(3 if trans_b else 2),
-                      b.stride(2 if trans_b else 3),
-                      c.stride(0),
-                      c.stride(1),
-                      c.stride(2),
-                      c.stride(3),
-                      BS3,
-                      AS1,
-                      0,
-                      0,
-                      lut,
-                      locks,
-                      num_locks,
-                      num_warps=4,
-                      **meta)
+        time[0] = kernel(a.data_ptr(),
+                         b.data_ptr(),
+                         c.data_ptr(),
+                         block,
+                         b.stride(2),
+                         c.stride(2),
+                         a.stride(0),
+                         b.stride(0),
+                         c.stride(0),
+                         a.stride(1),
+                         b.stride(1),
+                         c.stride(1),
+                         BS3,
+                         AS1,
+                         0,
+                         0,
+                         lut.data_ptr(),
+                         locks.data_ptr(),
+                         num_locks,
+                         grid=lambda opt: [width,
+                                           triton.cdiv(BS3,
+                                                       opt.TN),
+                                           BS0])
         return c
 
     fn = {'sdd': _sdd_matmul.__get__(object), 'dsd': _dsd_matmul.__get__(object), 'dds': _dds_matmul.__get__(object)}

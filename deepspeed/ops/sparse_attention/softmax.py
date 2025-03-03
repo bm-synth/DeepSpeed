@@ -147,8 +147,87 @@ class _sparse_softmax(torch.autograd.Function):
         return lut, int(sizes.max())
 
     @staticmethod
-    def forward(ctx, x, scale, rpe, key_padding_mask, attn_mask, kp_mask_mode, attn_mask_mode, spdims, block, lut,
-                num_blocks, maxlut, bench, time):
+    def make_kernel(cache,
+                    src,
+                    max_k,
+                    dtype,
+                    block,
+                    apply_scale,
+                    apply_rpe,
+                    apply_kp_mask,
+                    apply_attn_mask,
+                    kp_mask_mode,
+                    attn_mask_mode):
+        global triton
+        if triton is None:
+            triton = importlib.import_module('triton')
+
+        if max_k >= 32768:
+            raise NotImplementedError('Reductions larger than 32768 elements '\
+                                      'are not yet implemented')
+        num_warps = 4 if max_k < 512 else (8 if max_k < 2048 else 16)
+        pad = num_warps * 32 * 2
+        TN = (int(max_k) + pad - 1) // pad * pad
+        # just-in-time compile kernel
+        key = (block,
+               dtype,
+               num_warps,
+               TN,
+               apply_scale,
+               apply_rpe,
+               apply_kp_mask,
+               apply_attn_mask,
+               kp_mask_mode,
+               attn_mask_mode)
+        if key not in cache:
+            defines = {
+                'TM': 1,
+                'TN': TN,
+                'TYPE': dtype,
+                'BLOCK': block,
+                'INFINITY': {
+                    torch.float32: 'F32_INFINITY',
+                    torch.float16: 'F16_INFINITY'
+                }[dtype]
+            }
+            if apply_scale:
+                defines['APPLY_SCALE'] = True
+            if apply_rpe:
+                defines['APPLY_RPE'] = True
+            if apply_kp_mask:
+                defines['APPLY_KP_MASK'] = True
+                if kp_mask_mode == 'mul':
+                    defines['KP_MASK_MUL'] = True
+            if apply_attn_mask:
+                defines['APPLY_ATTN_MASK'] = True
+                if attn_mask_mode == 'mul':
+                    defines['ATTN_MASK_MUL'] = True
+            kernel = triton.kernel(src,
+                                   defines=defines,
+                                   device=torch.device('cuda'),
+                                   num_warps=num_warps)
+            cache[key] = kernel
+        return cache[key]
+
+    @staticmethod
+    def forward(ctx,
+                x,
+                scale,
+                rpe,
+                key_padding_mask,
+                attn_mask,
+                kp_mask_mode,
+                attn_mask_mode,
+                spdims,
+                block,
+                lut,
+                num_blocks,
+                maxlut,
+                bench,
+                time):
+        global triton
+        if triton is None:
+            triton = importlib.import_module('triton')
 
         apply_scale = False if scale == 1.0 else True
 
@@ -181,19 +260,16 @@ class _sparse_softmax(torch.autograd.Function):
 
         # run kernel
         M = x.shape[0]
-        meta = {
-            'BLOCK': block,
-            'APPLY_SCALE': apply_scale,
-            'APPLY_RPE': apply_rpe,
-            'APPLY_KP_MASK': apply_kp_mask,
-            'APPLY_ATTN_MASK': apply_attn_mask,
-            'KP_MASK_MUL': kp_mask_mode == 'mul',
-            'ATTN_MASK_MUL': attn_mask_mode == 'mul',
-        }
-        grid = lambda opt: [spdims[0] * spdims[1] * block, M]
-        _forward[grid](x, scale, lut, rpe, key_padding_mask, attn_mask, maxlut, x.stride(0),\
-                       stride_zrpe, stride_hrpe, stride_srpe, stride_zkpm, stride_zattnm, **meta)
+        grid = lambda opt: [triton.cdiv(spdims[0] * spdims[1] * block, opt.TM), M]
 
+        # run kernel
+        time[0] = kernel(x.data_ptr(), scale, lut.data_ptr(), rpe.data_ptr(), key_padding_mask.data_ptr(), attn_mask.data_ptr(),\
+                         num_blocks, maxlut,\
+                         x.stride(0),\
+                         stride_zrpe, stride_hrpe,\
+                         stride_srpe,\
+                         stride_zkpm, stride_zattnm,\
+                         grid=grid)
         # save to context
         ctx.mark_dirty(x)
         ctx.save_for_backward(x, lut)
@@ -216,8 +292,19 @@ class _sparse_softmax(torch.autograd.Function):
         x, lut = ctx.saved_tensors
         # run kernel
         M = x.shape[0]
-        grid = lambda opt: [ctx.spdims[0] * ctx.spdims[1] * ctx.block, M]
-        _backward[grid](x, ctx.scale, dx, lut, ctx.maxlut, x.stride(0), dx.stride(0), BLOCK=ctx.block)
+        grid = lambda opt: [
+            triton.cdiv(ctx.spdims[0] * ctx.spdims[1] * ctx.block,
+                        opt.TM),
+            M
+        ]
+        kernel(x.data_ptr(),
+               ctx.scale,
+               dx.data_ptr(),
+               lut.data_ptr(),
+               ctx.maxlut,
+               x.stride(0),
+               dx.stride(0),
+               grid=grid)
         return dx, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
