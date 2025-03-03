@@ -26,175 +26,48 @@ from .utils import policy_to_ds_container
 import gc
 
 
-def get_transformer_name(replaced_module):
-    from .containers import supported_models
-    from torch.nn import ModuleList
-    transformer_name = ''
-    for n, c in replaced_module.named_children():
-        if c.__class__ in supported_models:
-            transformer_name += n + '.'
-            for name, child in c.named_children():
-                if child.__class__ is ModuleList:
-                    transformer_name += name
-                    break
-            break
-    return transformer_name
-
-
-class GroupQuantizer:
-
-    def __init__(self, q_int8=True, group_size=1, num_bits=8, num_groups=0):
-        self.group_size = group_size
-        self.num_bits = num_bits
-        self.q_int8 = q_int8
-
-        self.num_groups = num_groups
-
-    def quantize(self, inputs, qkv=True, count=1, parallel_dim=0):
-        if not self.q_int8 or not qkv:
-            inputs = torch.nn.Parameter(inputs, requires_grad=False)
-            inputs.scale = torch.empty(1)
-            return inputs
-        q_range = 2**self.num_bits
-        num_groups = self.num_groups if self.num_groups > 0 else inputs.shape[0] // self.group_size
-        inputs = inputs.to(get_accelerator().current_device_name())
-        input_flat = inputs.reshape(num_groups, -1).contiguous()
-        input_min = torch.min(input_flat, dim=1, keepdim=True)[0].float()
-        input_max = torch.max(input_flat, dim=1, keepdim=True)[0].float()
-        scale = torch.max(input_min.abs(), input_max.abs()) * 2.0 / (q_range)
-        input_flat = (input_flat / scale).round().clamp(-q_range // 2, q_range // 2 - 1)
-        inputs_q = input_flat.reshape(inputs.shape).to(torch.int8).contiguous()
-        out = torch.nn.Parameter(inputs_q, requires_grad=False)
-        inputs_split = inputs.split(inputs.shape[parallel_dim] // 2, dim=parallel_dim)
-        input_flat = [inputs_split[i].reshape(num_groups, -1).contiguous() for i in range(2)]
-        input_min = [torch.min(input_flat[i], dim=1, keepdim=True)[0].float() for i in range(2)]
-        input_max = [torch.max(input_flat[i], dim=1, keepdim=True)[0].float() for i in range(2)]
-        scale1 = [(torch.max(input_min[i].abs(), input_max[i].abs()) * 2.0 / (q_range)).squeeze().unsqueeze(0)
-                  for i in range(2)]
-
-        out.scale = torch.cat([scale.squeeze().unsqueeze(0), scale1[0], scale1[1]], dim=0).reshape(num_groups,
-                                                                                                   -1).contiguous()
-        return out
-
-
-def _module_match(module):
-    for policy in generic_policies:
-        policy = policy()
-        if policy.match(module):
-            return policy
-    return None
-
-
-def generic_injection(module, dtype=None, enable_cuda_graph=True):
-
-    def replace_attn(child, policy):
-        policy_attn = policy.attention(child)
-        if policy_attn is None:
-            return child
-        if len(policy_attn) == 5:
-            qkvw, attn_ow, attn_ob, hidden_size, heads = policy_attn
-        else:
-            qw, kw, vw, attn_ow, attn_ob, hidden_size, heads = policy_attn
-
-        config = transformer_inference.DeepSpeedInferenceConfig(
-            hidden_size=hidden_size,
-            heads=heads,
-            dtype=dtype,
-            triangular_masking=False,
-            max_out_tokens=4096,
-        )
-        attn_module = DeepSpeedDiffusersAttention(config)
-
-        def transpose(data):
-            data = data.contiguous()
-            data.reshape(-1).copy_(data.transpose(-1, -2).contiguous().reshape(-1))
-            data = data.reshape(data.shape[-1], data.shape[-2])
-            data.to(get_accelerator().current_device_name())
-            return data
-
-        if len(policy_attn) == 5:
-            attn_module.attn_qkvw.data = transpose(qkvw.data)
-        else:
-            attn_module.attn_qkvw = None
-            attn_module.attn_qw.data = transpose(qw.data)
-            attn_module.attn_kw.data = transpose(kw.data)
-            attn_module.attn_vw.data = transpose(vw.data)
-
-        attn_module.attn_qkvb = None
-        attn_module.attn_ow.data = transpose(attn_ow.data)
-        attn_module.attn_ob.data.copy_(attn_ob.data.to(get_accelerator().current_device_name()))
-        return attn_module
-
-    def replace_attn_block(child, policy):
-        config = Diffusers2DTransformerConfig()
-        return DeepSpeedDiffusersTransformerBlock(child, config)
-
-    if isinstance(module, torch.nn.Module):
-        pass
-    else:
-        if dtype not in [torch.float16, torch.half]:
-            raise ValueError("Generic injection only supported with FP16")
-
-        try:
-            import diffusers
-            if hasattr(diffusers.models.attention, 'CrossAttention'):
-                cross_attention = diffusers.models.attention.CrossAttention
-            else:
-                cross_attention = diffusers.models.attention_processor.Attention
-            attention_block = diffusers.models.attention.BasicTransformerBlock
-            new_policies = {
-                cross_attention: replace_attn,
-                attention_block: replace_attn_block,
-            }
-        except ImportError:
-            new_policies = {}
-
-        #replace_transformer_layer(None,
-        #                          module.text_encoder,
-        #                          training=False,
-        #                          replace_with_kernel_inject=True,
-        #                          triangular_masking=True,
-        #                          max_out_tokens=8192)
-        from ..model_implementations.transformers.clip_encoder import DSClipEncoder
-        cg_encoder = DSClipEncoder(module.text_encoder, enable_cuda_graph=enable_cuda_graph)
-        setattr(module, 'text_encoder', cg_encoder)
-        for name in module.__dict__.keys():
-            sub_module = getattr(module, name)
-            policy = _module_match(sub_module)
-
-            if policy is not None:
-
-                def _replace_module(module, policy):
-                    for name, child in module.named_children():
-                        _replace_module(child, policy)
-                        if child.__class__ in new_policies:
-                            replaced_module = new_policies[child.__class__](child, policy)
-                            setattr(module, name, replaced_module)
-
-                _replace_module(sub_module, policy)
-                new_module = policy.apply(sub_module, enable_cuda_graph=enable_cuda_graph)
-                print(f"**** found and replaced {name} w. {type(new_module)}")
-                setattr(module, name, new_module)
-
-
-container_g = None
-
-
-def replace_transformer_layer(orig_layer_impl, model, checkpoint_dict, config, model_config):
+def replace_transformer_layer(orig_layer_impl,
+                              model,
+                              micro_batch_size,
+                              bert_config,
+                              seed=-1,
+                              preln=True,
+                              fp16=True,
+                              training=True,
+                              huggingface=False,
+                              local_rank=-1):
     """ Replace bert-style transformer layers with DeepSpeed's transformer layer
     Arguments:
         orig_layer_impl (torch.nn.Module): the original transformer layer implementation to look for,
             e.g., transformers.models.bert.modeling_bert.BertLayer or transformers.BertLayer
         model (torch.nn.Module): user's nn.module representing their model
-        checkpoint_dict: Dictionary for checkpoint passed from the Inference Engine
-        config: top-level DS Inference config defined in inference/config.py
-        model_config: HuggingFace model config passed from the inference/engine.py
+        micro_batch_size (int): micro batch size per gpu used during training/eval
+        bert_config (dict): model config containing hidden size, attention heads, etc.
+        seed (int): random seed value
+        preln (bool): does the original layer implementation do pre or post layer norm?
+        fp16 (bool): fp16 or fp32
+        Training (bool): select between training (True) or inference (False) mode
+        huggingface (bool): huggingface implementation is unique (supports both encoder/decoder modes)
+
     Returns:
         Updated nn.module with replaced transformer layers
     """
-    # defining globals as internally defined functions inherit these everywhere
-    quantize = (config.dtype == torch.int8)
-    # todo: Refactor later. In future, let's minimize the style used above and use config.** instead
+    def replace_fn(child):
+        transformer_config = deepspeed.DeepSpeedTransformerConfig(
+            batch_size=micro_batch_size,
+            hidden_size=bert_config.hidden_size,
+            heads=bert_config.num_attention_heads,
+            attn_dropout_ratio=bert_config.attention_probs_dropout_prob,
+            hidden_dropout_ratio=bert_config.hidden_dropout_prob,
+            num_hidden_layers=bert_config.num_hidden_layers,
+            initializer_range=bert_config.initializer_range,
+            seed=seed,
+            fp16=fp16,
+            pre_layer_norm=preln,
+            huggingface=huggingface,
+            local_rank=local_rank,
+            training=training)
+        new_module = deepspeed.DeepSpeedTransformerLayer(transformer_config)
 
     linear_layer_setting = None
     '''
