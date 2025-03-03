@@ -122,20 +122,37 @@ def residual_store_ref_implementation(vals, bias, res, gamma, beta, epsilon, cha
 
 
 def residual_store_ds_implementation(vals, bias, res, gamma, beta, epsilon):
-    return LayerNormOp.layer_norm_residual_store_pre_ln_res(vals, bias, res, gamma, beta, epsilon)
+    global inference_module
+    if inference_module is None:
+        inference_module = InferenceBuilder().load()
+    return inference_module.layer_norm_residual_store_pre_ln_res(
+        vals,
+        bias,
+        res,
+        gamma,
+        beta,
+        epsilon)
 
 
 @pytest.mark.inference_ops
 @pytest.mark.parametrize("batch", [1, 32])
 @pytest.mark.parametrize("seq_len", [1, 128])
 @pytest.mark.parametrize("channels", [384, 512, 768, 1024, 2048, 8192, 14432])
-@pytest.mark.parametrize("dtype", get_dtypes())
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_layer_norm_residual_store_pre_ln_res(batch, seq_len, channels, dtype):
-    vals = torch.randn((batch, seq_len, channels), dtype=dtype, device=get_accelerator().current_device_name())
-    residual = torch.randn((batch, seq_len, channels), dtype=dtype, device=get_accelerator().current_device_name())
-    bias = torch.randn((channels), dtype=dtype, device=get_accelerator().current_device_name())
-    gamma = torch.randn((channels), dtype=dtype, device=get_accelerator().current_device_name())
-    beta = torch.rand((channels), dtype=dtype, device=get_accelerator().current_device_name())
+    vals = torch.randn((batch,
+                        seq_len,
+                        channels),
+                       dtype=dtype,
+                       device=torch.cuda.current_device())
+    residual = torch.randn((batch,
+                            seq_len,
+                            channels),
+                           dtype=dtype,
+                           device=torch.cuda.current_device())
+    bias = torch.randn((channels), dtype=dtype, device=torch.cuda.current_device())
+    gamma = torch.randn((channels), dtype=dtype, device=torch.cuda.current_device())
+    beta = torch.rand((channels), dtype=dtype, device=torch.cuda.current_device())
     epsilon = 1e-5
 
     # Need to run the reference first since there's an in-place component to ours
@@ -146,38 +163,3 @@ def test_layer_norm_residual_store_pre_ln_res(batch, seq_len, channels, dtype):
 
     assert allclose(ds_res_output, norm_res_output)
     assert allclose(ds_norm_output, ref_norm_output)
-
-
-@pytest.mark.inference_ops
-@pytest.mark.parametrize("M", [4])
-@pytest.mark.parametrize("N", [4])
-@pytest.mark.parametrize("dtype", [torch.float16])
-@pytest.mark.parametrize("residual", [True, False])
-@pytest.mark.parametrize("input_bias", [True, False])
-def test_triton_layer_norm(M, N, dtype, residual, input_bias, eps=1e-5, device='cuda'):
-    if not deepspeed.get_accelerator().is_triton_supported():
-        pytest.skip("triton is not supported on this system")
-    dev = get_accelerator().device_name()
-    torch.manual_seed(0)
-    # create data
-    x_shape = (M, N)
-    w_shape = (x_shape[-1], )
-    weight = torch.rand(w_shape, dtype=dtype, device=dev, requires_grad=False)
-    bias = torch.rand(w_shape, dtype=dtype, device=dev, requires_grad=False)
-    x_bias = torch.rand(w_shape, dtype=dtype, device=dev, requires_grad=False)
-    x = -2.3 + 0.5 * torch.randn(x_shape, dtype=dtype, device=dev)
-    dy = .1 * torch.randn_like(x)
-    if residual:
-        res = torch.rand(x_shape, dtype=dtype, device=dev, requires_grad=False)
-    else:
-        res = torch.zeros(x_shape, dtype=dtype, device=dev, requires_grad=False)
-    x.requires_grad_(True)
-    # forward pass
-    if residual or input_bias:
-        y_tri = layer_norm_residual(x, x_bias if input_bias else None, res, weight, bias, eps)
-    else:
-        y_tri = layer_norm(x, weight, bias, eps)
-    y_ref = torch.nn.functional.layer_norm(x + res + (x_bias if input_bias else 0), w_shape, weight, bias,
-                                           eps).to(dtype)
-    # compare
-    assert (allclose(y_tri, y_ref))

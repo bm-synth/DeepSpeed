@@ -898,11 +898,31 @@ std::vector<at::Tensor> ds_layer_norm_residual_store_pre_ln_res(at::Tensor& inpu
     auto norm_output = at::empty_like(input);
     auto res_output = at::empty_like(input);
 
-    DISPATCH_PRE_LAYER_NORM_RESIDUAL(kFloat, float);
-    DISPATCH_PRE_LAYER_NORM_RESIDUAL(kHalf, __half);
-#ifdef BF16_AVAILABLE
-    DISPATCH_PRE_LAYER_NORM_RESIDUAL(kBFloat16, __nv_bfloat16);
-#endif
+    if (input.options().dtype() == torch::kFloat16) {
+        launch_fused_residual_ln_store_pre_ln_res((__half*)norm_output.data_ptr(),
+                                                  (__half*)res_output.data_ptr(),
+                                                  (const __half*)input.data_ptr(),
+                                                  (const __half*)residual.data_ptr(),
+                                                  (const __half*)bias.data_ptr(),
+                                                  (const __half*)gamma.data_ptr(),
+                                                  (const __half*)beta.data_ptr(),
+                                                  epsilon,
+                                                  rows,
+                                                  elems_per_row,
+                                                  Context::Instance().GetCurrentStream());
+    } else {
+        launch_fused_residual_ln_store_pre_ln_res((float*)norm_output.data_ptr(),
+                                                  (float*)res_output.data_ptr(),
+                                                  (const float*)input.data_ptr(),
+                                                  (const float*)residual.data_ptr(),
+                                                  (const float*)bias.data_ptr(),
+                                                  (const float*)gamma.data_ptr(),
+                                                  (const float*)beta.data_ptr(),
+                                                  epsilon,
+                                                  rows,
+                                                  elems_per_row,
+                                                  Context::Instance().GetCurrentStream());
+    }
 
     return {norm_output, res_output};
 }
@@ -2036,8 +2056,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("bias_residual_fp16",
           &ds_bias_residual<__half>,
           "DeepSpeed residual-bias add with fp16 (CUDA)");
-    m.def("layer_norm_fp32", &ds_layernorm<float>, "DeepSpeed layer-norm with fp32 (CUDA)");
-    m.def("layer_norm_fp16", &ds_layernorm<__half>, "DeepSpeed layer-norm with fp16 (CUDA)");
+    m.def("layer_norm", &ds_layer_norm, "DeepSpeed layer norm (CUDA)");
+    m.def(
+        "_layer_norm_residual", &ds_layer_norm_residual, "DeepSpeed layer norm + residual (CUDA)");
+    m.def("layer_norm_residual_store_pre_ln_res",
+          &ds_layer_norm_residual_store_pre_ln_res,
+          "DeepSpeed layer norm + store pre Layernorm residual (CUDA)");
     m.def("qkv_gemm_fp32", &ds_qkv_gemm<float>, "DeepSpeed qkv gemm with fp32 (CUDA)");
     m.def("qkv_gemm_fp16", &ds_qkv_gemm<__half>, "DeepSpeed qkv gemm with fp16 (CUDA)");
     m.def("qkv_gemm_int8", &ds_qkv_gemm_int8<__half>, "DeepSpeed qkv gemm with int8 (CUDA)");

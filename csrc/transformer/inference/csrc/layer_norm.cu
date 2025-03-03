@@ -57,6 +57,8 @@ __global__ void fused_ln(T* output,
 #pragma unRoll
     for (int i = 0; i < unRoll; i++) {
         T* iteration_buffer = local_buffer + i * T_per_load;
+        T residual_buffer[T_per_load];
+        T bias_buffer[T_per_load];
 
         mem_access::load_global<ln::granularity>(
             iteration_buffer, input_base + i * stride, thread_offset + i * stride < elems_per_row);
@@ -490,14 +492,27 @@ void launch_fused_residual_ln_store_pre_ln_res(T* norm_output,
     template void launch_fused_residual_ln_store_pre_ln_res<T>( \
         T*, T*, const T*, const T*, const T*, const T*, const T*, float, int, int, cudaStream_t);
 
-INSTANTIATE_RES_LN(__half);
-INSTANTIATE_RES_LN(float);
-#ifdef BF16_AVAILABLE
-INSTANTIATE_RES_LN(__nv_bfloat16);
-#endif
+// Store specializations
+template void launch_fused_residual_ln_store_pre_ln_res(__half*,
+                                                        __half*,
+                                                        const __half*,
+                                                        const __half*,
+                                                        const __half*,
+                                                        const __half*,
+                                                        const __half*,
+                                                        float,
+                                                        int,
+                                                        int,
+                                                        cudaStream_t);
 
-INSTANTIATE_PRE_LN_RES(__half);
-INSTANTIATE_PRE_LN_RES(float);
-#ifdef BF16_AVAILABLE
-INSTANTIATE_PRE_LN_RES(__nv_bfloat16);
-#endif
+template void launch_fused_residual_ln_store_pre_ln_res(float*,
+                                                        float*,
+                                                        const float*,
+                                                        const float*,
+                                                        const float*,
+                                                        const float*,
+                                                        const float*,
+                                                        float,
+                                                        int,
+                                                        int,
+                                                        cudaStream_t);

@@ -120,17 +120,6 @@ void launch_fused_residual_ln_store_pre_ln_res(T* norm_output,
                                                cudaStream_t stream);
 
 template <typename T>
-void launch_rms_norm(T* norm_output,
-                     T* res_output,
-                     const T* vals,
-                     const T* residual,
-                     const T* gamma,
-                     float epsilon,
-                     int rows,
-                     int elems_per_row,
-                     cudaStream_t stream);
-
-template <typename T>
 void launch_dequantize(T* output,
                        const int8_t* input,
                        const float* qscale,
