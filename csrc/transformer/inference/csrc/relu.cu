@@ -58,11 +58,12 @@ void launch_bias_relu(T* input,
         input, bias, total_count, intermediate_size);
 }
 
-#define INSTANTIATE_LAUNCH_BIAS_RELU(T) \
-    template void launch_bias_relu<T>(T*, const T*, int, int, cudaStream_t);
-
-INSTANTIATE_LAUNCH_BIAS_RELU(float)
+template void launch_bias_relu<float>(float*, const float*, int, int, cudaStream_t);
 #ifdef BF16_AVAILABLE
-INSTANTIATE_LAUNCH_BIAS_RELU(__nv_bfloat16)
+template void launch_bias_relu<__nv_bfloat16>(__nv_bfloat16*,
+                                              const __nv_bfloat16*,
+                                              int,
+                                              int,
+                                              cudaStream_t);
 #endif
-INSTANTIATE_LAUNCH_BIAS_RELU(__half)
+template void launch_bias_relu<__half>(__half*, const __half*, int, int, cudaStream_t);

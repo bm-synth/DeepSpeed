@@ -192,14 +192,26 @@ void launch_fused_ln(T* output,
     }
 }
 
-#define INSTANTIATE_FUSED_LN(T) \
-    template void launch_fused_ln(T*, const T*, const T*, const T*, float, int, int, cudaStream_t);
-
-INSTANTIATE_FUSED_LN(__half);
+template void launch_fused_ln(__half*,
+                              const __half*,
+                              const __half*,
+                              const __half*,
+                              float,
+                              int,
+                              int,
+                              cudaStream_t);
 #ifdef BF16_AVAILABLE
-INSTANTIATE_FUSED_LN(__nv_bfloat16);
+template void launch_fused_ln(__nv_bfloat16*,
+                              const __nv_bfloat16*,
+                              const __nv_bfloat16*,
+                              const __nv_bfloat16*,
+                              float,
+                              int,
+                              int,
+                              cudaStream_t);
 #endif
-INSTANTIATE_FUSED_LN(float);
+template void
+launch_fused_ln(float*, const float*, const float*, const float*, float, int, int, cudaStream_t);
 
 /*
 Fused resiual + bias + layer norm implementation. Assumes elems_per_row % 8
@@ -488,9 +500,29 @@ void launch_fused_residual_ln_store_pre_ln_res(T* norm_output,
     template void launch_fused_residual_ln<T>( \
         T*, const T*, const T*, const T*, const T*, const T*, float, int, int, cudaStream_t);
 
-#define INSTANTIATE_PRE_LN_RES(T)                               \
-    template void launch_fused_residual_ln_store_pre_ln_res<T>( \
-        T*, T*, const T*, const T*, const T*, const T*, const T*, float, int, int, cudaStream_t);
+#ifdef BF16_AVAILABLE
+template void launch_fused_residual_ln(__nv_bfloat16*,
+                                       const __nv_bfloat16*,
+                                       const __nv_bfloat16*,
+                                       const __nv_bfloat16*,
+                                       const __nv_bfloat16*,
+                                       const __nv_bfloat16*,
+                                       float,
+                                       int,
+                                       int,
+                                       cudaStream_t);
+#endif
+
+template void launch_fused_residual_ln(float*,
+                                       const float*,
+                                       const float*,
+                                       const float*,
+                                       const float*,
+                                       const float*,
+                                       float,
+                                       int,
+                                       int,
+                                       cudaStream_t);
 
 // Store specializations
 template void launch_fused_residual_ln_store_pre_ln_res(__half*,
@@ -504,6 +536,20 @@ template void launch_fused_residual_ln_store_pre_ln_res(__half*,
                                                         int,
                                                         int,
                                                         cudaStream_t);
+
+#ifdef BF16_AVAILABLE
+template void launch_fused_residual_ln_store_pre_ln_res(__nv_bfloat16*,
+                                                        __nv_bfloat16*,
+                                                        const __nv_bfloat16*,
+                                                        const __nv_bfloat16*,
+                                                        const __nv_bfloat16*,
+                                                        const __nv_bfloat16*,
+                                                        const __nv_bfloat16*,
+                                                        float,
+                                                        int,
+                                                        int,
+                                                        cudaStream_t);
+#endif
 
 template void launch_fused_residual_ln_store_pre_ln_res(float*,
                                                         float*,
