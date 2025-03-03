@@ -3,9 +3,10 @@ import torch
 import pytest
 import deepspeed
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
+from deepspeed.accelerator import get_accelerator
 
 from utils import setup_serial_env
-from unit.common import DistributedTest
+from unit.common import DistributedTest, preferred_dtype
 
 
 class DanglingBias(torch.nn.Linear):
@@ -114,15 +115,16 @@ config = {
             "lr": 0.00015
         }
     },
-    "fp16": {
-        "enabled": True,
-        "loss_scale": 138.
-    },
     "zero_optimization": {
         "stage": 3,
         "stage3_param_persistence_threshold": 1,
     }
 }
+
+if get_accelerator().is_fp16_supported():
+    config["fp16"] = {"enabled": True, "loss_scale": 138.}
+elif get_accelerator().is_bf16_supported():
+    config["bf16"] = {"enabled": True}
 
 
 class TestReturnParam(DistributedTest):
@@ -137,7 +139,7 @@ class TestReturnParam(DistributedTest):
         engine, _, _, _ = deepspeed.initialize(args=args, model=net, model_parameters=net.parameters(), config=config)
 
         for _ in range(5):
-            input = torch.rand(net.dim).to(engine.device).half()
+            input = torch.rand(net.dim).to(engine.device).to(preferred_dtype())
             loss = engine(input)
             engine.backward(loss)
             engine.step()
@@ -153,7 +155,7 @@ class TestReturnParam(DistributedTest):
         engine, _, _, _ = deepspeed.initialize(args=args, model=net, model_parameters=net.parameters(), config=config)
 
         for _ in range(5):
-            input = torch.rand(net.dim).to(engine.device).half()
+            input = torch.rand(net.dim).to(engine.device).to(preferred_dtype())
             loss = engine(input)
             assert len(net._external_params) == 1
             assert len(net.dangler._external_params) == 0
@@ -171,7 +173,7 @@ class TestReturnParam(DistributedTest):
         engine, _, _, _ = deepspeed.initialize(args=args, model=net, model_parameters=net.parameters(), config=config)
 
         for _ in range(1):
-            input = torch.rand(net.dim).to(engine.device).half()
+            input = torch.rand(net.dim).to(engine.device).to(preferred_dtype())
             loss = engine(input)
             if loss is not None:
                 if isinstance(loss, dict):

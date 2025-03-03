@@ -304,7 +304,7 @@ class TestZeroDtypeCocktail(DistributedTest):
             if not get_accelerator().is_fp16_supported():
                 pytest.skip("fp16 is not supported")
 
-        type_str = {torch.float16: "fp16", torch.bfloat16: "bf16"}
+        type_str = {torch.float16: "fp16", torch.bfloat16: "bfp16"}
 
         config_dict = {
             "train_micro_batch_size_per_gpu": 2,

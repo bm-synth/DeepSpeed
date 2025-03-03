@@ -18,6 +18,7 @@ from deepspeed.ops.adam import FusedAdam
 from deepspeed.runtime.lr_schedules import WARMUP_LR, WarmupLR
 from deepspeed.runtime.config import ADAM_OPTIMIZER
 from deepspeed.runtime.utils import see_memory_usage, required_torch_version
+from deepspeed.accelerator import get_accelerator
 
 
 @pytest.mark.parametrize('zero_stage', [0, 3])
@@ -119,6 +120,9 @@ class TestOptimizerImplementation(DistributedTest):
     world_size = 1
 
     def test(self, optimizer_extension, model_dtype, grad_accum_dtype):
+        if not get_accelerator().is_fp16_supported():
+            if model_dtype == 'fp16' or grad_accum_dtype == 'fp16':
+                pytest.skip("fp16 is not supported")
         if optimizer_extension == 'zero1':
             zero_stage = 1
         elif optimizer_extension == 'zero2':

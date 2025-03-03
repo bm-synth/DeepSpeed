@@ -155,6 +155,8 @@ class TestAdamwFP16Basic(DistributedTest):
     world_size = 1
 
     def test(self):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         config_dict = {"train_batch_size": 1, "steps_per_print": 1, "fp16": {"enabled": True}}
         hidden_dim = 10
 
@@ -172,6 +174,8 @@ class TestFP16OptimizerForMoE(DistributedTest):
     world_size = 2
 
     def test_unfused_gradnorm(self, monkeypatch):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
@@ -200,6 +204,8 @@ class TestFP16OptimizerForMoE(DistributedTest):
             engine.step()
 
     def test_fused_gradnorm(self, monkeypatch):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
@@ -234,6 +240,8 @@ class TestFP16OptimizerForMoE(DistributedTest):
     @pytest.mark.skipif(not deepspeed.ops.__compatible_ops__[FusedLambBuilder.NAME],
                         reason="FusedLambBuilder has not been implemented on this system.")
     def test_lamb_gradnorm(self, monkeypatch, fused_lamb_legacy: bool):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         if not required_torch_version(min_version=1.8):
             pytest.skip("DeepSpeed MoE tests need torch 1.8 or higher to run correctly")
 
@@ -278,6 +286,8 @@ class TestAdamwFP16EmptyGrad(DistributedTest):
     world_size = 1
 
     def test(self):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         config_dict = {"train_batch_size": 1, "steps_per_print": 1, "fp16": {"enabled": True}}
         hidden_dim = 10
 
@@ -478,6 +488,8 @@ class TestAmp(DistributedTest):
     world_size = 2
 
     def test_adam_basic(self):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         config_dict = {"train_batch_size": 2, "steps_per_print": 1, "amp": {"enabled": True}}
         hidden_dim = 10
 
@@ -548,6 +560,8 @@ class TestAmp(DistributedTest):
             model.step()
 
     def test_adam_O2_empty_grad(self):
+        if not get_accelerator().is_fp16_supported():
+            pytest.skip("fp16 is not supported")
         config_dict = {
             "train_batch_size": 2,
             "steps_per_print": 1,
