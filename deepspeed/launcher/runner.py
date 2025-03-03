@@ -262,31 +262,6 @@ def _stable_remove_duplicates(data):
     return new_list
 
 
-def parse_node_config(node_config: str) -> Tuple[str, List[int]]:
-    SLOT_LIST_START = ':'
-    SLOT_SEP = ','
-
-    if SLOT_LIST_START not in node_config:
-        return node_config, []
-
-    hostname, slots = node_config.split(SLOT_LIST_START)
-    slots = [int(x) for x in slots.split(SLOT_SEP)]
-
-    return hostname, slots
-
-
-def parse_node_config_list(node_config_list: List[str]) -> Dict[str, List[int]]:
-    NODE_SEP = '@'
-
-    node_configs = defaultdict(list)
-
-    for node_config in node_config_list.split(NODE_SEP):
-        hostname, slots = parse_node_config(node_config)
-        node_configs[hostname] += slots
-
-    return {k: sorted(list(set(v))) for k, v in node_configs.items()}
-
-
 def parse_resource_filter(host_info, include_str="", exclude_str=""):
     '''Parse an inclusion or exclusion string and filter a hostfile dictionary.
 
@@ -449,7 +424,9 @@ def main(args=None):
     if not multi_node_exec and args.num_nodes > 1:
         raise ValueError("Num nodes is >1 but no extra nodes available via hostfile")
 
-    active_resources = parse_inclusion_exclusion(resource_pool, args.include, args.exclude)
+    active_resources = parse_inclusion_exclusion(resource_pool,
+                                                 args.include,
+                                                 args.exclude)
     env = os.environ.copy()
 
     # validate that passwordless-ssh is workly properly with this hostfile
