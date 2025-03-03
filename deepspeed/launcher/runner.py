@@ -33,7 +33,7 @@ from .constants import TORCH_DISTRIBUTED_DEFAULT_PORT, \
 from ..utils import logger
 
 DLTS_HOSTFILE = "/job/hostfile"
-EXPORT_ENVS = ["NCCL", "PYTHON", "MV2", 'UCX']
+EXPORT_ENVS = ["NCCL", "PYTHON", "MV2", "UCX"]
 DEEPSPEED_ENVIRONMENT_NAME = ".deepspeed_env"
 DEEPSPEED_ENVIRONMENT_PATHS = [os.path.expanduser("~"), '.']
 PDSH_MAX_FAN_OUT = 1024
@@ -116,6 +116,22 @@ def parse_args(args=None):
                         type=str,
                         help="(optional) pass launcher specific arguments as a "
                         "single quoted argument.")
+
+    parser.add_argument("--module",
+                        action="store_true",
+                        help="Change each process to interpret the launch "
+                        "script as a Python module, executing with the same "
+                        "behavior as 'python -m'.")
+
+    parser.add_argument("--no_python",
+                        action="store_true",
+                        help="Skip prepending the training script with "
+                        "'python' - just execute it directly.")
+
+    parser.add_argument("--no_local_rank",
+                        action="store_true",
+                        help="Do not pass local_rank as an argument when calling "
+                        "the user's training script.")
 
     parser.add_argument("--force_multi",
                         action="store_true",
@@ -480,26 +496,12 @@ def main(args=None):
             f"--master_addr={args.master_addr}",
             f"--master_port={args.master_port}"
         ]
-        if args.no_ssh:
-            deepspeed_launch.append(f"--node_rank={args.node_rank}")
         if args.no_python:
             deepspeed_launch.append("--no_python")
         if args.module:
             deepspeed_launch.append("--module")
         if args.no_local_rank:
             deepspeed_launch.append("--no_local_rank")
-        if args.save_pid:
-            deepspeed_launch += ["--save_pid", f"{os.getpid()}"]
-        if args.enable_each_rank_log:
-            deepspeed_launch.append(f"--enable_each_rank_log={args.enable_each_rank_log}")
-        if args.elastic_training:
-            deepspeed_launch.append("--enable_elastic_training")
-            deepspeed_launch.append(f"--max_elastic_nodes={args.max_elastic_nodes}")
-            deepspeed_launch.append(f"--min_elastic_nodes={args.min_elastic_nodes}")
-        if args.bind_cores_to_rank:
-            deepspeed_launch.append("--bind_cores_to_rank")
-        if args.bind_core_list is not None:
-            deepspeed_launch.append(f"--bind_core_list={args.bind_core_list}")
         cmd = deepspeed_launch + [args.user_script] + args.user_args
     else:
         args.launcher = args.launcher.lower()

@@ -99,6 +99,22 @@ def parse_args():
                         "numbers and range. i.e. 1,3-5,7 => [1,3,4,5,7].  When not "
                         "specified, all cores on system would be used rank binding")
 
+    parser.add_argument("--module",
+                        action="store_true",
+                        help="Change each process to interpret the launch "
+                        "script as a Python module, executing with the same "
+                        "behavior as 'python -m'.")
+
+    parser.add_argument("--no_python",
+                        action="store_true",
+                        help="Skip prepending the training script with "
+                        "'python' - just execute it directly.")
+
+    parser.add_argument("--no_local_rank",
+                        action="store_true",
+                        help="Do not pass local_rank as an argument when calling "
+                        "the user's training script.")
+
     # positional
     parser.add_argument("training_script",
                         type=str,
@@ -172,33 +188,6 @@ def main():
     current_env["CROSS_SIZE"] = str(args.nnodes)
     current_env["LOCAL_SIZE"] = str(num_local_procs)
 
-    if args.save_pid:
-        print(f"launcher pid: {os.getpid()}")
-
-    pid_file = None
-    if args.save_pid:
-        launcher_pid = os.getpid()
-        pid_file = os.path.join(PID_FILE_BASEPATH, f"{args.save_pid}.deepspeed")
-        assert not os.path.isfile(pid_file), "pid file exists but shouldn't"
-        with open(pid_file, 'w') as fd:
-            fd.write(f"{launcher_pid}")
-
-    if not is_torch_elastic_compatible():
-        if args.enable_elastic_training:
-            logger.info(f"Disabling elastic training support as \
-                    PyTorch version should be greater than 1.11.x")
-            args.enable_elastic_training = False
-
-    if os.path.exists(DLTS_POD_ENV_PATH):
-        with open(DLTS_POD_ENV_PATH) as file:
-            lines = file.readlines()
-            lines = [line.rstrip() for line in lines]
-            for line in lines:
-                if line.startswith('export FC_TASKROLE_NAME') or line.startswith('export FC_TASK_INDEX'):
-                    key_val = line.split()[1]
-                    key, val = key_val.split('=')
-                    current_env[key] = val
-
     processes = []
     cmd = []
     for local_rank in range(0, num_local_procs):
@@ -208,10 +197,20 @@ def main():
         current_env["LOCAL_RANK"] = str(local_rank)
 
         # spawn the processes
-        cmd = [sys.executable,
-               "-u",
-               args.training_script,
-               f"--local_rank={local_rank}"] + args.training_script_args
+        cmd = []
+        if not args.no_python:
+            cmd = [sys.executable, "-u"]
+            if args.module:
+                cmd.append("-m")
+        else:
+            if args.module:
+                raise ValueError("Don't use both the '--no_python' flag"
+                                 " and the '--module' flag at the same time.")
+        cmd.append(args.training_script)
+        # A user may not want to pass local_rank as a keyword arg so we make this optional.
+        if not args.no_local_rank:
+            cmd.append(f"--local_rank={local_rank}")
+        cmd += args.training_script_args
 
         process = subprocess.Popen(cmd, env=current_env)
         processes.append(process)
