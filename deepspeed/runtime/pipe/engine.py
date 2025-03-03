@@ -1333,7 +1333,9 @@ class PipelineEngine(DeepSpeedEngine):
         assert self._curr_ckpt_path is not None, \
             "PipelineEngine expects module_state_dict() to be called from save_checkpoint()"
 
-        self.module.save_state_dict(self._curr_ckpt_path, checkpoint_engine=self.checkpoint_engine)
+        self.module.save_state_dict(self._curr_ckpt_path,
+                                    checkpoint_engine=self.checkpoint_engine,
+                                    exclude_frozen_params=exclude_frozen_parameters)
         return None
 
     def load_module_state_dict(self, checkpoint, strict=True, custom_load_fn=None):
