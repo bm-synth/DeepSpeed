@@ -57,6 +57,7 @@ def get_valid_gpus(batch_size, micro_batches, min_valid_gpus, max_valid_gpus):
                     valid_gpus.append(i)
     valid_gpus = set(valid_gpus)
     valid_gpus = sorted(list(valid_gpus))
+    logger.info(f"Valid GPUs: {valid_gpus}")
     return valid_gpus
 
 
