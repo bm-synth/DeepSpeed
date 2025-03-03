@@ -1121,17 +1121,23 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
 
             tensor.div_(dist.get_world_size(group=self.dp_process_group) / float(self.sequence_parallel_size))
 
-            buckets = {}
+            tensor_to_reduce = tensor
+            if self.communication_data_type != tensor.dtype:
+                tensor_to_reduce = tensor.to(self.communication_data_type)
+
+            async_handles = []
             for i, (dst, bucket_offset, numel) in enumerate(rank_and_offsets):
-                grad_slice = tensor.narrow(0, int(bucket_offset), int(numel))
-                bucket_key = real_dp_process_group[i] if self.use_multi_rank_bucket_allreduce else (
-                    dst, real_dp_process_group[i])
-                if bucket_key not in buckets:
-                    buckets[bucket_key] = []
-                if self.use_multi_rank_bucket_allreduce:
-                    buckets[bucket_key].append((dst, grad_slice))
-                else:
-                    buckets[bucket_key].append(grad_slice)
+                grad_slice = tensor_to_reduce.narrow(0, int(bucket_offset), int(numel))
+                # if dist.get_rank() == 0:
+                #     print(f"Rank {dist.get_rank()} rank offset id {i} real dp size {dist.get_world_size(group=real_dp_process_group[i])} and dst: {dst}")
+                # dist.barrier()
+                #dist.barrier()
+                dst_rank = dist.get_global_rank(real_dp_process_group[i], dst)
+                async_handle = dist.reduce(grad_slice,
+                                           dst=dst_rank,
+                                           group=real_dp_process_group[i],
+                                           async_op=True)
+                async_handles.append(async_handle)
 
             for bucket_key in buckets:
                 if self.use_multi_rank_bucket_allreduce:
@@ -1146,6 +1152,9 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                                              rank=dst,
                                              divide=False,
                                              process_group=process_group)
+
+            if self.communication_data_type != tensor.dtype:
+                tensor.copy_(tensor_to_reduce)
 
     ##############################################################################
     ############################# CPU Offload Methods#############################
@@ -1488,7 +1497,8 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
                 param.grad = torch.zeros_like(param)
 
     ######################Reduction Related Methods##############################
-    def allreduce_bucket(self, bucket, rank=None, log=None, divide=True, process_group=None):
+    def allreduce_bucket(self, bucket, rank=None, log=None):
+        rank = None
         tensor = self.flatten(bucket)
 
         process_group = self.dp_process_group if process_group is None else process_group
