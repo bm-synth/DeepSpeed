@@ -22,9 +22,9 @@ from deepspeed.checkpoint.utils import get_zero_ckpt_name_for_rank
 
 import deepspeed
 
-from deepspeed.runtime.utils import see_memory_usage, get_ma_status, DummyOptim
-from deepspeed.runtime.zero.stage2 import FP16_DeepSpeedZeroOptimizer
-from deepspeed.runtime.zero.stage1 import FP16_DeepSpeedZeroOptimizer_Stage1
+from deepspeed.runtime.utils import see_memory_usage, DummyOptim
+from .zero.offload_config import OffloadDeviceEnum
+from deepspeed.runtime.zero.stage_1_and_2 import DeepSpeedZeroOptimizer
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
 from deepspeed.runtime.zero.utils import is_zero_supported_optimizer, ZeRORuntimeException
 from deepspeed.runtime.zero.parameter_offload import DeepSpeedZeRoOffload
@@ -597,9 +597,6 @@ class DeepSpeedEngine(Module):
         if self._config.zero_config.offload_optimizer is not None:
             return self._config.zero_config.offload_optimizer.device == OffloadDeviceEnum.cpu
         return False
-
-    def zero_partial_offload(self):
-        return getattr(self._config.zero_config.offload_optimizer, "ratio", 1.0)
 
     def zero_sub_group_size(self):
         return self._config.zero_config.sub_group_size
