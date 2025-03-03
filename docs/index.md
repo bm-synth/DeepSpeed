@@ -15,16 +15,20 @@ title: "Latest News"
 * [2024/07] [DeepSpeed Universal Checkpointing: Efficient and Flexible Checkpointing for Large Scale Distributed Training](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-ucp/README.md)[[日本語](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-ucp/japanese/README.md)]
 * [2024/03] [DeepSpeed-FP6: The Power of FP6-Centric Serving for Large Language Models](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md) [[English](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)] [[中文](https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README-Chinese.md)]
 
-<!-- NOTE: we must use html for news items otherwise links will be broken in the 'more news' section -->
+DeepSpeed is an important part of Microsoft’s new
+[AI at Scale](https://www.microsoft.com/en-us/research/project/ai-at-scale/)
+initiative to enable next-generation AI capabilities at scale, where you can find more
+information [here](https://innovation.microsoft.com/en-us/exploring-ai-at-scale).
 
-<details>
- <summary>More news</summary>
- <ul>
-  <li>[2024/01] <a href="https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-fastgen/2024-01-19">DeepSpeed-FastGen: Introducting Mixtral, Phi-2, and Falcon support with major performance and feature enhancements.</a></li>
-
-  <li>[2023/11] <a href="https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/intel-inference/README.md">Llama 2 Inference on 4th Gen Intel® Xeon® Scalable Processor with DeepSpeed</a> [<a href="https://www.intel.com/content/www/us/en/developer/articles/technical/xllama-2-on-xeon-scalable-processor-with-deepspeed.html">Intel version</a>]</li>
-
-  <li>[2023/11] <a href="https://github.com/deepspeedai/DeepSpeed/tree/master/blogs/deepspeed-offloadpp/README.md">DeepSpeed ZeRO-Offload++: 6x Higher Training Throughput via Collaborative CPU/GPU Twin-Flow</a></li>
+# What's New?
+{% assign news = site.posts | where: "sneak_preview", "false" %}
+{% for post in news limit:5 %}
+  {% if post.link %}
+  * [{{ post.date | date: "%Y/%m/%d"  }}] [{{ post.title }}]({{ post.link }}) {% if post.new_post %} <span style="color:dodgerblue">**NEW!**</span> {% endif %}
+  {% else %}
+  * [{{ post.date | date: "%Y/%m/%d"}}] [{{ post.title }}]({{ post.url }}) {% if post.new_post %} <span style="color:dodgerblue">**NEW!**</span> {% endif %}
+  {% endif %}
+{% endfor %}
 
 
  </ul>
