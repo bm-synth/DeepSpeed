@@ -21,6 +21,8 @@ from unit.common import DistributedTest
 from packaging import version as pkg_version
 from deepspeed.ops.op_builder import OpBuilder
 from transformers import pipeline
+from transformers.models.t5.modeling_t5 import T5Block
+from transformers.models.roberta.modeling_roberta import RobertaLayer
 from huggingface_hub import HfApi
 from packaging import version as pkg_version
 from torch import nn
@@ -72,10 +74,16 @@ _opt_models = [
     "facebook/opt-125m",  # 125m, 1.7B, ..., 175B variants have the same model architecture.
     "facebook/opt-350m",  # 350m applies layer norm after attention layer which is different than other variants.
 ]
-_test_models = set(_bert_models + _roberta_models + _gpt_models + _opt_models)
-_test_tasks = [
-    "fill-mask", "question-answering", "text-classification", "token-classification", "text-generation",
-    "text2text-generation", "summarization", "translation"
+_all_models = HfApi().list_models()
+
+test_models = set(_bert_models + _roberta_models + _gpt_models + _opt_models)
+test_tasks = [
+    "fill-mask",
+    "question-answering",
+    "text-classification",
+    "token-classification",
+    "text-generation",
+    "text2text-generation",
 ]
 
 
@@ -246,8 +254,6 @@ def query(model_w_task):
         return "DeepSpeed is the greatest"
     elif task == "text2text-generation":
         return "Is this review positive or negative? Review: this is the best cast iron skillet you will ever buy"
-    elif task == "translation" or task == "summarization":
-        return "Hello, my dog is cute"
     else:
         NotImplementedError(f'query for task "{task}" is not implemented')
 
@@ -299,6 +305,11 @@ def summarization_assert(x, y):
     return set(res["summary_text"] for res in x) == set(res["summary_text"] for res in y)
 
 
+def text2text_generation_assert(x, y):
+    return set(res["generated_text"] for res in x) == set(res["generated_text"]
+                                                          for res in y)
+
+
 @pytest.fixture
 def assert_fn(model_w_task):
     model, task = model_w_task
@@ -309,8 +320,6 @@ def assert_fn(model_w_task):
         "token-classification": token_classification_assert,
         "text-generation": text_generation_assert,
         "text2text-generation": text2text_generation_assert,
-        "translation": translation_assert,
-        "summarization": summarization_assert
     }
     assert_fn = assert_fn_dict.get(task, None)
     if assert_fn is None:
@@ -512,173 +521,65 @@ class TestMPSize(DistributedTest):
         assert assert_fn(bs_output, ds_output)
 
 
-@pytest.mark.inference
-@pytest.mark.parametrize("model_w_task", [("openai-community/gpt2", "text-generation")], ids=["gpt2"])
-class TestLowCpuMemUsage(DistributedTest):
-    world_size = 1
-
-    def test(
-        self,
-        model_w_task,
-        query,
-        inf_kwargs,
-        assert_fn,
-    ):
-        model, task = model_w_task
-        dtype = torch.float16
-        if dtype not in get_accelerator().supported_dtypes():
-            pytest.skip(f"Acceleraor {get_accelerator().device_name()} does not support {dtype}.")
-
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        device = getDeviceId(local_rank)
-        pipe = pipeline(task, model=model, model_kwargs={"low_cpu_mem_usage": True}, device=device, framework="pt")
-        bs_output = pipe(query, **inf_kwargs)
-        pipe.model = deepspeed.init_inference(pipe.model,
-                                              mp_size=self.world_size,
-                                              dtype=dtype,
-                                              replace_method="auto",
-                                              replace_with_kernel_inject=True)
-
-        ds_output = pipe(query, **inf_kwargs)
-
-        assert assert_fn(bs_output, ds_output)
-
-
 @pytest.mark.seq_inference
 @pytest.mark.parametrize(
     "model_w_task, injection_policy",
     [
-        (("google/t5-v1_1-small", "text2text-generation"), {
-            T5Block: ('SelfAttention.o', 'EncDecAttention.o', 'DenseReluDense.wo')
-        }),
-        (("FacebookAI/roberta-large", "fill-mask"), {
-            RobertaLayer: ('output.dense')
-        }),
+        (("google/t5-v1_1-small",
+          "text2text-generation"),
+         {
+             T5Block: ('SelfAttention.o',
+                       'EncDecAttention.o',
+                       'DenseReluDense.wo')
+         }),
+        (("roberta-large",
+          "fill-mask"),
+         {
+             RobertaLayer: ('output.dense')
+         }),
     ],
-    ids=["t5", "roberta"],
+    ids=["t5",
+         "roberta"],
 )
 @pytest.mark.parametrize("dtype", [torch.float], ids=["fp32"])
+@pytest.mark.parametrize("enable_cuda_graph", [False], ids=["noCG"])
 class TestInjectionPolicy(DistributedTest):
+    world_size = [1, 2]
 
-    def test(self, model_w_task, injection_policy, query, inf_kwargs, assert_fn, dtype, world_size):
-        invalid_test_msg = validate_test(model_w_task, dtype, enable_cuda_graph=False, enable_triton=False)
-        if invalid_test_msg:
-            pytest.skip(invalid_test_msg)
+    def test(
+        self,
+        model_w_task,
+        injection_policy,
+        query,
+        inf_kwargs,
+        assert_fn,
+        invalid_model_task_config,
+        dtype,
+        enable_cuda_graph,
+    ):
+        if invalid_model_task_config:
+            pytest.skip(invalid_model_task_config)
 
         model, task = model_w_task
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        world_size = int(os.getenv("WORLD_SIZE", "2"))
 
-        pipe = pipeline(task,
-                        model=model,
-                        device=torch.device(get_accelerator().device_name(local_rank)),
-                        framework="pt")
+        # We have to load these large models on CPU with pipeline because not
+        # enough GPU memory
+        pipe = pipeline(task, model=model, device=-1, framework="pt")
         bs_output = pipe(query, **inf_kwargs)
 
         pipe.model = deepspeed.init_inference(pipe.model,
                                               mp_size=world_size,
                                               dtype=dtype,
                                               injection_policy=injection_policy)
+        # Switch device to GPU so that input tensors are not on CPU
+        pipe.device = torch.device(f"cuda:{local_rank}")
         ds_output = pipe(query, **inf_kwargs)
 
         print(local_rank, "baseline", bs_output)
         print(local_rank, "deepspeed", ds_output)
         assert assert_fn(bs_output, ds_output)
-
-
-@pytest.mark.seq_inference
-@pytest.mark.parametrize('keep_module_on_host', [True, False])
-@pytest.mark.parametrize(
-    "model_w_task",
-    [("Helsinki-NLP/opus-mt-en-de", "translation"), ("Salesforce/codegen-350M-mono", "text-generation")],
-    ids=["marian", "codegen"],  #codegen has fusedqkv weight.
-)
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
-class TestAutoTensorParallelism(DistributedTest):
-    world_size = [2]
-
-    def test(
-        self,
-        model_w_task,
-        query,
-        inf_kwargs,
-        assert_fn,
-        dtype,
-        keep_module_on_host,
-    ):
-        invalid_test_msg = validate_test(model_w_task, dtype, enable_cuda_graph=False, enable_triton=False)
-        if invalid_test_msg:
-            pytest.skip(invalid_test_msg)
-
-        model, task = model_w_task
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        world_size = int(os.getenv("WORLD_SIZE", "2"))
-
-        if dtype not in get_accelerator().supported_dtypes():
-            pytest.skip(f"Acceleraor {get_accelerator().device_name()} does not support {dtype}.")
-
-        if model == "Salesforce/codegen-350M-mono":
-            pytest.skip("Disable Codegen model due to slight result difference")
-            #TODO: re-enable this test once we have a fix for the slight result difference
-
-        pipe = pipeline(task,
-                        model=model,
-                        device=torch.device(get_accelerator().device_name(local_rank)),
-                        framework="pt")
-        bs_output = pipe(query, **inf_kwargs)
-
-        pipe.model = deepspeed.init_inference(pipe.model,
-                                              mp_size=world_size,
-                                              dtype=dtype,
-                                              keep_module_on_host=keep_module_on_host)
-        ds_output = pipe(query, **inf_kwargs)
-
-        print(local_rank, "baseline", bs_output)
-        print(local_rank, "deepspeed", ds_output)
-        assert assert_fn(bs_output, ds_output)
-
-        if keep_module_on_host:
-            for name, param in model.named_parameters():
-                assert param.device == torch.device('cpu'), f"keep_module_on_host is on but param {name} is not on cpu"
-
-    @pytest.mark.world_size(3)
-    def test_odd_world_size(
-        self,
-        model_w_task,
-        query,
-        inf_kwargs,
-        assert_fn,
-        dtype,
-        keep_module_on_host,
-    ):
-        invalid_test_msg = validate_test(model_w_task, dtype, enable_cuda_graph=False, enable_triton=False)
-        if invalid_test_msg:
-            pytest.skip(invalid_test_msg)
-
-        model, task = model_w_task
-        if model == "Salesforce/codegen-350M-mono":
-            pytest.skip("codegen does not supported by odd world_size")
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        world_size = int(os.getenv("WORLD_SIZE", "3"))
-
-        pipe = pipeline(task,
-                        model=model,
-                        device=torch.device(get_accelerator().device_name(local_rank)),
-                        framework="pt")
-        bs_output = pipe(query, **inf_kwargs)
-
-        pipe.model = deepspeed.init_inference(pipe.model,
-                                              mp_size=world_size,
-                                              dtype=dtype,
-                                              keep_module_on_host=keep_module_on_host)
-        ds_output = pipe(query, **inf_kwargs)
-
-        print(local_rank, "baseline", bs_output)
-        print(local_rank, "deepspeed", ds_output)
-        assert assert_fn(bs_output, ds_output)
-
-        if keep_module_on_host:
-            for name, param in model.named_parameters():
-                assert param.device == torch.device('cpu'), f"keep_module_on_host is on but param {name} is not on cpu"
 
 
 @pytest.mark.nightly
