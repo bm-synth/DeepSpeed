@@ -43,6 +43,9 @@ collections:
       - gan.md
       - lrrt.md
       - megatron.md
+      - mixture-of-experts.md
+      - mixture-of-experts-nlg.md
+      - mixture-of-experts-inference.md
       - one-cycle.md
       - onebit-adam.md
       - zero-one-adam.md
@@ -77,8 +80,23 @@ defaults:
       path: ""
       type: posts
     values:
-      layout: single
+      layout: single-full
+      author_profile: false
+      read_time: false
+      comments: false
       share: true
+      related: false
+      toc: true
+      toc_label: "Contents"
+      toc_sticky: true
+      show_date: true
+  - scope:
+      path: ""
+      type: tutorials
+    values:
+      layout: single
+      toc_sticky: true
+
 
 analytics:
   provider: "google-gtag"

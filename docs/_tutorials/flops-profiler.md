@@ -1,6 +1,7 @@
 ---
 title: "Flops Profiler"
 excerpt: "Measure the parameters, latency, and floating-point operations of your model"
+tags: profiling performance-tuning
 ---
 
 In this tutorial, we introduce the DeepSpeed flops profiler and provide examples of its usage.

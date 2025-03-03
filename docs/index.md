@@ -4,9 +4,7 @@ toc: true
 toc_label: "Contents"
 title: "Latest News"
 
-<div align="center">
- <img src="/assets/images/DeepSpeed_light_transparent.svg" width="500px">
-</div>
+---
 
 ## Latest News
 * [2022/03/07] [Maximizing Communication Efficiency for Large-scale Training via 0/1 Adam](https://www.deepspeed.ai/tutorials/zero-one-adam/)
@@ -131,7 +129,7 @@ overview](/features/) for descriptions and usage.
   * Integration with Megatron-LM
 * [Pipeline Parallelism](https://www.deepspeed.ai/tutorials/pipeline/)
   * 3D Parallelism
-* [The Zero Redundancy Optimizer (ZeRO)](https://www.deepspeed.ai/tutorials/zero/)
+* [The Zero Redundancy Optimizer](https://www.deepspeed.ai/tutorials/zero/)
   * Optimizer State and Gradient Partitioning
   * Activation Partitioning
   * Constant Buffer Optimization

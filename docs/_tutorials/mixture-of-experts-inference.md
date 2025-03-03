@@ -23,7 +23,9 @@ In this part, we elaborate the usage of MoE inference support in the DeepSpeed l
 
 ### Initializing for Inference
 
-For inference with DeepSpeed-MoE, use `init_inference` API to load the DeepSpeed MoE model for inference. Here, you can specify the model-parallelism/tensor-slicing degree (mp_size), expert parallelism degree (ep_size), and number of experts (moe_experts). We create various process groups based on minimum of the world\_size (total number of GPUs) and expert parallel size. By using this group, we can partition the experts among expert-parallel GPUs. If number of experts is lower than total number of GPUs, DeepSpeed-MoE leverages expert-slicing for partitioning the expert parameters between the expert-parallel GPUs. Furthermore, if the model has not been loaded with the appropriate checkpoint, you can also provide the checkpoint description using a `json` file or simply pass the `'checkpoint'` path to load the model. To inject the high-performance inference kernels, you can set `replace_with_kernel_inject` to True.
+First step to use DeepSpeed-MoE inferenece is to initialize the expert-parallel groups. To do so, one can use the group utility from DeepSpeed to initialize the group (`deepspeed.utils.groups.initialize`). This function creates the groups based on minimum of the world\_size (total number of GPUs) and expert size. By using this group, we can partition the experts among the expert-parallel GPUs. If number of experts is lower than total number of GPUs, DeepSpeed-MoE leverages expert-slicing for partitioning the expert parameters between the expert-parallel GPUs.
+
+For inference with DeepSpeed-MoE, use `init_inference` API to load the MoE model for inference. Here, you can specify the Model-parallelism/tensor-slicing (MP) degree, number of experts, and if the model has not been loaded with the appropriate checkpoint, you can also provide the checkpoint description using a `json` file or simply pass the `'checkpoint'` path to load the moddel. To inject the high-performance inference kernels, you can pass int the `replace_method` as `'auto'` and set the `replace_with_kernel_inject` to True.
 
 ```python
 
@@ -34,16 +36,20 @@ import torch.distributed as dist
 world_size = dist.get_world_size()
 expert_parallel_size = min(world_size, args.num_experts)
 
-# create the MoE model
-moe_model = get_model(model, ep_size=expert_parallel_size)
+# Initialize the expert-parallel group
+deepspeed.utils.groups.initialize(expert_parallel_size)
+
+# create the model
+model = get_model(model_provider)
 ...
 
 # Initialize the DeepSpeed-Inference engine
-ds_engine = deepspeed.init_inference(moe_model,
+ds_engine = deepspeed.init_inference(model,
                                      mp_size=tensor_slicing_size,
                                      dtype=torch.half,
                                      moe_experts=args.num_experts,
                                      checkpoint=args.checkpoint_path,
+                                     replace_method='auto',
                                      replace_with_kernel_inject=True,)
 model = ds_engine.module
 output = model('Input String')
@@ -54,7 +60,7 @@ output = model('Input String')
 Here, we show a text-generation example using an MoE model for which we can specify the model-parallel size and number of experts.
 DeepSpeed inference-engine takes care of creating the different parallelism groups using the tensor-slicing degree, number of experts, and the total number of GPUs used for running the MoE model. Regarding the expert parameters, we first use the expert-parallelism to assign each group of experts to one GPU. If number of GPUs is higher than number of experts, we use expert-slicing to partition each expert vertically/horizontally across the GPUs.
 
-Let's take a look at some of the parameters passed to run our example. Please refer to [DeepSpeed-Example](https://github.com/deepspeedai/Megatron-DeepSpeed/blob/main/examples_deepspeed/generate_text.sh) for a complete generate-text inference example.
+Let's take a look at some of the parameters passed to run our example. Please refer to [DeepSpeed-Example](https://github.com/microsoft/Megatron-DeepSpeed/blob/moe/examples/generate_text.sh) for a complete generate-text inference example.
 
 
 ```bash
@@ -66,7 +72,7 @@ generate_samples_gpt.py \
        --num-attention-heads 32 \
        --max-position-embeddings 1024 \
        --tokenizer-type GPT2BPETokenizer \
-       --load $checkpoint_path \
+       --load $checpoint_path \
        --fp16 \
        --ds-inference \
 ```
@@ -96,7 +102,7 @@ generate_samples_gpt.py \
        --num-attention-heads 16 \
        --max-position-embeddings 1024 \
        --tokenizer-type GPT2BPETokenizer \
-       --load $checkpoint_path \
+       --load $checpoint_path \
        --fp16 \
        --ds-inference \
 ```

@@ -6,7 +6,7 @@
    Typography
    ========================================================================== */
 
-$doc-font-size: 16 !default;
+$doc-font-size: 15 !default;
 
 /* paragraph indentation */
 $paragraph-indent: false !default; // true, false (default)
@@ -118,11 +118,6 @@ $masthead-link-color: $primary-color !default;
 $masthead-link-color-hover: mix(#000, $primary-color, 25%) !default;
 $navicon-link-color-hover: mix(#fff, $primary-color, 75%) !default;
 
-/* notices */
-$notice-background-mix: 80% !default;
-$code-notice-background-mix: 90% !default;
-
-
 /* syntax highlighting (base16) */
 $base00: #263238 !default;
 $base01: #2e3c43 !default;
@@ -149,7 +144,7 @@ $small: 600px !default;
 $medium: 768px !default;
 $medium-wide: 900px !default;
 $large: 1024px !default;
-$x-large: 1920px !default;
+$x-large: 1280x !default;
 $max-width: $x-large !default;
 
 /*
