@@ -598,6 +598,7 @@ class EltwiseMultiplicationTestNetwork_List(EltwiseMultiplicationTestNetwork_Dic
 @pytest.mark.parametrize("offload_optimizer", [True, False])
 @pytest.mark.parametrize("zero_grad", [True, False])
 @pytest.mark.parametrize("prefetching", [True, False])
+@pytest.mark.parametrize("reduce_scatter", [True, False])
 @pytest.mark.parametrize("model_class", [
     EltwiseMultiplicationTestNetwork_Dict, EltwiseMultiplicationTestNetwork_NamedTuple,
     EltwiseMultiplicationTestNetwork_namedtuple, EltwiseMultiplicationTestNetwork_Tuple,
@@ -652,6 +653,7 @@ class TestZero3ParamPartitioningBase(DistributedTest):
         offload_optimizer: bool,
         zero_grad: bool,
         prefetching: bool,
+        reduce_scatter: bool,
         model_class: EltwiseMultiplicationTestNetwork_Dict,
     ) -> None:
         if offload_optimizer and not contiguous_gradients:
@@ -670,7 +672,7 @@ class TestZero3ParamPartitioningBase(DistributedTest):
                 "stage3_param_persistence_threshold": param_persistence_threshold,
                 "contiguous_gradients": contiguous_gradients,
                 "stage3_prefetch_bucket_size": prefetch_bucket_size if prefetching else 0,
-                "reduce_scatter": reduce_scatter,
+                "reduce_scatter": reduce_scatter
             },
             "optimizer": {
                 "type": "Adam",
@@ -988,6 +990,7 @@ class TestZero3InitForParentWeightInitialization(DistributedTest):
 @pytest.mark.parametrize("offload_optimizer", [True, False])
 @pytest.mark.parametrize("zero_grad", [True, False])
 @pytest.mark.parametrize("prefetching", [True, False])
+@pytest.mark.parametrize("reduce_scatter", [True, False])
 @pytest.mark.parametrize("model_class", [
     EltwiseMultiplicationTestNetwork_Dict, EltwiseMultiplicationTestNetwork_NamedTuple,
     EltwiseMultiplicationTestNetwork_namedtuple, EltwiseMultiplicationTestNetwork_Tuple,
@@ -997,7 +1000,8 @@ class TestZero3ParamPartitioningBaseBF16(DistributedTest):
     world_size = 2
 
     def test(self, param_persistence_threshold: int, contiguous_gradients: bool, offload_optimizer: bool,
-             zero_grad: bool, prefetching: bool, model_class: EltwiseMultiplicationTestNetwork_Dict) -> None:
+             zero_grad: bool, prefetching: bool, reduce_scatter: bool,
+             model_class: EltwiseMultiplicationTestNetwork_Dict) -> None:
         if offload_optimizer and not contiguous_gradients:
             return
 
@@ -1014,7 +1018,7 @@ class TestZero3ParamPartitioningBaseBF16(DistributedTest):
                 "stage3_param_persistence_threshold": param_persistence_threshold,
                 "contiguous_gradients": contiguous_gradients,
                 "stage3_prefetch_bucket_size": prefetch_bucket_size if prefetching else 0,
-                "reduce_scatter": reduce_scatter,
+                "reduce_scatter": reduce_scatter
             },
             "optimizer": {
                 "type": "Adam",
