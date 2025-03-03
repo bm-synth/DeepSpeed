@@ -290,34 +290,6 @@ def free_param(param: Parameter) -> None:
     param.ds_status = ZeroParamStatus.NOT_AVAILABLE
 
 
-# https://stackoverflow.com/a/63851681/9201239
-def get_all_subclasses(cls):
-    subclass_list = []
-
-    def recurse(cl):
-        for subclass in cl.__subclasses__():
-            subclass_list.append(subclass)
-            recurse(subclass)
-
-    recurse(cls)
-
-    return set(subclass_list)
-
-
-@instrument_w_nvtx
-def free_param(param: Parameter) -> None:
-    """Free underlying storage of a parameter."""
-    assert not param.ds_active_sub_modules, param.ds_summary()
-    if get_accelerator().on_accelerator(param.data):
-        # need to make sure that we don't free the parameter while it is still
-        # being used for computation
-        if not get_accelerator().is_synchronized_device():
-            param.data.record_stream(get_accelerator().current_stream())
-    # param.data doesn't store anything meaningful in partitioned state
-    param.data = torch.empty(0, dtype=param.dtype, device=param.device)
-    param.ds_status = ZeroParamStatus.NOT_AVAILABLE
-
-
 reuse_buffers = False
 temp_contiguous_tensor = None
 empty_buffers = {}
@@ -494,11 +466,13 @@ class InsertPostInitMethodToModuleSubClasses(object):
                 return wrapper
 
             def _enable_class_apply(cls):
-                cls._old_apply_of_skip_init_hook = cls._apply
-                cls._apply = partition_after_empty_init(cls._apply)
+                if '_apply' in cls.__dict__:
+                    cls._old_apply_of_skip_init_hook = cls._apply
+                    cls._apply = partition_after_empty_init(cls._apply)
 
             def _disable_class_apply(cls):
-                cls._apply = cls._old_apply_of_skip_init_hook
+                if hasattr(cls, '_old_apply_of_skip_init_hook'):
+                    cls._apply = cls._old_apply_of_skip_init_hook
 
             # add hooks for to_empty: apply_(empty_like)
             for subclass in get_all_subclasses(torch.nn.modules.module.Module):
@@ -556,8 +530,9 @@ class InsertPostInitMethodToModuleSubClasses(object):
                 cls.__init__ = partition_after(cls.__init__)
 
         def _init_subclass(cls, **kwargs):
-            cls._old_init = cls.__init__
-            cls.__init__ = partition_after(cls.__init__)
+            if '__init__' in cls.__dict__:
+                cls._old_init = cls.__init__
+                cls.__init__ = partition_after(cls.__init__)
 
         # Replace .__init__() for all existing subclasses of torch.nn.Module recursively
         for subclass in get_all_subclasses(torch.nn.modules.module.Module):
@@ -597,7 +572,8 @@ class InsertPostInitMethodToModuleSubClasses(object):
         if self.patched:
 
             def _disable_class(cls):
-                cls.__init__ = cls._old_init
+                if hasattr(cls, '_old_init'):
+                    cls.__init__ = cls._old_init
 
             for subclass in get_all_subclasses(torch.nn.modules.module.Module):
                 _disable_class(subclass)
