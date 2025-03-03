@@ -351,7 +351,8 @@ def test_zero_allow_untested_optimizer(tmpdir):
     _test_zero_allow_untested_optimizer(args)
 
 
-def test_zero_empty_partition(tmpdir):
+@pytest.mark.parametrize("zero_stage", [1, 2])
+def test_zero_empty_partition(tmpdir, zero_stage):
     config_dict = {
         "train_batch_size": 3,
         "fp16": {
