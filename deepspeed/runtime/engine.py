@@ -70,27 +70,23 @@ except ImportError:
     APEX_INSTALLED = False
 
 
-def split_half_float_double_sparse(tensors):
-    device_type = get_accelerator().device_name()
-    supported_types = get_accelerator().supported_dtypes()
+def split_half_float_double_csr(tensors):
+    supported_types = [
+        "torch.cuda.HalfTensor",
+        "torch.cuda.FloatTensor",
+        "torch.cuda.DoubleTensor",
+        CSRTensor.type()
+    ]
 
     for t in tensors:
-        assert t.dtype in supported_types, f"attempting to reduce an unsupported grad type: {t.dtype}"
+        assert t.type() in supported_types, f"attempting to reduce an unsupported grad type: {t.type()}"
 
-    sparse_tensor_buckets, dense_tensor_buckets = [], []
+    buckets = []
     for i, dtype in enumerate(supported_types):
-        sparse_bucket, dense_bucket = [], []
-        for t in tensors:
-            if t.dtype == dtype:
-                if isinstance(t, SparseTensor):
-                    sparse_bucket.append(t)
-                else:
-                    dense_bucket.append(t)
-        if sparse_bucket:
-            sparse_tensor_buckets.append((dtype, sparse_bucket))
-        if dense_bucket:
-            dense_tensor_buckets.append((dtype, dense_bucket))
-    return sparse_tensor_buckets, dense_tensor_buckets
+        bucket = [t for t in tensors if t.type() == dtype]
+        if bucket:
+            buckets.append((dtype, bucket))
+    return buckets
 
 
 def print_configuration(args, name):
@@ -2231,77 +2227,35 @@ class DeepSpeedEngine(Module):
                 # w.r.t. world size but with a different value.
                 param.grad = torch.zeros(param.size(), dtype=param.dtype, device=param.device)
 
-            grad_data = param.grad.data
-            if param_name in self.sparse_tensor_module_names or grad_data.is_sparse:
-                # Call param.grad without data to avoid problem with setting of updated grads
-                grad_data = SparseTensor(param.grad)
+        split_buckets = split_half_float_double_csr(grads)
+        for _, bucket_tuple in enumerate(split_buckets):
+            bucket_type, bucket = bucket_tuple
 
             if is_moe_param(param):
                 expert_grads[param.group_name].append(grad_data)
             else:
                 non_expert_grads.append(grad_data)
 
-        return non_expert_grads, expert_grads
-
-    def _reduce_non_expert_gradients(self, grads, elements_per_buffer):
-        split_sparse_tensor_buckets, split_dense_tensor_buckets = split_half_float_double_sparse(grads)
-        if self.pipeline_parallelism:
-            dp_group = self.mpu.get_data_parallel_group()
-            dp_world_size = dist.get_world_size(dp_group)
-        else:
-            dp_group = groups._get_sequence_data_parallel_group()
-            dp_world_size = dist.get_world_size(dp_group) / float(self.sequence_parallel_size)
-        for _, sparse_bucket_tuple in enumerate(split_sparse_tensor_buckets):
-            if sparse_bucket_tuple:
-                bucket_type, sparse_bucket = sparse_bucket_tuple
-                self.sparse_allreduce_no_retain(sparse_bucket, dp_group=dp_group, dp_world_size=dp_world_size)
-
-        for _, dense_bucket_tuple in enumerate(split_dense_tensor_buckets):
-            if dense_bucket_tuple:
-                bucket_type, dense_bucket = dense_bucket_tuple
-                self.allreduce_no_retain(dense_bucket,
-                                         dp_group=dp_group,
-                                         numel_per_bucket=elements_per_buffer,
-                                         dp_world_size=dp_world_size)
-
-    def _reduce_expert_gradients(self, expert_grads, elements_per_buffer):
-        # to maintain the gradients value unaffected by ep_size setting,
-        # utilize dp_world_size for allreduce average
-        dp_world_size = dist.get_world_size(groups._get_data_parallel_group())
-        for ep_name, expert_grads_group in expert_grads.items():
-            ep_dp_group = groups._get_expert_data_parallel_group(ep_name)
-            split_sparse_tensor_buckets, split_dense_tensor_buckets = split_half_float_double_sparse(
-                expert_grads_group)
-
-            for _, sparse_bucket_tuple in enumerate(split_sparse_tensor_buckets):
-                if sparse_bucket_tuple:
-                    bucket_type, sparse_bucket = sparse_bucket_tuple
-                    self.sparse_allreduce_no_retain(sparse_bucket, dp_group=ep_dp_group, dp_world_size=dp_world_size)
-
-            for _, dense_bucket_tuple in enumerate(split_dense_tensor_buckets):
-                if dense_bucket_tuple:
-                    bucket_type, dense_bucket = dense_bucket_tuple
-                    # Separate between diff groups
-                    self.allreduce_no_retain(dense_bucket,
-                                             dp_group=ep_dp_group,
-                                             numel_per_bucket=elements_per_buffer,
-                                             dp_world_size=dp_world_size)
-
-    def buffered_allreduce_fallback(self, grads=None, elements_per_buffer=500000000):
-        if grads is None:
-            if hasattr(self.optimizer, "get_grads_for_reduction"):
-                # This is currently for BF16 optimizer
-                non_expert_grads, expert_grads = self.optimizer.get_grads_for_reduction()
+            if bucket_type == CSRTensor.type():
+                self.csr_allreduce_no_retain(bucket, dp_group=dp_group)
             else:
-                non_expert_grads, expert_grads = self._get_gradients_for_reduction()
-        else:
-            assert not self.has_moe_layers, "attempting to reduce grads in unsupported way w.r.t. MoE"
-            non_expert_grads = grads
-
-        self._reduce_non_expert_gradients(non_expert_grads, elements_per_buffer)
+                self.allreduce_no_retain(bucket,
+                                         dp_group=dp_group,
+                                         numel_per_bucket=elements_per_buffer)
 
         if self.has_moe_layers:
-            self._reduce_expert_gradients(expert_grads, elements_per_buffer)
+            expert_split_buckets = split_half_float_double_csr(expert_grads)
+            for i, bucket_tuple in enumerate(expert_split_buckets):
+                bucket_type, bucket = bucket_tuple
+                if bucket_type == CSRTensor.type():
+                    self.csr_allreduce_no_retain(bucket,
+                                                 groups.get_expert_data_parallel_group())
+                else:
+                    # Separate between diff groups
+                    self.allreduce_no_retain(
+                        bucket,
+                        dp_group=groups.get_expert_data_parallel_group(),
+                        numel_per_bucket=elements_per_buffer)
 
     def sparse_allreduce_no_retain(self, bucket, dp_group, dp_world_size=None):
         allreduced_sparses = self.sparse_allreduce_bucket(bucket, dp_group, dp_world_size)
