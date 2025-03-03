@@ -69,7 +69,23 @@ generation hardware.
 
 For more details see the [ZeRO paper](https://arxiv.org/abs/1910.02054), [GPT
 tutorial](/tutorials/megatron/) on integration with
-DeepSpeed. Additional tutorials including *BERT Tutorial*: Coming Soon.
+DeepSpeed.
+
+### Optimizer State and Gradient Partitioning
+Optimizer State and Gradient Partitioning in ZeRO reduces the memory consumption of the
+model states (optimizer states, gradients and parameters) by 8x compared to standard
+data parallelism by partitioning these states across data parallel process instead of
+replicating them.
+
+### Activation Partitioning
+Activation Partitioning is a memory optimization in ZeRO that can reduce the memory
+consumed by activations during model parallel training (MP). In MP certain
+activations maybe required by all MP processes, resulting in a replication of
+activations across MP GPUs. Activation Partitioning stores these activations in a
+partitioned state once they are used for computation in the forward propagation. These
+activations are allgathered right before they are needed again during the backward propagation.
+By storing activations in a partitioned state, ZeRO in DeepSpeed can reduce the activation
+memory footprint proportional to the MP degree.
 
 ### Constant Buffer Optimization (CBO)
 CBO enables high network and memory throughput while restricting memory usage to a
@@ -126,6 +142,12 @@ DeepSpeed supports all the features described in this document, via the use of t
 along with a `deepspeed_config` JSON file for enabling and disabling the features.
 Please see the [core API doc](https://deepspeed.readthedocs.io/) for more details.
 
+### Activation Checkpointing API
+
+DeepSpeed's Activation Checkpointing API supports activation checkpoint partitioning,
+cpu checkpointing, and contiguous memory optimizations, while also allowing layerwise
+profiling. Please see the [core API doc](https://deepspeed.readthedocs.io/) for more details.
+
 
 ### Gradient Clipping
 DeepSpeed handles gradient clipping under the hood based on the max gradient norm
@@ -152,6 +174,14 @@ please refer to the detailed [tutorial](https://www.deepspeed.ai/tutorials/onebi
 ### Fused Adam optimizer and arbitrary torch.optim.Optimizer
 With DeepSpeed, the user can choose to use a high performance implementation of ADAM from
 NVIDIA, or any training optimizer that extends torch's `torch.optim.Optimizer` class.
+
+### CPU-Adam: High-Performance vectorized implementation of Adam
+We introduce an efficient implementation of Adam optimizer on CPU that improves the parameter-update
+performance by nearly an order of magnitude. We use the AVX SIMD instructions on Intel-x86 architecture
+for the CPU-Adam implementation. We support both AVX-512 and AVX-2 instruction sets. DeepSpeed uses
+AVX-2 by default which can be switched to AVX-512 by setting the build flag, `DS_BUILD_AVX512` to 1 when
+installing DeepSpeed. Using AVX-512, we observe 5.1x to 6.5x speedups considering the model-size between
+1 to 10 billion parameters with respect to torch-adam.
 
 ### Memory bandwidth optimized FP16 Optimizer
 Mixed precision training is handled by the DeepSpeed FP16 Optimizer. This optimizer not
