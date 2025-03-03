@@ -226,32 +226,20 @@ class DistributedTest(ABC):
             dist.destroy_process_group()
 
 
-def distributed_test(world_size=2, backend='nccl'):
-    """A decorator for executing a function (e.g., a unit test) in a distributed manner.
-    This decorator manages the spawning and joining of processes, initialization of
-    torch.distributed, and catching of errors.
-
-    Usage example:
-        @distributed_test(worker_size=[2,3])
-        def my_test():
-            rank = dist.get_rank()
-            world_size = dist.get_world_size()
-            assert(rank < world_size)
-
-    Arguments:
-        world_size (int or list): number of ranks to spawn. Can be a list to spawn
-        multiple tests.
-    """
-    def dist_wrap(run_func):
-        """Second-level decorator for dist_test. This actually wraps the function. """
-        def dist_init(local_rank, num_procs, *func_args, **func_kwargs):
-            """Initialize torch.distributed and execute the user function. """
-            os.environ['MASTER_ADDR'] = '127.0.0.1'
-            os.environ['MASTER_PORT'] = os.environ.get('DS_TEST_PORT', '29503')
-            os.environ['LOCAL_RANK'] = str(local_rank)
-            # NOTE: unit tests don't support multi-node so local_rank == global rank
-            os.environ['RANK'] = str(local_rank)
-            os.environ['WORLD_SIZE'] = str(num_procs)
+    def _dist_run(self, local_rank, num_procs, master_port):
+        skip_msg = ''
+        if not dist.is_initialized():
+            """ Initialize deepspeed.comm and execute the user function. """
+            if self.set_dist_env:
+                os.environ['MASTER_ADDR'] = '127.0.0.1'
+                os.environ['MASTER_PORT'] = str(master_port)
+                os.environ['LOCAL_RANK'] = str(local_rank)
+                # NOTE: unit tests don't support multi-node so local_rank == global rank
+                os.environ['RANK'] = str(local_rank)
+                # In case of multiprocess launching LOCAL_SIZE should be same as WORLD_SIZE
+                # DeepSpeed single node launcher would also set LOCAL_SIZE accordingly
+                os.environ['LOCAL_SIZE'] = str(num_procs)
+                os.environ['WORLD_SIZE'] = str(num_procs)
 
             # turn off NCCL logging if set
             os.environ.pop('NCCL_DEBUG', None)
