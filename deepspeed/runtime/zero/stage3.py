@@ -906,11 +906,59 @@ class FP16_DeepSpeedZeroOptimizer_Stage3(object):
 
     def _move_to_flat_buffer(self, src_list, flat_buffer):
         start = 0
-        for src in src_list:
-            dest = flat_buffer.narrow(0, start, src.numel())
-            start = start + src.numel()
-            dest.data.copy_(src.data)
-            src.data = dest.data
+        for param in param_list:
+            src = param.ds_tensor
+            dest = flat_buffer.narrow(0, start, src.ds_numel)
+            start = start + src.ds_numel
+            '''if the parameter was initialized in nvme then bring it to the destination buffer directly'''
+            if src.status == PartitionedParamStatus.NOT_AVAILABLE:
+                print_rank_0(
+                    f"Swapping in {param.ds_id} with partition size {param.ds_tensor.ds_numel} permanently to CPU"
+                )
+                param.nvme_swapper.swap_into_buffer(param, dest)
+                src.data = dest.data
+                src.status = PartitionedParamStatus.AVAILABLE
+            else:
+                assert src.status == PartitionedParamStatus.AVAILABLE, "Partitioned Parm must be avialable here"
+                if not avoid_copy:
+                    dest.data.copy_(src.data)
+                src.data = dest.data
+
+            # Final location must be gpu/cpu in this case
+            param.ds_tensor.final_location = 'not-nvme'
+
+    def _create_param_groups_fp16_flat_cpu_memory(self):
+
+        aggregate_params_count = 0
+
+        for j, param_group in enumerate(self.optimizer.param_groups):
+            params_in_group = sum([p.ds_tensor.ds_numel for p in param_group['params']])
+
+            flat_buffer_size = params_in_group
+
+            if self.params_in_nvme_and_cpu and \
+                aggregate_params_count + params_in_group > self.max_params_in_cpu:
+
+                flat_buffer_size = max(0,
+                                       self.max_params_in_cpu - aggregate_params_count)
+
+            aggregate_params_count += params_in_group
+
+            if flat_buffer_size > 0:
+                print_rank_0(f"group {j} flat buffer size {flat_buffer_size}",
+                             force=False)
+                self.param_groups_fp16_flat_cpu_memory.append(
+                    torch.empty(int(flat_buffer_size),
+                                dtype=self.dtype,
+                                pin_memory=True))
+            else:
+                print_rank_0(
+                    f"No flat buffer size. Param group size was  {params_in_group}",
+                    force=False)
+
+                self.param_groups_fp16_flat_cpu_memory.append(
+                    torch.empty(1,
+                                dtype=self.dtype))
 
     def _create_fp16_partitions_with_defragmentation(self):
         dist.barrier()
