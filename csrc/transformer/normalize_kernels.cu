@@ -1,8 +1,3 @@
-// Copyright (c) Microsoft Corporation.
-// SPDX-License-Identifier: Apache-2.0
-
-// DeepSpeed Team
-
 #include "custom_cuda_layers.h"
 
 namespace cg = cooperative_groups;
@@ -64,20 +59,18 @@ __global__ void fused_bias_residual_layer_norm(float* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) sum = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) sum = shr[g.thread_rank()];
 
 #if !defined(__STOCHASTIC_MODE__) || __CUDA_ARCH__ < 700
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        sum += g.shfl_down(sum, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { sum += g.shfl_down(sum, i); }
 
     sum = g.shfl(sum, 0);
     float mean = sum / row_stride;
     if (training)
-        if (threadIdx.x == 0) means[row] = mean;
+        if (g.thread_rank() == 0) means[row] = mean;
     float variance = 0.f;
     for (int i = 0; i < iterations; i++) {
         vals_arr[i] -= mean;
@@ -90,20 +83,18 @@ __global__ void fused_bias_residual_layer_norm(float* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) variance = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) variance = shr[g.thread_rank()];
 
 #ifndef __STOCHASTIC_MODE__
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        variance += g.shfl_down(variance, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { variance += g.shfl_down(variance, i); }
     variance = g.shfl(variance, 0);
     variance /= row_stride;
     variance += epsilon;
     if (training)
-        if (threadIdx.x == 0) vars[row] = variance;
+        if (g.thread_rank() == 0) vars[row] = variance;
 
     iterations = row_stride / iteration_stride;
     for (int i = 0; i < iterations; i++) {
@@ -130,7 +121,7 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
                                                __half* means,
                                                int row_stride)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
     int iteration_stride = blockDim.x;
     int iterations = row_stride / iteration_stride;
 
@@ -139,7 +130,7 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
 
     int row = blockIdx.x;
     int id = threadIdx.x;
-    int gid = id >> WARP_SIZE_BITS;
+    int gid = id >> 5;
 
     float2 vals_f[NORM_REG];
     __shared__ float shr[MAX_WARP_NUM];
@@ -171,15 +162,13 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) sum = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) sum = shr[g.thread_rank()];
 
 #ifndef __STOCHASTIC_MODE__
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        sum += g.shfl_down(sum, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { sum += g.shfl_down(sum, i); }
     sum = g.shfl(sum, 0);
     float mean = sum / (row_stride * 2);
 
@@ -197,15 +186,13 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) variance = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) variance = shr[g.thread_rank()];
 
 #ifndef __STOCHASTIC_MODE__
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        variance += g.shfl_down(variance, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { variance += g.shfl_down(variance, i); }
     variance = g.shfl(variance, 0);
     variance /= (row_stride * 2);
     variance += epsilon;
@@ -214,7 +201,7 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
     const __half2* gamma_cast = reinterpret_cast<const __half2*>(gamma);
     const __half2* beta_cast = reinterpret_cast<const __half2*>(beta);
 
-    if (training && threadIdx.x == 0) {
+    if (training && g.thread_rank() == 0) {
         vars[row] = __float2half(variance);
         means[row] = __float2half(mean);
     }
@@ -358,15 +345,13 @@ __global__ void fused_bias_residual_layer_norm(float* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) sum = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) sum = shr[g.thread_rank()];
 
 #if !defined(__STOCHASTIC_MODE__) || __CUDA_ARCH__ < 700
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        sum += g.shfl_down(sum, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { sum += g.shfl_down(sum, i); }
 
     sum = g.shfl(sum, 0);
     float mean = sum / row_stride;
@@ -382,20 +367,18 @@ __global__ void fused_bias_residual_layer_norm(float* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) variance = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) variance = shr[g.thread_rank()];
 
 #ifndef __STOCHASTIC_MODE__
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        variance += g.shfl_down(variance, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { variance += g.shfl_down(variance, i); }
     variance = g.shfl(variance, 0);
     variance /= row_stride;
     variance += epsilon;
     if (training)
-        if (threadIdx.x == 0) vars[row] = variance;
+        if (g.thread_rank() == 0) vars[row] = variance;
 
     iterations = row_stride / iteration_stride;
     for (int i = 0; i < iterations; i++) {
@@ -421,7 +404,7 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
                                                __half* vars,
                                                int row_stride)
 {
-#ifdef HALF_PRECISION_AVAILABLE
+#if __CUDA_ARCH__ >= 700
 
     int iteration_stride = blockDim.x;
     int iterations = row_stride / iteration_stride;
@@ -431,7 +414,7 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
 
     int row = blockIdx.x;
     int id = threadIdx.x;
-    int gid = id >> WARP_SIZE_BITS;
+    int gid = id >> 5;
 
     float2 vals_f[NORM_REG];
     __shared__ float shr[MAX_WARP_NUM];
@@ -463,15 +446,13 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) sum = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) sum = shr[g.thread_rank()];
 
 #ifndef __STOCHASTIC_MODE__
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        sum += g.shfl_down(sum, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { sum += g.shfl_down(sum, i); }
     sum = g.shfl(sum, 0);
     float mean = sum / (row_stride * 2);
 
@@ -489,15 +470,13 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
 
     b.sync();
 
-    if (g.thread_rank() < (iteration_stride >> WARP_SIZE_BITS)) variance = shr[g.thread_rank()];
+    if (g.thread_rank() < (iteration_stride >> 5)) variance = shr[g.thread_rank()];
 
 #ifndef __STOCHASTIC_MODE__
     b.sync();
 #endif
 
-    for (int i = 1; i < (iteration_stride >> WARP_SIZE_BITS); i *= 2) {
-        variance += g.shfl_down(variance, i);
-    }
+    for (int i = 1; i < (iteration_stride >> 5); i *= 2) { variance += g.shfl_down(variance, i); }
     variance = g.shfl(variance, 0);
     variance /= (row_stride * 2);
     variance += epsilon;
@@ -506,7 +485,7 @@ __global__ void fused_bias_residual_layer_norm(__half* vals,
     const __half2* gamma_cast = reinterpret_cast<const __half2*>(gamma);
     const __half2* beta_cast = reinterpret_cast<const __half2*>(beta);
 
-    if (training && threadIdx.x == 0) vars[row] = __float2half(variance);
+    if (training && g.thread_rank() == 0) vars[row] = __float2half(variance);
 
     iterations = row_stride / iteration_stride;
     for (int i = 0; i < iterations; i++) {
@@ -776,7 +755,7 @@ __global__ void LayerNormBackward2(const float* out_grad,
     int row = blockIdx.x;
     int id = threadIdx.x;
     int wid = id / WARP_SIZE;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int warp_num = (THREADS < row_stride ? THREADS : row_stride) / WARP_SIZE;
     __shared__ float partialSum[MAX_WARP_NUM];
 
     out_grad += (row * row_stride);
@@ -867,7 +846,6 @@ __global__ void LayerNormBackward2(const __half* out_grad,
                                    bool invertible,
                                    int row_stride)
 {
-#ifdef HALF_PRECISION_AVAILABLE
     int iteration_stride = blockDim.x;
     int iterations = row_stride / iteration_stride;
 
@@ -877,7 +855,7 @@ __global__ void LayerNormBackward2(const __half* out_grad,
     int row = blockIdx.x;
     int id = threadIdx.x;
     int wid = id / WARP_SIZE;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int warp_num = (iteration_stride < row_stride ? iteration_stride : row_stride) / WARP_SIZE;
     __shared__ float partialSum[MAX_WARP_NUM];
 
     __half2 vals_arr[NORM_REG];
@@ -991,7 +969,6 @@ __global__ void LayerNormBackward2(const __half* out_grad,
 
         inp_grad_h[high_index] = temp;
     }
-#endif
 }
 
 template <>
@@ -1050,8 +1027,8 @@ void launch_layerNorm_backward<__half>(const __half* out_grad,
     dim3 grid_dim(hidden_dim / TILE_DIM);
     dim3 block_dim(TILE_DIM, TILE_DIM);
 
-    // LayerNormBackward1<__half><<<grid_dim, block_dim, 0, stream[0]>>>(
-    //    out_grad, vals_hat, gamma, betta, gamma_grad, betta_grad, batch, hidden_dim, invertible);
+    LayerNormBackward1<__half><<<grid_dim, block_dim, 0, stream[0]>>>(
+        out_grad, vals_hat, gamma, betta, gamma_grad, betta_grad, batch, hidden_dim, invertible);
 
     dim3 grid_dim2(batch);
 
@@ -1092,8 +1069,8 @@ __global__ void LayerNormBackward2(const float* out_grad,
 
     int row = blockIdx.x;
     int id = threadIdx.x;
-    int wid = id >> WARP_SIZE_BITS;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int wid = id / WARP_SIZE;
+    int warp_num = (THREADS < row_stride ? THREADS : row_stride) / WARP_SIZE;
     __shared__ float partialSum[MAX_WARP_NUM];
 
     out_grad += (row * row_stride);
@@ -1179,7 +1156,6 @@ __global__ void LayerNormBackward2(const __half* out_grad,
                                    __half* inp_grad,
                                    int row_stride)
 {
-#ifdef HALF_PRECISION_AVAILABLE
     int iteration_stride = blockDim.x;
     int iterations = row_stride / iteration_stride;
 
@@ -1188,14 +1164,13 @@ __global__ void LayerNormBackward2(const __half* out_grad,
 
     int row = blockIdx.x;
     int id = threadIdx.x;
-    int wid = id >> WARP_SIZE_BITS;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int wid = id / WARP_SIZE;
+    int warp_num = (iteration_stride < row_stride ? iteration_stride : row_stride) / WARP_SIZE;
 
     __shared__ float partialSum[MAX_WARP_NUM];
 
     __half2 vals_arr[NORM_REG];
     float2 vals_arr_f[NORM_REG];
-    __half2 xu[NORM_REG];
 
     __half2* inp_grad_h = reinterpret_cast<__half2*>(inp_grad);
     const __half2* out_grad_h = reinterpret_cast<const __half2*>(out_grad);
@@ -1207,28 +1182,27 @@ __global__ void LayerNormBackward2(const __half* out_grad,
 
     const __half2* gamma_h = reinterpret_cast<const __half2*>(gamma);
     int high_index = iterations * iteration_stride + id;
-
-    __half mean_h = means[row];
-    __half2 mean_reg = __halves2half2(mean_h, mean_h);
 #pragma unroll
     for (int i = 0; i < iterations; i++) {
         __half2 gamma_reg = gamma_h[i * iteration_stride + id];
         vals_arr[i] = out_grad_h[i * iteration_stride + id];
         vals_arr[i] *= gamma_reg;  // out_grad * gamma
-        xu[i] = (vals_hat_h[i * iteration_stride + id] - mean_reg);
     }
     if ((high_index) < row_stride) {
         __half2 gamma_reg = gamma_h[high_index];
         vals_arr[iterations] = out_grad_h[high_index];
         vals_arr[iterations] *= gamma_reg;  // out_grad * gamma
-        xu[iterations] = (vals_hat_h[high_index] - mean_reg);
         iterations++;
     }
+    __half mean_h = means[row];
     __half var_h = vars[row];
     __half2 var_reg = __halves2half2(var_h, var_h);
+    __half2 mean_reg = __halves2half2(mean_h, mean_h);
+    __half2 xu[NORM_REG];
 
     float sum = 0.f;
     for (int i = 0; i < iterations; i++) {
+        xu[i] = (vals_hat_h[i * iteration_stride + id] - mean_reg);
         __half2 result_h = (xu[i] * vals_arr[i]);
         float2 result_f = __half22float2(result_h);
         sum += result_f.x;
@@ -1298,7 +1272,6 @@ __global__ void LayerNormBackward2(const __half* out_grad,
         __half2 temp = __float22half2_rn(vals_arr_f[iterations]);
         inp_grad_h[high_index] = temp;
     }
-#endif
 }
 
 template <>
@@ -1515,7 +1488,7 @@ __global__ void LayerNormBackward2_fused_add(const float* out_grad1,
     int row = blockIdx.x;
     int id = threadIdx.x;
     int wid = id / WARP_SIZE;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int warp_num = (THREADS < row_stride ? THREADS : row_stride) / WARP_SIZE;
     __shared__ float partialSum[MAX_WARP_NUM];
 
     out_grad1 += (row * row_stride);
@@ -1610,7 +1583,6 @@ __global__ void LayerNormBackward2_fused_add(const __half* out_grad1,
                                              bool invertible,
                                              int row_stride)
 {
-#ifdef HALF_PRECISION_AVAILABLE
     int iteration_stride = blockDim.x;
     int iterations = row_stride / iteration_stride;
 
@@ -1620,7 +1592,7 @@ __global__ void LayerNormBackward2_fused_add(const __half* out_grad1,
     int row = blockIdx.x;
     int id = threadIdx.x;
     int wid = id / WARP_SIZE;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int warp_num = (iteration_stride < row_stride ? iteration_stride : row_stride) / WARP_SIZE;
     __shared__ float partialSum[MAX_WARP_NUM];
 
     __half2 vals_arr[NORM_REG];
@@ -1737,7 +1709,6 @@ __global__ void LayerNormBackward2_fused_add(const __half* out_grad1,
 
         inp_grad_h[high_index] = temp + out_grad_h2[high_index];
     }
-#endif
 }
 
 template <>
@@ -1839,7 +1810,7 @@ __global__ void LayerNormBackward2_fused_add(const float* out_grad1,
     int row = blockIdx.x;
     int id = threadIdx.x;
     int wid = id / WARP_SIZE;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int warp_num = (THREADS < row_stride ? THREADS : row_stride) / WARP_SIZE;
     __shared__ float partialSum[MAX_WARP_NUM];
 
     float vals_arr[NORM_REG];
@@ -1933,7 +1904,6 @@ __global__ void LayerNormBackward2_fused_add(const __half* out_grad1,
                                              __half* inp_grad,
                                              int row_stride)
 {
-#ifdef HALF_PRECISION_AVAILABLE
     int iteration_stride = blockDim.x;
     int iterations = row_stride / iteration_stride;
 
@@ -1943,7 +1913,7 @@ __global__ void LayerNormBackward2_fused_add(const __half* out_grad1,
     int row = blockIdx.x;
     int id = threadIdx.x;
     int wid = id / WARP_SIZE;
-    int warp_num = iteration_stride >> WARP_SIZE_BITS;
+    int warp_num = (iteration_stride < row_stride ? iteration_stride : row_stride) / WARP_SIZE;
 
     __shared__ float partialSum[MAX_WARP_NUM];
 
@@ -2056,7 +2026,6 @@ __global__ void LayerNormBackward2_fused_add(const __half* out_grad1,
         __half2 temp = __float22half2_rn(vals_arr_f[iterations]);
         inp_grad_h[high_index] = temp + out_grad_h2[high_index];
     }
-#endif
 }
 
 template <>
