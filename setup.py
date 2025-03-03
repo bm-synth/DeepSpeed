@@ -67,8 +67,8 @@ def get_env_if_set(key, default: typing.Any = ""):
 
 install_requires = fetch_requirements('requirements/requirements.txt')
 extras_require = {
-    '1bit': [],  # add cupy based on cuda/rocm version
-    '1bit_mpi': fetch_requirements('requirements/requirements-1bit-mpi.txt'),
+    '1bit_mpi' : fetch_requirements('requirements/requirements-1bit-mpi.txt'),
+    '1bit': [], # Will add proper cupy version below
     'readthedocs': fetch_requirements('requirements/requirements-readthedocs.txt'),
     'dev': fetch_requirements('requirements/requirements-dev.txt'),
     'autotuning': fetch_requirements('requirements/requirements-autotuning.txt'),
@@ -80,13 +80,11 @@ extras_require = {
     'triton': fetch_requirements('requirements/requirements-triton.txt'),
 }
 
-# If MPI is available add 1bit-adam requirements
+# Add specific cupy version to both onebit extension variants
 if torch_available and torch.cuda.is_available():
-    if shutil.which('ompi_info') or shutil.which('mpiname'):
-        onebit_adam_requires = fetch_requirements(
-            'requirements/requirements-1bit-adam.txt')
-        onebit_adam_requires.append(f"cupy-cuda{torch.version.cuda.replace('.','')[:3]}")
-        install_requires += onebit_adam_requires
+    cupy = f"cupy-cuda{torch.version.cuda.replace('.','')[:3]}"
+    extras_require['1bit_mpi'].append(cupy)
+    extras_require['1bit'].append(cupy)
 
 # Constants for each op
 LAMB = "lamb"
