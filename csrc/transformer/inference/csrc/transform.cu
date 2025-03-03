@@ -255,6 +255,26 @@ void launch_bias_add_transform_0213(T* output,
                                                                 rope_theta);
 }
 
+#define INSTANTIATE_LAUNCH_BIAS_ADD_TRANSFORM_0213(T)             \
+    template void launch_bias_add_transform_0213<T>(T*,           \
+                                                    T*,           \
+                                                    T*,           \
+                                                    const T*,     \
+                                                    const T*,     \
+                                                    int,          \
+                                                    int,          \
+                                                    unsigned,     \
+                                                    int,          \
+                                                    int,          \
+                                                    int,          \
+                                                    int,          \
+                                                    int,          \
+                                                    bool,         \
+                                                    bool,         \
+                                                    cudaStream_t, \
+                                                    int,          \
+                                                    int)
+
 #ifdef BF16_AVAILABLE
 template void launch_bias_add_transform_0213(__nv_bfloat16* output,
                                              __nv_bfloat16* k_cache,

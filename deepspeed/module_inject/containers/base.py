@@ -135,7 +135,7 @@ class BaseTransformerContainer(ABC):
         self.set_attention(*self.policy.attention(enable_training=enable_training))
         self.set_mlp(*self.policy.mlp())
         self.set_layernorm(*self.policy.layernorm())
-        self.check_meta_tensor_support()
+        #self.check_meta_tensor_support()
 
     def convert_to_required_dtype(self, dtype):
         # Note: converting tensors to fp16 requires that we do it in-place using self.__dict__ and not make a list/dict copy
