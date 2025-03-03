@@ -385,30 +385,54 @@ class AutoTP():
             # if conv_linear_layer [weight_shape[1], weight_shape[0] // mp_size]
             # else [weight_shape[0], weight_shape[1] // mp_size]
 
-            elif 'o_proj' in name:
-                return Yuan_LinearAllreduce(child, self.mp_group)
-
-        # For MLP including chunk layer.
-        if 'gate_up_proj' in name or ('dense_h_to_4h' in name and 'GLM' in str(self.module)):
-            return GateUpPack_LinearLayer(child, self.mp_group)
-            # For Arctic model, bypass to all_reduce replacement for w2 weights
-        arctic_w2_all_reduce_linear = False
-        if 'Arctic' in str(self.module) and 'w2' in name:
-            arctic_w2_all_reduce_linear = True
-        # For MoE MLP model, e.g., deepseek and jamba
-        down_proj = False
-        if 'down_proj' in name:
-            down_proj = True
-        if name in self.all_reduce_linears or arctic_w2_all_reduce_linear or down_proj:
+            if self.conv_linear_layer:
+                child.weight.data = child.weight.data.transpose(-1, -2).contiguous()
+            data = child.weight.data.split(get_shard_size_list(
+                weight_shape[0] if self.conv_linear_layer else weight_shape[1], self.mp_size, name),
+                                           dim=1)
+            data_dc = move(data[mp_replace.gpu_index], device_name, return_new_copy).detach()
+            del data
 
             setattr(child, "replaced", True)
-            if self.conv_linear_layer:
-                return Conv_LinearALlreduce(child, self.mp_group, name=name)
-            elif name == "lm_head" or name == 'embed_out':
-                return LmHeadLinearAllreduce(child, self.mp_group)
-
-            return LinearAllreduce(child, self.mp_group, name=name)
+            if name == "lm_head" or name == 'embed_out':
+                return LmHeadLinearAllreduce(
+                    torch.nn.parameter.Parameter(data_dc, requires_grad=False), dist.get_rank(), dist.get_world_size(),
+                    child.bias if child.bias is None else torch.nn.parameter.Parameter(
+                        move(child.bias, device_name, return_new_copy)), self.mp_group)
+            return LinearAllreduce(torch.nn.parameter.Parameter(data_dc, requires_grad=False), child.bias if child.bias is None else \
+                        torch.nn.parameter.Parameter(move(child.bias, device_name, return_new_copy)), self.mp_group)
         else:
+
+            # if conv_linear_layer [weight_shape[1], weight_shape[0] // mp_size]
+            # else [weight_shape[0] // mp_size, weight_shape[1]]
+            if self.conv_linear_layer:
+                child.weight.data = child.weight.data.transpose(-1, -2).contiguous()
+
+            if require_tp_fused_qkvw(name, self.mp_size):
+                #Check and handle fused qkv for TP
+                #The copy is a regular copy, The shape of dst and src is the same
+                data_dc = move(
+                    prepare_tp_fused_qkvw(self.module, child.weight.data, self.mp_size, mp_replace.gpu_index),
+                    device_name, return_new_copy)
+
+                bias_data_dc = None if child.bias is None else move(
+                    prepare_tp_fused_qkvw(self.module, child.bias.data, self.mp_size, mp_replace.gpu_index),
+                    device_name, return_new_copy)
+            else:
+                data = child.weight.data.split(get_shard_size_list(weight_shape[0], self.mp_size, name),
+                                               dim=1 if self.conv_linear_layer else 0)
+                data_dc = move(data[mp_replace.gpu_index], device_name, return_new_copy).detach()
+                del data
+
+                if child.bias is not None:
+                    bias_data = child.bias.data.split(get_shard_size_list(
+                        weight_shape[1] if self.conv_linear_layer else weight_shape[0], self.mp_size, name),
+                                                      dim=0)
+                    bias_data = move(bias_data[mp_replace.gpu_index], device_name, return_new_copy)
+                    bias_data_dc = torch.nn.parameter.Parameter(bias_data, requires_grad=False)
+                    del bias_data
+                else:
+                    bias_data_dc = None
 
             setattr(child, "replaced", True)
             if self.conv_linear_layer:
