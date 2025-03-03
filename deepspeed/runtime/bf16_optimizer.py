@@ -197,10 +197,6 @@ class BF16_Optimizer(ZeROOptimizer):
 
             see_memory_usage(f'after initializing group {i}', force=True)
 
-        see_memory_usage('before initialize_optimizer', force=True)
-        self.initialize_optimizer_states()
-        see_memory_usage('end initialize_optimizer', force=True)
-
         self._grad_acc_hooks = []
         if self.immediate_grad_update:
             self.create_grad_acc_hooks()
