@@ -18,6 +18,8 @@ from deepspeed.runtime.zero.partitioned_param_profiler import PartitionedParamet
 from deepspeed.runtime.swap_tensor.partitioned_param_swapper import PartitionedParamStatus
 from deepspeed.utils.debug import debug_module2name_id, debug_param2name_id
 from deepspeed.accelerator import get_accelerator
+import deepspeed.runtime.compiler as compiler
+
 import logging
 
 ENABLE_PROFILER = False
@@ -176,6 +178,7 @@ class PartitionedParameterCoordinator:
                     force=True)
                 self._invalidate_trace()
 
+    @compiler.disable
     def record_module(self, sub_module: Module) -> None:
         """adds sub module to trace"""
         if not self.is_record_trace():
@@ -253,6 +256,7 @@ class PartitionedParameterCoordinator:
     Fetching, prefetching, and releasing parameters
     """
 
+    @compiler.disable
     @instrument_w_nvtx
     @torch.no_grad()
     def fetch_sub_module(self, current_submodule: Module, forward: bool) -> None:
@@ -273,6 +277,7 @@ class PartitionedParameterCoordinator:
         params_to_fetch = frozenset(iter_params(current_submodule, recurse=z3_leaf_module(current_submodule)))
         fetch_numel = sum(
             [p.partition_numel() for p in params_to_fetch if p.ds_status == ZeroParamStatus.NOT_AVAILABLE])
+
         if fetch_numel > 0:
             event_name = __class__.FORWARD_FETCH_SUBMIT if forward else __class__.BACKWARD_FETCH_SUBMIT
             self._dump_param_ids(event_name, current_submodule.id,
@@ -469,6 +474,7 @@ class PartitionedParameterCoordinator:
             if swap_persisted_params:
                 swap_persisted_params[0].nvme_swapper.remove_partition_and_release_buffers(swap_persisted_params)
 
+    @compiler.disable
     @instrument_w_nvtx
     def __release_param(self, param: Parameter) -> None:
         if param.ds_status == ZeroParamStatus.AVAILABLE and not param.ds_active_sub_modules:
