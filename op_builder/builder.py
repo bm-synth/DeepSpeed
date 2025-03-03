@@ -443,13 +443,34 @@ class OpBuilder(ABC):
 
         return cpu_info
 
+    def strip_empty_entries(self, args):
+        '''
+        Drop any empty strings from the list of compile and link flags
+        '''
+        return [x for x in args if len(x) > 0]
+
+    def cpu_arch(self):
+        if not self.command_exists('lscpu'):
+            self.warning(
+                f"{self.name} attempted to query 'lscpu' to detect the CPU architecture. "
+                "However, 'lscpu' does not appear to exist on "
+                "your system, will fall back to use -march=native.")
+            return '-march=native'
+
+        result = subprocess.check_output('lscpu', shell=True)
+        result = result.decode('utf-8').strip().lower()
+        if 'ppc64le' in result:
+            # gcc does not provide -march on PowerPC, use -mcpu instead
+            return '-mcpu=native'
+        return '-march=native'
+
     def simd_width(self):
-        try:
-            from cpuinfo import get_cpu_info
-        except ImportError as e:
-            cpu_info = self._backup_cpuinfo()
-            if cpu_info is None:
-                return '-D__SCALAR__'
+        if not self.command_exists('lscpu'):
+            self.warning(
+                f"{self.name} attempted to query 'lscpu' to detect the existence "
+                "of AVX instructions. However, 'lscpu' does not appear to exist on "
+                "your system, will fall back to non-vectorized execution.")
+            return '-D__SCALAR__'
 
         try:
             cpu_info = get_cpu_info()
@@ -466,6 +487,18 @@ class OpBuilder(ABC):
             elif 'avx2' in cpu_info['flags']:
                 return '-D__AVX256__'
         return '-D__SCALAR__'
+
+    def python_requirements(self):
+        '''
+        Override if op wants to define special dependencies, otherwise will
+        take self.name and load requirements-<op-name>.txt if it exists.
+        '''
+        path = f'requirements/requirements-{self.name}.txt'
+        requirements = []
+        if os.path.isfile(path):
+            with open(path, 'r') as fd:
+                requirements = [r.strip() for r in fd.readlines()]
+        return requirements
 
     def command_exists(self, cmd):
         if '|' in cmd:
@@ -496,12 +529,12 @@ class OpBuilder(ABC):
 
     def builder(self):
         from torch.utils.cpp_extension import CppExtension
-        include_dirs = [os.path.abspath(x) for x in self.strip_empty_entries(self.include_paths())]
-        return CppExtension(name=self.absolute_name(),
-                            sources=self.strip_empty_entries(self.sources()),
-                            include_dirs=include_dirs,
-                            extra_compile_args={'cxx': self.strip_empty_entries(self.cxx_args())},
-                            extra_link_args=self.strip_empty_entries(self.extra_ldflags()))
+        return CppExtension(
+            name=self.absolute_name(),
+            sources=self.strip_empty_entries(self.sources()),
+            include_dirs=self.strip_empty_entries(self.include_paths()),
+            extra_compile_args={'cxx': self.strip_empty_entries(self.cxx_args())},
+            extra_link_args=self.strip_empty_entries(self.extra_ldflags()))
 
     def load(self, verbose=True):
         if self.name in __class__._loaded_ops:
@@ -539,42 +572,18 @@ class OpBuilder(ABC):
         from torch.utils.cpp_extension import load
 
         start_build = time.time()
-        sources = [os.path.abspath(self.deepspeed_src_path(path)) for path in self.sources()]
-        extra_include_paths = [os.path.abspath(self.deepspeed_src_path(path)) for path in self.include_paths()]
-
-        # Torch will try and apply whatever CCs are in the arch list at compile time,
-        # we have already set the intended targets ourselves we know that will be
-        # needed at runtime. This prevents CC collisions such as multiple __half
-        # implementations. Stash arch list to reset after build.
-        torch_arch_list = None
-        if "TORCH_CUDA_ARCH_LIST" in os.environ:
-            torch_arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST")
-            os.environ["TORCH_CUDA_ARCH_LIST"] = ""
-
-        nvcc_args = self.strip_empty_entries(self.nvcc_args())
-        cxx_args = self.strip_empty_entries(self.cxx_args())
-
-        if isinstance(self, CUDAOpBuilder):
-            if not self.build_for_cpu and self.enable_bf16:
-                cxx_args.append("-DBF16_AVAILABLE")
-                nvcc_args.append("-DBF16_AVAILABLE")
-                nvcc_args.append("-U__CUDA_NO_BFLOAT16_OPERATORS__")
-                nvcc_args.append("-U__CUDA_NO_BFLOAT162_OPERATORS__")
-                nvcc_args.append("-U__CUDA_NO_BFLOAT16_CONVERSIONS__")
-
-        if self.is_rocm_pytorch():
-            cxx_args.append("-D__HIP_PLATFORM_AMD__=1")
-            os.environ["PYTORCH_ROCM_ARCH"] = self.get_rocm_gpu_arch()
-            cxx_args.append('-DROCM_WAVEFRONT_SIZE=%s' % self.get_rocm_wavefront_size())
-
-        op_module = load(name=self.name,
-                         sources=self.strip_empty_entries(sources),
-                         extra_include_paths=self.strip_empty_entries(extra_include_paths),
-                         extra_cflags=cxx_args,
-                         extra_cuda_cflags=nvcc_args,
-                         extra_ldflags=self.strip_empty_entries(self.extra_ldflags()),
-                         verbose=verbose)
-
+        sources = [self.deepspeed_src_path(path) for path in self.sources()]
+        extra_include_paths = [
+            self.deepspeed_src_path(path) for path in self.include_paths()
+        ]
+        op_module = load(
+            name=self.name,
+            sources=self.strip_empty_entries(sources),
+            extra_include_paths=self.strip_empty_entries(extra_include_paths),
+            extra_cflags=self.strip_empty_entries(self.cxx_args()),
+            extra_cuda_cflags=self.strip_empty_entries(self.nvcc_args()),
+            extra_ldflags=self.strip_empty_entries(self.extra_ldflags()),
+            verbose=verbose)
         build_duration = time.time() - start_build
         if verbose:
             print(f"Time to load {self.name} op: {build_duration} seconds")
@@ -666,68 +675,16 @@ class CUDAOpBuilder(OpBuilder):
         return super().is_compatible(verbose)
 
     def builder(self):
-        try:
-            if not self.is_rocm_pytorch():
-                assert_no_cuda_mismatch(self.name)
-            self.build_for_cpu = False
-        except MissingCUDAException:
-            self.build_for_cpu = True
-
-        if self.build_for_cpu:
-            from torch.utils.cpp_extension import CppExtension as ExtensionBuilder
-        else:
-            from torch.utils.cpp_extension import CUDAExtension as ExtensionBuilder
-        include_dirs = [os.path.abspath(x) for x in self.strip_empty_entries(self.include_paths())]
-        compile_args = {'cxx': self.strip_empty_entries(self.cxx_args())} if self.build_for_cpu else \
-                       {'cxx': self.strip_empty_entries(self.cxx_args()), \
-                        'nvcc': self.strip_empty_entries(self.nvcc_args())}
-
-        if not self.build_for_cpu and self.enable_bf16:
-            compile_args['cxx'].append("-DBF16_AVAILABLE")
-            compile_args['nvcc'].append("-DBF16_AVAILABLE")
-
-        if self.is_rocm_pytorch():
-            compile_args['cxx'].append("-D__HIP_PLATFORM_AMD__=1")
-            #cxx compiler args are required to compile cpp files
-            compile_args['cxx'].append('-DROCM_WAVEFRONT_SIZE=%s' % self.get_rocm_wavefront_size())
-            #nvcc compiler args are required to compile hip files
-            compile_args['nvcc'].append('-DROCM_WAVEFRONT_SIZE=%s' % self.get_rocm_wavefront_size())
-            if self.get_rocm_gpu_arch():
-                os.environ["PYTORCH_ROCM_ARCH"] = self.get_rocm_gpu_arch()
-
-        cuda_ext = ExtensionBuilder(name=self.absolute_name(),
-                                    sources=self.strip_empty_entries(self.sources()),
-                                    include_dirs=include_dirs,
-                                    libraries=self.strip_empty_entries(self.libraries_args()),
-                                    extra_compile_args=compile_args,
-                                    extra_link_args=self.strip_empty_entries(self.extra_ldflags()))
-
-        if self.is_rocm_pytorch():
-            # hip converts paths to absolute, this converts back to relative
-            sources = cuda_ext.sources
-            curr_file = Path(__file__).parent.parent  # ds root
-            for i in range(len(sources)):
-                src = Path(sources[i])
-                if src.is_absolute():
-                    sources[i] = str(src.relative_to(curr_file))
-                else:
-                    sources[i] = str(src)
-            cuda_ext.sources = sources
-        return cuda_ext
-
-    def hipify_extension(self):
-        if self.is_rocm_pytorch():
-            from torch.utils.hipify import hipify_python
-            hipify_python.hipify(
-                project_directory=os.getcwd(),
-                output_directory=os.getcwd(),
-                header_include_dirs=self.include_paths(),
-                includes=[os.path.join(os.getcwd(), '*')],
-                extra_files=[os.path.abspath(s) for s in self.sources()],
-                show_detailed=True,
-                is_pytorch_extension=True,
-                hipify_extra_files_only=True,
-            )
+        from torch.utils.cpp_extension import CUDAExtension
+        assert_no_cuda_mismatch()
+        return CUDAExtension(name=self.absolute_name(),
+                             sources=self.strip_empty_entries(self.sources()),
+                             include_dirs=self.strip_empty_entries(self.include_paths()),
+                             libraries=self.strip_empty_entries(self.libraries_args()),
+                             extra_compile_args={
+                                 'cxx': self.strip_empty_entries(self.cxx_args()),
+                                 'nvcc': self.strip_empty_entries(self.nvcc_args())
+                             })
 
     def cxx_args(self):
         if sys.platform == "win32":
