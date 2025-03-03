@@ -19,16 +19,18 @@ The wheel will be located at: dist/*.whl
 """
 
 import os
-import torch
 import shutil
 import subprocess
 import warnings
 import cpufeature
 from setuptools import setup, find_packages
-from setuptools.command import egg_info
-import time
-import typing
-import shlex
+
+try:
+    import torch
+    from torch.utils.cpp_extension import BuildExtension
+except ImportError:
+    raise ImportError('Unable to import torch, please visit https://pytorch.org/ '
+                      'to see how to properly install torch on your system.')
 
 torch_available = True
 try:
