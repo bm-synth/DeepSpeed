@@ -1,13 +1,10 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
-import os
+"""
+Copyright 2020 The Microsoft DeepSpeed Team
+"""
 import distutils.spawn
 import subprocess
 
-from .builder import TorchCPUOpBuilder
+from .builder import OpBuilder
 
 
 class AsyncIOBuilder(TorchCPUOpBuilder):
@@ -114,6 +111,37 @@ class AsyncIOBuilder(TorchCPUOpBuilder):
             # to print suggestions on which package to install.
             self.check_for_libaio_pkg()
 
+    def check_for_libaio_pkg(self):
+        libs = dict(
+            dpkg=["-l",
+                  "libaio-dev",
+                  "apt"],
+            pacman=["-Q",
+                    "libaio",
+                    "pacman"],
+            rpm=["-q",
+                 "libaio-devel",
+                 "yum"],
+        )
+
+        found = False
+        for pkgmgr, data in libs.items():
+            flag, lib, tool = data
+            path = distutils.spawn.find_executable(pkgmgr)
+            if path is not None:
+                cmd = f"{pkgmgr} {flag} {lib}"
+                result = subprocess.Popen(cmd,
+                                          stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE,
+                                          shell=True)
+                if result.wait() == 0:
+                    found = True
+                else:
+                    self.warning(
+                        f"{self.NAME}: please install the {lib} package with {tool}")
+                break
+        return found
+
     def is_compatible(self):
         # Check for the existence of libaio by using distutils
         # to compile and link a test program that calls io_submit,
@@ -123,6 +151,14 @@ class AsyncIOBuilder(TorchCPUOpBuilder):
         aio_compatible = self.has_function('io_submit', ('aio', ))
         if not aio_compatible:
             self.warning(
-                f"{self.NAME} requires libaio but it is missing. Can be fixed by: `apt install libaio-dev`."
+                f"{self.NAME} requires the dev libaio .so object and headers but these were not found."
+            )
+
+            # Check for the libaio package via known package managers
+            # to print suggestions on which package to install.
+            self.check_for_libaio_pkg()
+
+            self.warning(
+                "If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found."
             )
         return super().is_compatible() and aio_compatible

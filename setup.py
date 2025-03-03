@@ -34,6 +34,15 @@ except ImportError:
 
 from op_builder import ALL_OPS, get_default_compute_capatabilities
 
+RED_START = '\033[31m'
+RED_END = '\033[0m'
+ERROR = f"{RED_START} [ERROR] {RED_END}"
+
+
+def abort(msg):
+    print(f"{ERROR} {msg}")
+    assert False, msg
+
 
 def fetch_requirements(path):
     with open(path, 'r') as fd:
@@ -190,10 +199,15 @@ def command_exists(cmd):
     return valid
 
 
-## Sparse transformer ##
-if BUILD_MASK & DS_BUILD_SPARSE_ATTN:
-    # Check to see if llvm and cmake are installed since they are dependencies
-    required_commands = ['llvm-config|llvm-config-9', 'cmake']
+def op_envvar(op_name):
+    assert hasattr(ALL_OPS[op_name], 'BUILD_VAR'), \
+        f"{op_name} is missing BUILD_VAR field"
+    return ALL_OPS[op_name].BUILD_VAR
+
+
+def op_enabled(op_name):
+    env_var = op_envvar(op_name)
+    return int(os.environ.get(env_var, BUILD_OP_DEFAULT))
 
     command_status = list(map(command_exists, required_commands))
     if not all(command_status):
@@ -218,9 +232,18 @@ if BUILD_MASK & DS_BUILD_SPARSE_ATTN:
         # remove from installed ops list
         install_ops[SPARSE_ATTN] = False
 
+compatible_ops = dict.fromkeys(ALL_OPS.keys(), False)
 install_ops = dict.fromkeys(ALL_OPS.keys(), False)
 for op_name, builder in ALL_OPS.items():
     op_compatible = builder.is_compatible()
+    compatible_ops[op_name] = op_compatible
+
+    # If op is requested but not available, throw an error
+    if op_enabled(op_name) and not op_compatible:
+        env_var = op_envvar(op_name)
+        if env_var not in os.environ:
+            builder.warning(f"One can disable {op_name} with {env_var}=0")
+        abort(f"Unable to pre-compile {op_name}")
 
     # If op is compatible update install reqs so it can potentially build/run later
     if op_compatible:
@@ -232,8 +255,6 @@ for op_name, builder in ALL_OPS.items():
         assert torch_available, f"Unable to pre-compile {op_name}, please first install torch"
         install_ops[op_name] = op_enabled(op_name)
         ext_modules.append(builder.builder())
-
-compatible_ops = {op_name: op.is_compatible() for (op_name, op) in ALL_OPS.items()}
 
 print(f'Install Ops={install_ops}')
 
