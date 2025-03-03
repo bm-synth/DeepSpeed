@@ -29,7 +29,7 @@ class MultiNodeRunner(ABC):
         """Return the command to execute on node"""
 
     def add_export(self, key, var):
-        self.exports[key.strip()] = var.strip()
+        self.exports[key.strip()] = f"\"{var.strip()}\""
 
     def parse_user_args(self):
         return self.args.user_args
