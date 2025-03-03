@@ -243,12 +243,9 @@ def single_all_to_all(input, scatter_idx, gather_idx, batch_dim_idx, group, asyn
     output = torch.empty_like(input_t)
     work = dist.all_to_all_single(output, input_t, group=group, async_op=async_op)
 
-    if async_op:
-        if type in ('dq', 'dk'):
-            handle[type + '_work'] = work
-            handle[type + '_grad'] = output
-            handle[type + '_post_all2all_func'] = post_all2all_fun
-            return output.view(post_all2all_res_shape)
+    # if scattering the seq-dim, transpose the heads back to the original dimension
+    if scatter_idx < 2:
+        output = output.transpose(0, 2).contiguous()
 
     res = post_all2all_fun(output)
     return res
