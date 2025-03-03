@@ -876,8 +876,14 @@ def replace_module(model, orig_class, replace_fn, _replace_policy, checkpoint=No
         for plcy in replace_policies:
             # instantiate a throw-away policy in order to populate the _orig_layer_class
             _ = plcy(None)
-            assert plcy._orig_layer_class != None
-            policy.update({plcy._orig_layer_class: (replace_fn, plcy)})
+            if isinstance(plcy._orig_layer_class, list):
+                for orig_layer_class in plcy._orig_layer_class:
+                    policy.update({orig_layer_class: (replace_fn, plcy)})
+            elif plcy._orig_layer_class is not None:
+                policy.update({plcy._orig_layer_class: (replace_fn, plcy)})
+    assert len(policy.items()) > 0,\
+        "No default policy found! Please specify your policy injection_policy (like {BertLayer:HFBEertLayerPolicy})." +\
+        "You can find some samples here: https://github.com/microsoft/DeepSpeed/blob/master/deepspeed/module_inject/replace_policy.py"
 
     replaced_module, _ = _replace_module(model, policy, state_dict=sd)
     return replaced_module
