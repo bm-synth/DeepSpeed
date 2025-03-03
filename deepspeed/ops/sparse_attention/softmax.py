@@ -229,7 +229,6 @@ class Softmax:
 
     For more details about sparsity config, please see `Generative Modeling with Sparse Transformers`: https://arxiv.org/abs/1904.10509
     """
-
     def sparse_softmax(*args, **kwargs):
         return _sparse_softmax.apply(*args, **kwargs)
 
