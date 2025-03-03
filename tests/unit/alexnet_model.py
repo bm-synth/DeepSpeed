@@ -11,7 +11,6 @@ import torch.nn.functional as F
 import deepspeed
 import deepspeed.comm as dist
 import deepspeed.runtime.utils as ds_utils
-from deepspeed.utils.torch import required_torch_version
 from deepspeed.accelerator import get_accelerator
 from deepspeed.runtime.pipe.module import PipelineModule, LayerSpec
 from .util import no_child_process_in_deepspeed_io
@@ -110,12 +109,14 @@ def cifar_trainset(fp16=False):
     return trainset
 
 
-def train_cifar(model, config, num_steps=400, average_dp_losses=True, fp16=True, seed=123):
-    if required_torch_version(min_version=2.1):
-        fork_kwargs = {"device_type": get_accelerator().device_name()}
-    else:
-        fork_kwargs = {}
-    with get_accelerator().random().fork_rng(devices=[get_accelerator().current_device_name()], **fork_kwargs):
+def train_cifar(model,
+                config,
+                num_steps=400,
+                average_dp_losses=True,
+                fp16=True,
+                seed=123):
+    with get_accelerator().random().fork_rng(
+            devices=[get_accelerator().current_device_name()]):
         ds_utils.set_random_seed(seed)
 
         # disable dropout

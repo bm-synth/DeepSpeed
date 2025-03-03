@@ -73,7 +73,9 @@ class TestConfigurableMP(ConfigurableMP):
 
         model.eval()
         device_name = get_accelerator().device_name()
-        baseline = model(inputs[0].to(device_name), inputs[1].to(device_name), inputs[2].to(device_name))
+        baseline = model(inputs[0].to(device_name),
+                         inputs[1].to(device_name),
+                         inputs[2].to(device_name))
 
         tag = 'mp_1'
         state_dict = {}
@@ -102,7 +104,9 @@ class TestConfigurableMP(ConfigurableMP):
         model.eval()
 
         device_name = get_accelerator().device_name()
-        baseline = model(inputs[0].to(device_name), inputs[1].to(device_name), inputs[2].to(device_name))
+        baseline = model(inputs[0].to(device_name),
+                         inputs[1].to(device_name),
+                         inputs[2].to(device_name))
 
         tag = 'mp_2'
         state_dict = {}
@@ -112,9 +116,10 @@ class TestConfigurableMP(ConfigurableMP):
         model.load_checkpoint(tmpdir, tag=tag, load_optimizer_states=False, load_lr_scheduler_states=False)
 
         device_name = get_accelerator().device_name()
-        test = model(inputs[0].to(device_name), inputs[1].to(device_name), inputs[2].to(device_name))
-        assert torch.allclose(baseline, test, rtol=1.0,
-                              atol=1e-07), f"Baseline output {baseline} is not equal to save-then-load output {test}"
+        test = model(inputs[0].to(device_name),
+                     inputs[1].to(device_name),
+                     inputs[2].to(device_name))
+        assert torch.allclose(baseline, test, rtol=1.0, atol=1e-07), f"Baseline output {baseline} is not equal to save-then-load output {test}"
 
 
 # This fixture provides the baseline model with mp=2 to TestConfigurableMPResize
@@ -136,7 +141,9 @@ class baseline_mp2(DistributedFixture):
 
         with torch.no_grad():
             device_name = get_accelerator().device_name()
-            baseline = model(inputs[0].to(device_name), inputs[1].to(device_name), inputs[2].to(device_name))
+            baseline = model(inputs[0].to(device_name),
+                             inputs[1].to(device_name),
+                             inputs[2].to(device_name))
             if dist.get_rank() == 0:
                 save_path = os.path.join(class_tmpdir, "output.pt")
                 torch.save(baseline.cpu(), save_path)
@@ -165,9 +172,13 @@ class TestConfigurableResizeMP(ConfigurableMP):
         model.eval()
 
         with torch.no_grad():
-            model.load_checkpoint(class_tmpdir, load_optimizer_states=False, load_lr_scheduler_states=False)
+            model.load_checkpoint(class_tmpdir,
+                                  load_optimizer_states=False,
+                                  load_lr_scheduler_states=False)
             device_name = get_accelerator().device_name()
-            test = model(inputs[0].to(device_name), inputs[1].to(device_name), inputs[2].to(device_name))
+            test = model(inputs[0].to(device_name),
+                         inputs[1].to(device_name),
+                         inputs[2].to(device_name))
             if dist.get_rank() == 0:
                 load_path = os.path.join(class_tmpdir, "output.pt")
                 baseline = torch.load(load_path, weights_only=False)

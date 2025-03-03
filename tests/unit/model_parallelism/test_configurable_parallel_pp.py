@@ -15,7 +15,6 @@ from unit.megatron_model import get_megatron_version
 from unit.megatron_model import MockGPT2ModelPipe as GPT2ModelPipe
 from deepspeed.utils import RepeatingLoader
 from deepspeed.accelerator import get_accelerator
-from deepspeed.utils.torch import required_torch_version
 
 pytestmark = pytest.mark.skipif(not required_torch_version(min_version=1.5, max_version=1.13),
                                 reason='Megatron-LM package requires Pytorch version >=1.5 and <=1.13')
@@ -32,7 +31,9 @@ def get_deepspeed_model(model):
         },
     }
 
-    model, _, _, _ = deepspeed.initialize(model=model, model_parameters=model.parameters(), config=ds_config_dict)
+    model, _, _,_ = deepspeed.initialize(model=model,
+                                         model_parameters=model.parameters(),
+                                         config=ds_config_dict)
     return model.to(get_accelerator().device_name())
 
 

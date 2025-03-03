@@ -31,7 +31,10 @@ def see_memory_usage(message):
     )
 
 
-tens = torch.rand(1024, 16384, dtype=torch.half, device=torch.device(get_accelerator().device_name()))
+tens = torch.rand(1024,
+                  16384,
+                  dtype=torch.half,
+                  device=torch.device(get_accelerator().device_name()))
 tens_back = tens.detach().clone()
 
 #linear_bk = torch.nn.functional.linear
@@ -45,7 +48,9 @@ y = model(tens)
 
 see_memory_usage("After forward")
 
-model.weight.data = torch.zeros(1, dtype=torch.half, device=torch.device(get_accelerator().device_name()))
+model.weight.data = torch.zeros(1,
+                                dtype=torch.half,
+                                device=torch.device(get_accelerator().device_name()))
 
 see_memory_usage("After weight zero")
 

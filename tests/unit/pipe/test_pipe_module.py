@@ -78,7 +78,8 @@ class TestPipeModuleSequential(DistributedTest):
             pipe_model.compile()
         # Ensure all parameters are accounted for.
         my_params = sum(p.numel() for p in pipe_model.parameters())
-        total_pipe_params = torch.LongTensor([my_params]).to(get_accelerator().device_name())
+        total_pipe_params = torch.LongTensor([my_params
+                                              ]).to(get_accelerator().device_name())
         dist.all_reduce(total_pipe_params)
         total_pipe_params = total_pipe_params.item()
         assert total_pipe_params == base_params

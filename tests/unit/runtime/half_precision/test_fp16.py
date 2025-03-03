@@ -10,10 +10,9 @@ import pytest
 from deepspeed.ops.adam import FusedAdam
 from unit.common import DistributedTest
 from unit.simple_model import SimpleModel, SimpleOptimizer, random_dataloader, SimpleMoEModel, sequence_dataloader
-from deepspeed.utils.torch import required_torch_version
+from unit.util import required_torch_version
 from deepspeed.accelerator import get_accelerator
-from deepspeed.ops.op_builder import CPUAdamBuilder, FusedLambBuilder
-from deepspeed.moe.utils import split_params_into_different_moe_groups_for_optimizer
+from deepspeed.ops.op_builder import CPUAdamBuilder
 
 try:
     from apex import amp  # noqa: F401 # type: ignore
@@ -188,7 +187,9 @@ class TestFP16OptimizerForMoE(DistributedTest):
 
         def mock_unscale_and_clip_grads(total_norm, apply_scale=True):
             torch_norm_tensor = get_accelerator().FloatTensor([total_norm])
-            all_gather_results = [torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())]
+            all_gather_results = [
+                torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())
+            ]
             dist.all_gather(all_gather_results, torch_norm_tensor)
             assert len(set([x.item() for x in all_gather_results])) == 1
             return 1.0
@@ -218,7 +219,9 @@ class TestFP16OptimizerForMoE(DistributedTest):
 
         def mock_unscale_and_clip_grads(grads_groups_flat, total_norm, apply_scale=True):
             torch_norm_tensor = get_accelerator().FloatTensor([total_norm])
-            all_gather_results = [torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())]
+            all_gather_results = [
+                torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())
+            ]
             dist.all_gather(all_gather_results, torch_norm_tensor)
             assert len(set([x.item() for x in all_gather_results])) == 1
             return 1.0
@@ -266,7 +269,9 @@ class TestFP16OptimizerForMoE(DistributedTest):
 
         def mock_unscale_and_clip_grads(total_norm, apply_scale=True):
             torch_norm_tensor = get_accelerator().FloatTensor([total_norm])
-            all_gather_results = [torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())]
+            all_gather_results = [
+                torch.zeros_like(torch_norm_tensor) for _ in range(dist.get_world_size())
+            ]
             dist.all_gather(all_gather_results, torch_norm_tensor)
             assert len(set([x.item() for x in all_gather_results])) == 1
             return 1.0

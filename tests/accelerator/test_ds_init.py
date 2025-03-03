@@ -1,8 +1,4 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
-
-# DeepSpeed Team
-
+'''Copyright The Microsoft DeepSpeed Team'''
 import os
 import torch
 import deepspeed
@@ -10,7 +6,6 @@ from deepspeed.accelerator import get_accelerator
 
 
 class OneLayerNet(torch.nn.Module):
-
     def __init__(self, D_in, D_out):
         """
         In the constructor we instantiate two nn.Linear modules and assign them as

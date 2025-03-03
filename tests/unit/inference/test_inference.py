@@ -26,6 +26,7 @@ from transformers.models.roberta.modeling_roberta import RobertaLayer
 from huggingface_hub import HfApi
 from deepspeed.model_implementations import DeepSpeedTransformerInference
 from torch import nn
+from deepspeed.accelerator import get_accelerator
 
 rocm_version = OpBuilder.installed_rocm_version()
 if rocm_version != (0, 0):
@@ -368,7 +369,7 @@ class TestModelTask(DistributedTest):
             pipe.model.half()
 
         # Switch device to GPU after converting to half
-        device = torch.device(f"cuda:{local_rank}")
+        device = torch.device(get_accelerator().device_name(local_rank))
         pipe.device = device
         pipe.model.to(device)
 
@@ -522,7 +523,7 @@ class TestInjectionPolicy(DistributedTest):
                                               dtype=dtype,
                                               injection_policy=injection_policy)
         # Switch device to GPU so that input tensors are not on CPU
-        pipe.device = torch.device(f"cuda:{local_rank}")
+        pipe.device = torch.device(get_accelerator().device_name(local_rank))
         ds_output = pipe(query, **inf_kwargs)
 
         print(local_rank, "baseline", bs_output)
@@ -572,7 +573,7 @@ class TestAutoTensorParallelism(DistributedTest):
                                               mp_size=world_size,
                                               dtype=dtype)
         # Switch device to GPU so that input tensors are not on CPU
-        pipe.device = torch.device(f"cuda:{local_rank}")
+        pipe.device = torch.device(get_accelerator().device_name(local_rank))
         ds_output = pipe(query, **inf_kwargs)
 
         print(local_rank, "baseline", bs_output)
@@ -630,7 +631,7 @@ class TestLMCorrectness(DistributedTest):
         else:
             lm = lm_eval.models.get_model(model_family).create_from_arg_string(
                 f"pretrained={model_name}",
-                {"device": "cuda"})
+                {"device": get_accelerator().device_name()})
 
         get_accelerator().synchronize()
         start = time.time()

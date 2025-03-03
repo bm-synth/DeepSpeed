@@ -30,7 +30,7 @@ def check_equal(first, second, atol=1e-2, verbose=False):
 class TestCPUAdagrad(DistributedTest):
     world_size = 1
     requires_cuda_env = False
-    if not torch.cuda.is_available():
+    if not get_accelerator().is_available():
         init_distributed = False
         set_dist_env = False
 
@@ -142,7 +142,7 @@ class TestCPUAdagrad(DistributedTest):
 class TestCPUAdagradGPUError(DistributedTest):
     def test_cpu_adagrad_gpu_error(self):
         model_size = 64
-        device = 'cuda:0'
+        device = get_accelerator().device_name(0)  # 'cuda:0' or 'xpu:0'
         param = torch.nn.Parameter(torch.randn(model_size, device=device))
         optimizer = DeepSpeedCPUAdagrad([param])
 
