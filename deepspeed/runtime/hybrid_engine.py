@@ -165,7 +165,7 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
             retake_success = inference_cuda_module.retake_workspace()
 
             if not retake_success:
-                logger.warning("Unable to acquire workspace on first attempt, emtpying cache and retrying.")
+                logger.warning("Unable to acquire workspace on first attempt, emptying cache and retrying.")
                 gc.collect()
                 get_accelerator().empty_cache()
                 retake_success = inference_cuda_module.retake_workspace()
@@ -330,9 +330,24 @@ class DeepSpeedHybridEngine(DeepSpeedEngine):
                     mp_group = dist.new_group(ranks)
                     if global_rank in ranks:
                         self.mp_group = mp_group
+
+                        # mp_replace is used for container tensor slicing
+                        from deepspeed.module_inject import ReplaceWithTensorSlicing
+                        self.mp_replace = ReplaceWithTensorSlicing(
+                            mp_group=self.mp_group,
+                            mp_size=self._config.hybrid_engine.inference_tp_size,
+                            out_dim=0,
+                            in_dim=1)
+
             else:
                 self.mp_group = self.mpu.get_model_parallel_group() if hasattr(self.mpu, 'get_model_parallel_group') else \
                     self.mpu.get_tensor_model_parallel_group()
+
+                from deepspeed.module_inject import ReplaceWithTensorSlicing
+                self.mp_replace = ReplaceWithTensorSlicing(mp_group=self.mp_group,
+                                                           mp_size=self._config.hybrid_engine.inference_tp_size,
+                                                           out_dim=0,
+                                                           in_dim=1)
         else:
             self.mp_group = None
         self.populate_all_inference_policies()
