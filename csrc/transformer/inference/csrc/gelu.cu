@@ -164,12 +164,6 @@ void launch_bias_add(T* input,
 #define INSTANTIATE_LAUNCH_BIAS_ADD(T) \
     template void launch_bias_add<T>(T*, const T*, int, int, cudaStream_t);
 
-INSTANTIATE_LAUNCH_BIAS_ADD(float)
-#ifdef BF16_AVAILABLE
-INSTANTIATE_LAUNCH_BIAS_ADD(__nv_bfloat16)
-#endif
-INSTANTIATE_LAUNCH_BIAS_ADD(__half)
-
 __global__ void fused_bias_residual(float* residual,
                                     const float* hidden_state,
                                     const float* attn,
@@ -215,19 +209,18 @@ __global__ void fused_bias_residual(float* residual,
     }
 }
 
-template <typename T>
-__global__ void fused_bias_residual(T* residual,
-                                    const T* hidden_state,
-                                    const T* attn,
-                                    const T* bias,
-                                    const T* attn_bias,
+__global__ void fused_bias_residual(__half* residual,
+                                    const __half* hidden_state,
+                                    const __half* attn,
+                                    const __half* bias,
+                                    const __half* attn_bias,
                                     const int total_count,
                                     const int intermediate_size,
                                     const float mp_scale,
                                     const bool preln)
 {
-    using T2 =
-        typename std::conditional<std::is_same<T, __half>::value, __half2, __nv_bfloat162>::type;
+#ifdef HALF_PRECISION_AVAILABLE
+
     float2* res_fl2_ptr = reinterpret_cast<float2*>(residual);
     const float2* hs_fl2_ptr = reinterpret_cast<const float2*>(hidden_state);
     const float2* attn_fl2_ptr = reinterpret_cast<const float2*>(attn);
@@ -242,26 +235,26 @@ __global__ void fused_bias_residual(T* residual,
         const float2 bias_fl2 = bias_fl2_ptr[offset % intermediate_size];
         const float2 attn_bias_fl2 = attn_bias_fl2_ptr[offset % intermediate_size];
 
-        T2* res_half2 = reinterpret_cast<T2*>(&res_fl2);
-        const T2* hs_half2 = reinterpret_cast<const T2*>(&hs_fl2);
-        const T2* attn_half2 = reinterpret_cast<const T2*>(&attn_fl2);
-        const T2* bias_half2 = reinterpret_cast<const T2*>(&bias_fl2);
-        const T2* attn_bias_half2 = reinterpret_cast<const T2*>(&attn_bias_fl2);
+        __half2* res_half2 = reinterpret_cast<__half2*>(&res_fl2);
+        const __half2* hs_half2 = reinterpret_cast<const __half2*>(&hs_fl2);
+        const __half2* attn_half2 = reinterpret_cast<const __half2*>(&attn_fl2);
+        const __half2* bias_half2 = reinterpret_cast<const __half2*>(&bias_fl2);
+        const __half2* attn_bias_half2 = reinterpret_cast<const __half2*>(&attn_bias_fl2);
 
-        float2 res_low = conversion::to<float2>(res_half2[0]);
-        float2 res_high = conversion::to<float2>(res_half2[1]);
+        float2 res_low = __half22float2(res_half2[0]);
+        float2 res_high = __half22float2(res_half2[1]);
 
-        const float2 hs_low = conversion::to<float2>(hs_half2[0]);
-        const float2 hs_high = conversion::to<float2>(hs_half2[1]);
+        const float2 hs_low = __half22float2(hs_half2[0]);
+        const float2 hs_high = __half22float2(hs_half2[1]);
 
-        const float2 attn_low = conversion::to<float2>(attn_half2[0]);
-        const float2 attn_high = conversion::to<float2>(attn_half2[1]);
+        const float2 attn_low = __half22float2(attn_half2[0]);
+        const float2 attn_high = __half22float2(attn_half2[1]);
 
-        const float2 bias_low = conversion::to<float2>(bias_half2[0]);
-        const float2 bias_high = conversion::to<float2>(bias_half2[1]);
+        const float2 bias_low = __half22float2(bias_half2[0]);
+        const float2 bias_high = __half22float2(bias_half2[1]);
 
-        const float2 attn_bias_low = conversion::to<float2>(attn_bias_half2[0]);
-        const float2 attn_bias_high = conversion::to<float2>(attn_bias_half2[1]);
+        const float2 attn_bias_low = __half22float2(attn_bias_half2[0]);
+        const float2 attn_bias_high = __half22float2(attn_bias_half2[1]);
 
         if (preln) {
             // residual = (residual + attention + bias + attention_bias) *
@@ -281,10 +274,56 @@ __global__ void fused_bias_residual(T* residual,
             res_high.x = (res_high.x + hs_high.x + bias_high.x);
             res_high.y = (res_high.y + hs_high.y + bias_high.y);
         }
-        res_half2[0] = conversion::to<T2>(res_low);
-        res_half2[1] = conversion::to<T2>(res_high);
+        res_half2[0] = __float22half2_rn(res_low);
+        res_half2[1] = __float22half2_rn(res_high);
 
         res_fl2_ptr[offset] = res_fl2;
+    }
+#endif
+INSTANTIATE_LAUNCH_BIAS_ADD(__half)
+
+__global__ void fused_bias_residual(float* residual,
+                                    const float* hidden_state,
+                                    const float* attn,
+                                    const float* bias,
+                                    const float* attn_bias,
+                                    const int total_count,
+                                    const int intermediate_size,
+                                    const float mp_scale,
+                                    const bool preln)
+{
+    float4* res_fl4_ptr = reinterpret_cast<float4*>(residual);
+    const float4* hs_fl4_ptr = reinterpret_cast<const float4*>(hidden_state);
+    const float4* attn_fl4_ptr = reinterpret_cast<const float4*>(attn);
+    const float4* bias_fl4_ptr = reinterpret_cast<const float4*>(bias);
+    const float4* attn_bias_fl4_ptr = reinterpret_cast<const float4*>(attn_bias);
+    const int offset = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (offset < total_count) {
+        float4 res_fl4 = res_fl4_ptr[offset];
+        const float4 hs_fl4 = hs_fl4_ptr[offset];
+        const float4 attn_fl4 = attn_fl4_ptr[offset];
+        const float4 bias_fl4 = bias_fl4_ptr[offset % intermediate_size];
+        const float4 attn_bias_fl4 = attn_bias_fl4_ptr[offset % intermediate_size];
+        if (preln) {
+            // residual = (residual + attention + bias + attention_bias) *
+            // mp_scale + hidden_state
+            res_fl4.x =
+                (res_fl4.x + attn_fl4.x + bias_fl4.x + attn_bias_fl4.x) * mp_scale + (hs_fl4.x);
+            res_fl4.y =
+                (res_fl4.y + attn_fl4.y + bias_fl4.y + attn_bias_fl4.y) * mp_scale + (hs_fl4.y);
+            res_fl4.z =
+                (res_fl4.z + attn_fl4.z + bias_fl4.z + attn_bias_fl4.z) * mp_scale + (hs_fl4.z);
+            res_fl4.w =
+                (res_fl4.w + attn_fl4.w + bias_fl4.w + attn_bias_fl4.w) * mp_scale + (hs_fl4.w);
+        } else {
+            // residual += hidden_state + bias
+            res_fl4.x = res_fl4.x + hs_fl4.x + bias_fl4.x;
+            res_fl4.y = res_fl4.y + hs_fl4.y + bias_fl4.y;
+            res_fl4.z = res_fl4.z + hs_fl4.z + bias_fl4.z;
+            res_fl4.w = res_fl4.w + hs_fl4.w + bias_fl4.w;
+        }
+        res_fl4_ptr[offset] = res_fl4;
     }
 }
 
