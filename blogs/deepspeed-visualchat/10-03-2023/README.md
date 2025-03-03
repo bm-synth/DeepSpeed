@@ -55,15 +55,15 @@ The model architecture of DeepSpeed-VisualChat, as depicted in *Figure 1*, is co
 There are two common attention mechanisms used to connect the visual and textual components in a multi-modal model: causal attention, as used in MiniGPT and QWen-VL, and cross attention, as used in Otter and Flamingo.
 
 <div align="center">
-  <img src="../assets/images/attention.png" alt="Different attention mechanisms" width="1000"/>
-
-  *Figure 2: Different Attention Mechanisms: Examine the differing attention mechanisms using an input sentence "User: Please describe the image." coupled with three Image tokens (I-token1, I-token2, I-token3). On the left, we demonstrate standard causal attention, treating image tokens as text. In the middle, we present cross attention applied to images, while maintaining standard causal attention for text tokens. On the right, we illustrate our innovative multi-modal attention proposal where image tokens only perform self-attention, and text tokens attend to text/image tokens independently, highlighted with an orange mask. This mechanism is defined by: softmax($`QK^T \odot M_1`$)+ softmax($`QK^T \odot M_2`$) with Q and K as query and key, $`M_1`$=[M==1], and $`M_2`$=[M==2], with M $`\in`$ R<sup>10x10</sup> in this case.*
+  <img src="../assets/images/attention.png" alt="Different attention mehanisms" width="1000"/>
 </div>
+
+*Figure 2: Different Attention Mechanisms: Examine the differing attention mechanisms using an input sentence "User: Please describe the image." coupled with three Image tokens (I-token1, I-token2, I-token3). On the left, we demonstrate standard causal attention, treating image tokens as text. In the middle, we present cross attention applied to images, while maintaining standard causal attention for text tokens. On the right, we illustrate our innovative multi-modal attention proposal where image tokens only perform self-attention, and text tokens attend to text/image tokens independently, highlighted with an orange mask. This mechanism is defined by: softmax($`QK^T \odot M_1`$)+ softmax($`QK^T \odot M_2`$) with Q and K as query and key, $`M_1`$=[M==1], and $`M_2`$=[M==2], with M $`\in`$ R<sup>10x10</sup> in this case.*
 
 
 <b>Causal Attention (CA)</b>: The CA-based method simply projects visual features (i.e., the features from the output of the final visual encoder layer) into textual features and combines them with the normal textual features after the textual embedding layer to feed into LLMs. The benefit of CA is that it's a natural extension of the original attention mechanism in LLMs, and as such, it doesn't introduce any extra modules or parameters. However, this approach raises some intuitive problems:
 
-* For a visual token, it attends to previous visual and textual tokens, even though visual tokens are already fully encoded in a bidirectional manner and do not need further attention to other visual tokens or previous textual tokens.
+* For a visual token, it attends to previous visual and textual tokens, even though visual tokens are already fully encoded in a bidirectional manner and do not need further attention from other visual tokens or the beginning of textual tokens.
 * For a textual token, the model needs to learn how to distribute its attention weights between its previous textual and image tokens. Due to these issues, we found that the data efficiency of CA in LVLMs is often problematic. To address this, LLaVA and QWen-VL require visual-language pretraining to fully align visual features with textual features.
 
 <b>Cross Attention (CrA)</b>: The alternative, cross attention (CrA), along with CA, exhibits better data efficiency but also comes with a few drawbacks:
@@ -153,7 +153,7 @@ DeepSpeed-VisualChat is an easy-to-use training framework with great scalability
 
 The training experience of DeepSpeed-VisualChat is straightforward and convenient. Here we give an example based on the CLIP visual encoder and the LLaMa-7B model:
 ```
-git clone https://github.com/deepspeedai/DeepSpeedExamples.git
+git clone https://github.com/microsoft/DeepSpeedExamples.git
 cd DeepSpeedExamples/applications/DeepSpeed-VisualChat/
 pip install -r requirements.txt
 cd training
@@ -167,15 +167,15 @@ bash chat_scripts/run.sh # You need to change necessary variables, e.g, ckpt pat
 ```
 To support larger model inference, we have incorporated Hugging Face large model inference into our DeepSpeed-VisualChat API. Therefore, users can choose a different number of GPUs based on the GPU memory capacity and the model size.
 
-Please refer to our [GitHub Landing Page](https://github.com/deepspeedai/DeepSpeedExamples/tree/master/applications/DeepSpeed-VisualChat) for more details.
+Please refer to [Landing Page](https://github.com/microsoft/DeepSpeedExamples/DeepSpeed-VisualChat) for details.
 
 # 7. Release: Try DeepSpeed-VisualChat today!
 
 We are very excited to share that DeepSpeed-VisualChat is now open-sourced and available to the AI community.
 
-* To get started, please visit our GitHub page for DeepSpeed-VisualChat: [GitHub Landing Page](https://github.com/deepspeedai/DeepSpeedExamples/tree/master/applications/DeepSpeed-VisualChat)
+* To get started, please visit our GitHub page for DeepSpeed-VisualChat: [GitHub Landing Page](https://github.com/microsoft/DeepSpeedExamples/tree/master/applications/DeepSpeed-VisualChat)
 
-* We will continue to improve DeepSpeed-VisualChat with your feedback and support. Our [roadmap](https://github.com/deepspeedai/DeepSpeedExamples/tree/master/applications/DeepSpeed-VisualChat/README.md#-deepspeed-visualchats-roadmap-) shows currently supported features as well as ones that are planned for the future.
+* We will continue to improve DeepSpeed-VisualChat with your feedback and support. Our [roadmap](https://github.com/microsoft/DeepSpeedExamples/tree/master/applications/DeepSpeed-VisualChat/README.md#-deepspeed-visualchats-roadmap-) shows currently supported features as well as ones that are planned for the future.
 
 
 DeepSpeed-VisualChat is a component of the larger DeepSpeed ecosystem, which includes a range of Deep Learning systems and modeling technologies. To learn more,
@@ -183,6 +183,6 @@ DeepSpeed-VisualChat is a component of the larger DeepSpeed ecosystem, which inc
 * Please visit our [website](https://www.deepspeed.ai/) for detailed blog posts, tutorials, and helpful documentation.
 * Follow us on our [English X(Twitter)](https://twitter.com/MSFTDeepSpeed), [Japanese X(Twitter)](https://twitter.com/MSFTDeepSpeedJP), and [Chinese Zhihu](https://www.zhihu.com/people/deepspeed) for latest news on DeepSpeed.
 
-We welcome your contributions to DeepSpeed! We encourage you to report issues, contribute PRs, and join discussions on the [DeepSpeed GitHub](https://github.com/deepspeedai/DeepSpeed/) page. Please see our [contributing guide](https://github.com/deepspeedai/DeepSpeed/blob/master/CONTRIBUTING.md) for more details. We are open to collaborations with universities, research labs, companies, such as those working together on deep learning research, applying DeepSpeed to empower real-world AI models and applications, and so on. For such requests (and other requests unsuitable for GitHub), please directly email to deepspeed-info@microsoft.com.
+We welcome your contributions to DeepSpeed! We encourage you to report issues, contribute PRs, and join discussions on the [DeepSpeed GitHub](https://github.com/microsoft/DeepSpeed/) page. Please see our [contributing guide](https://github.com/microsoft/DeepSpeed/blob/master/CONTRIBUTING.md) for more details. We are open to collaborations with universities, research labs, companies, such as those working together on deep learning research, applying DeepSpeed to empower real-world AI models and applications, and so on. For such requests (and other requests unsuitable for GitHub), please directly email to deepspeed-info@microsoft.com.
 
-* "Star" our [DeepSpeed GitHub](https://github.com/deepspeedai/DeepSpeed/) and [DeepSpeedExamples GitHub](https://github.com/deepspeedai/DeepSpeedExamples/) repositories if you like our work!
+* "Star" our [DeepSpeed GitHub](https://github.com/microsoft/DeepSpeed/) and [DeepSpeedExamples GitHub](https://github.com/microsoft/DeepSpeedExamples/) repositories if you like our work!
