@@ -122,6 +122,7 @@ for extra in extras_require.items():
 extras_require['all'] = list(all_extras)
 
 cmdclass = {}
+cmdclass['build_ext'] = BuildExtension.with_options(use_ninja=False)
 
 TORCH_MAJOR = int(torch.__version__.split('.')[0])
 TORCH_MINOR = int(torch.__version__.split('.')[1])
