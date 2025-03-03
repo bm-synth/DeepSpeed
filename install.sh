@@ -116,7 +116,7 @@ rm_if_exist() {
     if [ -f $1 ]; then
         rm -v $1
     elif [ -d $1 ]; then
-        rm -vr $1
+        rm -rf $VERBOSE $1
     fi
 }
 
