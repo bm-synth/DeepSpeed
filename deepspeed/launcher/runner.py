@@ -9,6 +9,7 @@ per rank for training.
 import os
 import re
 import sys
+import shlex
 import json
 import base64
 import argparse
@@ -418,6 +419,12 @@ def parse_num_nodes(str_num_nodes: str, elastic_training: bool):
 
 def main(args=None):
     args = parse_args(args)
+
+    # For when argparse interprets remaining args as a single string
+    args.user_args = shlex.split(" ".join(args.user_args))
+
+    if args.elastic_training:
+        assert args.master_addr != "", "Master Addr is required when elastic training is enabled"
 
     resource_pool = fetch_hostfile(args.hostfile)
 
