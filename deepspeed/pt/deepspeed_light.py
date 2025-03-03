@@ -486,7 +486,8 @@ class DeepSpeedLight(Module):
         clip_grad = self.gradient_clipping()
         if self.optimizer_name() == ADAM_OPTIMIZER:
             if self.dynamic_loss_scale():
-                logging.info('Creating fp16 optimizer with dynamic loss scale')
+                logger.info('Creating fp16 optimizer with dynamic loss scale')
+                timers = self.timers if self.wall_clock_breakdown() else None
                 optimizer = FP16_Optimizer(
                     optimizer,
                     dynamic_loss_scale=True,
@@ -494,7 +495,8 @@ class DeepSpeedLight(Module):
                     dynamic_loss_args=dynamic_loss_args,
                     mpu=self.mpu,
                     clip_grad=clip_grad,
-                    fused_adam_legacy=self.optimizer_legacy_fusion())
+                    fused_adam_legacy=self.optimizer_legacy_fusion(),
+                    timers=timers)
             else:
                 logging.info('Creating fp16 optimizer with static loss scale: {}'.format(
                     self.loss_scale()))
@@ -804,16 +806,18 @@ class DeepSpeedLight(Module):
         if self.wall_clock_breakdown():
             self.timers('step').stop()
             self.timers('step_microstep').stop()
-            self.timers.log([
+            timer_names = [
                 'forward_microstep',
                 'backward_microstep',
                 'backward_inner_microstep',
                 'backward_allreduce_microstep',
                 'step_microstep'
-            ])
+            ]
+            self.timers.log(names=timer_names, memory_breakdown=self.memory_breakdown())
+
             # Log timing
-            if self.tensorboard_enabled():
-                if self.is_gradient_accumulation_boundary():
+            if self.is_gradient_accumulation_boundary():
+                if self.tensorboard_enabled():
                     if self.global_rank == 0:
                         self.summary_events = [(f'Train/Samples/elapsed_time_ms_forward', self.timers('forward').elapsed(reset=False) * 1000.0, self.sample_count), \
                                                 (f'Train/Samples/elapsed_time_ms_backward', self.timers('backward').elapsed(reset=False) * 1000.0, self.sample_count), \
@@ -824,13 +828,15 @@ class DeepSpeedLight(Module):
                         for event in self.summary_events:  # write_summary_events
                             self.summary_writer.add_scalar(event[0], event[1], event[2])
                         self.summary_writer.flush()
-                    self.timers.log([
-                        'forward',
-                        'backward',
-                        'backward_inner',
-                        'backward_allreduce',
-                        'step'
-                    ])
+
+            if self.wall_clock_breakdown():
+                self.timers.log([
+                    'forward',
+                    'backward',
+                    'backward_inner',
+                    'backward_allreduce',
+                    'step'
+                ])
 
         self.micro_steps += 1
 
