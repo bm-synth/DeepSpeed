@@ -129,6 +129,171 @@ class ReplaceWithTensorSlicing:
         return dst
 
 
+def get_transformer_name(replaced_module):
+    from .replace_policy import supported_models
+    from torch.nn import ModuleList
+    transformer_name = ''
+    for n, c in replaced_module.named_children():
+        if c.__class__ in supported_models:
+            transformer_name += n + '.'
+            for name, child in c.named_children():
+                if child.__class__ is ModuleList:
+                    transformer_name += name
+                    break
+            break
+    return transformer_name
+
+
+class GroupQuantizer:
+    def __init__(self, q_int8=True, num_groups=32, group_size=32, num_bits=8):
+        self.num_groups = num_groups
+        self.group_size = group_size
+        self.num_bits = num_bits
+        self.q_int8 = q_int8
+
+    def quantize(self, inputs, qkv=True, count=1, parallel_dim=0):
+        if not self.q_int8 or not qkv:
+            inputs = torch.nn.Parameter(inputs, requires_grad=False)
+            inputs.scale = torch.empty(1)
+            return inputs
+        q_range = 2**self.num_bits
+        inputs = inputs.to(torch.cuda.current_device())
+        input_flat = inputs.reshape(self.num_groups, -1).contiguous()
+        input_min = torch.min(input_flat, dim=1, keepdim=True)[0].float()
+        input_max = torch.max(input_flat, dim=1, keepdim=True)[0].float()
+        scale = torch.max(input_min.abs(), input_max.abs()) * 2.0 / (q_range)
+        input_flat = (input_flat / scale).round().clamp(-q_range // 2, q_range // 2 - 1)
+        inputs_q = input_flat.reshape(inputs.shape).to(torch.int8).contiguous()
+        out = torch.nn.Parameter(inputs_q, requires_grad=False)
+        #print(inputs.shape)
+        inputs_split = inputs.split(inputs.shape[parallel_dim] // 2, dim=parallel_dim)
+        input_flat = [
+            inputs_split[i].reshape(self.num_groups,
+                                    -1).contiguous() for i in range(2)
+        ]
+        input_min = [
+            torch.min(input_flat[i],
+                      dim=1,
+                      keepdim=True)[0].float() for i in range(2)
+        ]
+        input_max = [
+            torch.max(input_flat[i],
+                      dim=1,
+                      keepdim=True)[0].float() for i in range(2)
+        ]
+        scale1 = [
+            (torch.max(input_min[i].abs(),
+                       input_max[i].abs()) * 2.0 / (q_range)).squeeze().unsqueeze(0)
+            for i in range(2)
+        ]
+
+        out.scale = torch.cat([scale.squeeze().unsqueeze(0),
+                               scale1[0],
+                               scale1[1]],
+                              dim=0).reshape(self.num_groups,
+                                             -1).contiguous()
+        return out
+
+
+def _module_match(module):
+    for policy in generic_policies:
+        policy = policy()
+        if policy.match(module):
+            return policy
+    return None
+
+
+def generic_injection(module, fp16=False, enable_cuda_graph=True):
+    def replace_attn(child, policy):
+        policy_attn = policy.attention(child)
+        if policy_attn is None:
+            return child
+        if len(policy_attn) == 5:
+            qkvw, attn_ow, attn_ob, hidden_size, heads = policy_attn
+        else:
+            qw, kw, vw, attn_ow, attn_ob, hidden_size, heads = policy_attn
+
+        config = transformer_inference.DeepSpeedInferenceConfig(
+            hidden_size=hidden_size,
+            heads=heads,
+            fp16=fp16,
+            triangular_masking=False,
+            max_out_tokens=4096,
+        )
+        attn_module = transformer_inference.DeepSpeedDiffusersAttention(config)
+
+        def transpose(data):
+            data = data.contiguous()
+            data.reshape(-1).copy_(data.transpose(-1, -2).contiguous().reshape(-1))
+            data = data.reshape(data.shape[-1], data.shape[-2])
+            data.to(torch.cuda.current_device())
+            return data
+
+        if len(policy_attn) == 5:
+            attn_module.attn_qkvw.data = transpose(qkvw.data)
+        else:
+            attn_module.attn_qkvw = None
+            attn_module.attn_qw.data = transpose(qw.data)
+            attn_module.attn_kw.data = transpose(kw.data)
+            attn_module.attn_vw.data = transpose(vw.data)
+
+        attn_module.attn_qkvb = None
+        attn_module.attn_ow.data = transpose(attn_ow.data)
+        attn_module.attn_ob.data.copy_(attn_ob.data.to(torch.cuda.current_device()))
+        return attn_module
+
+    def replace_attn_block(child, policy):
+        config = transformer_inference.Diffusers2DTransformerConfig()
+        return transformer_inference.DeepSpeedDiffusersTransformerBlock(child, config)
+
+    if isinstance(module, torch.nn.Module):
+        pass
+    else:
+        if fp16 is False:
+            raise ValueError("Generic injection only supported with FP16")
+
+        try:
+            import diffusers
+            cross_attention = diffusers.models.attention.CrossAttention
+            attention_block = diffusers.models.attention.BasicTransformerBlock
+            new_policies = {
+                cross_attention: replace_attn,
+                attention_block: replace_attn_block,
+            }
+        except ImportError:
+            new_policies = {}
+
+        #replace_transformer_layer(None,
+        #                          module.text_encoder,
+        #                          training=False,
+        #                          replace_with_kernel_inject=True,
+        #                          triangular_masking=True,
+        #                          max_out_tokens=8192)
+        from ..model_implementations.transformers.clip_encoder import DSClipEncoder
+        cg_encoder = DSClipEncoder(module.text_encoder,
+                                   enable_cuda_graph=enable_cuda_graph)
+        setattr(module, 'text_encoder', cg_encoder)
+        for name in module.__dict__.keys():
+            sub_module = getattr(module, name)
+            policy = _module_match(sub_module)
+
+            if policy is not None:
+
+                def _replace_module(module, policy):
+                    for name, child in module.named_children():
+                        _replace_module(child, policy)
+                        if child.__class__ in new_policies:
+                            replaced_module = new_policies[child.__class__](child,
+                                                                            policy)
+                            setattr(module, name, replaced_module)
+
+                _replace_module(sub_module, policy)
+                new_module = policy.apply(sub_module,
+                                          enable_cuda_graph=enable_cuda_graph)
+                print(f"**** found and replaced {name} w. {type(new_module)}")
+                setattr(module, name, new_module)
+
+
 def replace_transformer_layer(orig_layer_impl,
                               model,
                               micro_batch_size,
@@ -341,7 +506,9 @@ def replace_transformer_layer(orig_layer_impl,
             # linear layer is created with [input, output] shape
             # transpose it here to reduce inference cost!
             def transpose(data):
-                data.view(-1).copy_(data.transpose(-1, -2).contiguous().view(-1))
+                # temp move to cpu to avoid requiring extra GPU memory during the reshape
+                data = data.to('cpu').contiguous()
+                data.reshape(-1).copy_(data.transpose(-1, -2).contiguous().reshape(-1))
                 data = data.reshape(data.shape[-1], data.shape[-2])
                 return data
 

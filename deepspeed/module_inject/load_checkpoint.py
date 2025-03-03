@@ -43,11 +43,10 @@ def load_model_with_checkpoint(r_module,
     skip_level_0_prefix = prefix_check() and container.policy.use_load_prefix
 
     def transpose(data):
-        with torch.no_grad():
-            data = data.contiguous()
-            data1 = data.transpose(-1, -2).reshape(-1)
-            data.reshape(-1).copy_(data1)
-            data1 = None
+        data = data.contiguous()
+        data1 = data.transpose(-1, -2).reshape(-1)
+        data.reshape(-1).copy_(data1)
+        data1 = None
         return data.reshape(data.shape[-1], data.shape[-2])
 
     def load(module, prefix):
