@@ -9,8 +9,9 @@ This file is adapted from FP16_Optimizer in NVIDIA/apex
 
 import torch
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
-from deepspeed.runtime.base_optimizer import DeepSpeedOptimizer
-from deepspeed.runtime.utils import get_global_norm, get_flattened_grad_norm, CheckOverflow, get_weight_norm, get_norm_with_moe_layers, is_model_parallel_parameter
+
+from deepspeed.runtime import DeepSpeedOptimizer
+from deepspeed.runtime.utils import get_global_norm, get_grad_norm, CheckOverflow, get_weight_norm
 from deepspeed.runtime.fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, MIN_LOSS_SCALE
 from deepspeed.utils import groups, logger, log_dist
 from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, CLIP_GRAD
@@ -248,6 +249,23 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
         return torch.tensor(group_mask_idx_list, device=get_accelerator().current_device_name())
 
+    def set_lr(self, lr):
+        """Set the learning rate."""
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lr
+
+    def get_lr(self):
+        """Return the current learning rate."""
+        return self.optimizer.param_groups[0]["lr"]
+
+    def override_loss_scale(self, loss_scale):
+        if loss_scale != self.external_loss_scale:
+            logger.info(
+                f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}'
+            )
+        self.custom_loss_scaler = True
+        self.external_loss_scale = loss_scale
+
     def step(self, closure=None):
         """
         Not supporting closure.
@@ -418,9 +436,12 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         2. scaled_loss = fp32_loss*loss_scale
         3. scaled_loss.backward(), which accumulates scaled gradients into the ``.grad`` attributes of the model's fp16 leaves
         """
-
-        scaled_loss = (loss.float()) * self.cur_scale
-        scaled_loss.backward(create_graph=create_graph, retain_graph=retain_graph)
+        if self.custom_loss_scaler:
+            scaled_loss = self.external_loss_scale * loss
+            scaled_loss.backward()
+        else:
+            scaled_loss = (loss.float()) * self.cur_scale
+            scaled_loss.backward(create_graph=create_graph, retain_graph=retain_graph)
 
     def _update_scale(self, skip):
         if self.dynamic_loss_scale:

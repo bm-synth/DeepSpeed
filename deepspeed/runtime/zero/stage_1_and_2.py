@@ -9,6 +9,7 @@ from packaging import version as pkg_version
 from collections import OrderedDict
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 
+from deepspeed.runtime import ZeROOptimizer
 from deepspeed.runtime.fp16.loss_scaler import LossScaler, DynamicLossScaler
 from deepspeed.runtime.utils import (bwc_tensor_model_parallel_rank,
                                      get_global_norm,
@@ -93,12 +94,6 @@ def _get_padded_tensor(src_tensor, size):
     padded_tensor = torch.zeros(size, dtype=src_tensor.dtype, device=src_tensor.device)
     slice_tensor = torch.narrow(padded_tensor, 0, 0, src_tensor.numel())
     slice_tensor.data.copy_(src_tensor.data)
-    return padded_tensor
-
-
-def _pad_tensor_by_size(src_tensor, pad_size, dtype, device):
-    padded_tensor = torch.zeros(src_tensor.numel() + pad_size, dtype=dtype, device=device)
-    padded_tensor.data[:src_tensor.numel()].copy_(src_tensor.data)
     return padded_tensor
 
 
@@ -1837,6 +1832,23 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
         # We need to link optimizer state after the first step() call
         self._lazy_init_hp_params_optimizer_state()
 
+    def set_lr(self, lr):
+        """Set the learning rate."""
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lr
+
+    def get_lr(self):
+        """Return the current learning rate."""
+        return self.optimizer.param_groups[0]["lr"]
+
+    def override_loss_scale(self, loss_scale):
+        if loss_scale != self.external_loss_scale:
+            logger.info(
+                f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}'
+            )
+        self.custom_loss_scaler = True
+        self.external_loss_scale = loss_scale
+
     def step(self, closure=None):
         """
         Not supporting closure.
@@ -2109,10 +2121,6 @@ class DeepSpeedZeroOptimizer(ZeROOptimizer):
             scaled_loss.backward()
         else:
             self.loss_scaler.backward(loss.float(), retain_graph=retain_graph)
-
-        # Only for Stage 1, Mode 2
-        if self.use_grad_accum_attribute:
-            self.fill_grad_accum_attribute()
 
     def check_overflow(self, partition_gradients=True):
         self._check_overflow(partition_gradients)

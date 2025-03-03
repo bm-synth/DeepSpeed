@@ -17,7 +17,7 @@ import torch
 from torch.distributed.distributed_c10d import _get_global_rank, group
 import torch.distributed as dist
 
-from .linear import LinearModuleForZeroStage3, LinearFunctionForZeroStage3
+from .linear import LinearModuleForZeroStage3, zero3_linear_wrap
 from .offload_constants import *
 
 import deepspeed

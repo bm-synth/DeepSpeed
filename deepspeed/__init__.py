@@ -22,6 +22,9 @@ from .ops.transformer import DeepSpeedTransformerLayer, DeepSpeedTransformerConf
 from .utils import log_dist
 from .utils.distributed import init_distributed
 
+from .runtime import zero
+from .runtime import DeepSpeedOptimizer, ZeROOptimizer
+
 from .pipe import PipelineModule
 
 from .git_version_info import version, git_hash, git_branch

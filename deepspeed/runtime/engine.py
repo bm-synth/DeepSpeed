@@ -372,6 +372,21 @@ class DeepSpeedEngine(Module):
         """
         return self._global_grad_norm
 
+    def __getattr__(self, name):
+        """
+        Pass through attributes defined in the model if they are not overridden by ds-engine.
+        """
+        _module = {}
+        if "module" in self.__dict__:
+            _module = self.__dict__['module']
+        if name in dir(self):
+            return getattr(self, name)
+        elif name in dir(_module):
+            return getattr(_module, name)
+        else:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'")
+
     def checkpoint_tag_validation_enabled(self):
         return self._config.checkpoint_tag_validation_enabled
 
@@ -969,9 +984,24 @@ class DeepSpeedEngine(Module):
             expected_optim_types.append(FairseqOptimizer)
         return expected_optim_types
 
+    def _supported_optims(self):
+        FairseqOptimizer = None
+        try:
+            from fairseq.optim.fairseq_optimizer import FairseqOptimizer
+        except ImportError:
+            pass
+
+        expected_optim_types = [Optimizer]
+        if FairseqOptimizer:
+            # fairseq optims are not torch.optim objects
+            expected_optim_types.append(FairseqOptimizer)
+        return expected_optim_types
+
     # Validate configuration based on command line arguments
     def _do_sanity_check(self):
-        assert isinstance(self.client_optimizer, (type(None), Optimizer, Callable)), \
+        expected_optim_types = self._supported_optims()
+        expected_optim_types += [type(None), Callable]
+        assert isinstance(self.client_optimizer, tuple(expected_optim_types)), \
             f'Client Optimizer is of unexpected type {type(self.client_optimizer)}'
 
         if not self.client_optimizer:
@@ -1025,8 +1055,16 @@ class DeepSpeedEngine(Module):
         # register module attribute in engine but avoid getattr
         self.__dict__['module'] = model
 
+    def _set_client_model(self, model):
+        # register client model in _modules so that nn.module methods work correctly
+        modules = self.__dict__.get('_modules')
+        modules['module'] = model
+        # register module attribute in engine but avoid getattr
+        self.__dict__['module'] = model
+
     def _configure_distributed_model(self, model):
-        self.module = model
+        self._set_client_model(model)
+
         if self.fp16_enabled():
             if self.zero_optimization_partition_weights() and any(
                 [hasattr(param,
@@ -1183,7 +1221,7 @@ class DeepSpeedEngine(Module):
     # Configure optimizer
     def _configure_optimizer(self, client_optimizer, model_parameters):
         if client_optimizer is not None:
-            if isinstance(client_optimizer, Optimizer):
+            if isinstance(client_optimizer, tuple(self._supported_optims())):
                 client_optimizer.param_groups[:] = [
                     pg for pg in client_optimizer.param_groups if len(pg["params"]) != 0
                 ]
@@ -1238,66 +1276,11 @@ class DeepSpeedEngine(Module):
                 logger.info("Initializing Apex amp from: {}".format(amp.__path__))
             except NameError:
                 # If apex/amp is available it will be imported above
-                raise RuntimeError("Unable to import apex/amp, please make sure it is installed")
-            return AMP
-        # data type checks
-        elif model_dtype == grad_accum_dtype:
-            if model_dtype == torch.bfloat16:
-                if self.pipeline_parallelism:
-                    logger.warning(
-                        "**** BF16 gradient accumulation is not safe numerically with large number of accumulation steps, proceed with caution *****"
-                    )
-                    return BFLOAT16
-                else:
-                    raise NotImplementedError(
-                        "Bfloat16 wrapper must use a gradient accumulation type of fp32, enable ZeRO to use Bfloat16 gradient accumulation"
-                    )
-            if model_dtype == torch.float16:
-                return FP16
-            # else optimizer_wrapper = None
-        elif model_dtype == torch.bfloat16 and grad_accum_dtype == torch.float32:
-            return BFLOAT16
-        else:
-            raise NotImplementedError("unsupported mix of model dtype and gradient accumulation type")
-
-        return None
-
-    # Configure optimizer
-    def _configure_optimizer(self, client_optimizer, model_parameters):
-        if client_optimizer is None:
-            if self.has_moe_layers:
-                model_parameters = configure_moe_param_groups(model_parameters)
-            basic_optimizer = self._configure_basic_optimizer(model_parameters)
-            log_dist(f"Using DeepSpeed Optimizer param name {self.optimizer_name()} as basic optimizer", ranks=[0])
-        else:
-            if isinstance(client_optimizer, tuple(self._supported_optims())):
-                basic_optimizer = client_optimizer
-                log_dist('Using client Optimizer as basic optimizer', ranks=[0])
-            else:
-                basic_optimizer = client_optimizer(model_parameters)
-                log_dist('Using client callable to create basic optimizer', ranks=[0])
-
-            if self.zero_use_cpu_optimizer() and not isinstance(basic_optimizer, deepspeed.ops.adam.DeepSpeedCPUAdam):
-                if self.zero_force_ds_cpu_optimizer():
-                    msg = f'You are using ZeRO-Offload with a client provided optimizer ({type(basic_optimizer)}) which in most cases will yield poor performance. Please either use deepspeed.ops.adam.DeepSpeedCPUAdam or set an optimizer in your ds-config (https://www.deepspeed.ai/docs/config-json/#optimizer-parameters). If you really want to use a custom optimizer w. ZeRO-Offload and understand the performance impacts you can also set <"zero_force_ds_cpu_optimizer": false> in your configuration file.'
-                    raise ZeRORuntimeException(msg)
-
-        basic_optimizer.param_groups[:] = [pg for pg in basic_optimizer.param_groups if len(pg["params"]) != 0]
-        log_dist("Removing param_group that has no 'params' in the basic Optimizer", ranks=[0])
-
-        self._check_for_duplicates(basic_optimizer)
-
-        self.basic_optimizer = basic_optimizer
-        log_dist("DeepSpeed Basic Optimizer = {}".format(basic_optimizer.__class__.__name__), ranks=[0])
-
-        optimizer_wrapper = self._do_optimizer_sanity_check(basic_optimizer)
-
-        if optimizer_wrapper == ZERO_OPTIMIZATION:
-            self.optimizer = self._configure_zero_optimizer(basic_optimizer)
-        elif optimizer_wrapper == AMP:
-            amp_params = self.amp_params()
-            log_dist(f"Initializing AMP with these params: {amp_params}", ranks=[0])
-            model, self.optimizer = amp.initialize(self.module, basic_optimizer, **amp_params)
+                raise RuntimeError(
+                    "Unable to import apex/amp, please make sure it is installed")
+            model, self.optimizer = amp.initialize(
+                self.module, basic_optimizer, **amp_params
+            )
             self._set_client_model(model)
             self._broadcast_model()
             # TODO: maybe need to broadcast experts differently?
@@ -2585,14 +2568,11 @@ class DeepSpeedEngine(Module):
                         state_dict.update(expert_state_dict)
                     moe_layer_id += 1
 
-    def load_module_state_dict(self, checkpoint, strict=True, custom_load_fn=None, fetch_z3_params=False):
-        if fetch_z3_params:
-            params_to_fetch = [
-                p for p in self.module.parameters()
-                if hasattr(p, 'ds_id') and p.ds_status == ZeroParamStatus.NOT_AVAILABLE
-            ]
+    def load_module_state_dict(self, state_dict, strict=True, custom_load_fn=None):
+        if custom_load_fn:
+            custom_load_fn(src=state_dict, dst=self.module)
         else:
-            params_to_fetch = []
+            self.module.load_state_dict(state_dict, strict=strict)
 
     def _get_zero_ckpt_prefix(self, dp_rank, bf16_mode):
         return f'{"bf16_" if bf16_mode else ""}zero_pp_rank_{dp_rank}'
@@ -2684,7 +2664,9 @@ class DeepSpeedEngine(Module):
                         tag=None,
                         load_module_strict=True,
                         load_optimizer_states=True,
-                        load_lr_scheduler_states=True):
+                        load_lr_scheduler_states=True,
+                        load_module_only=False,
+                        custom_load_fn=None):
         """Load training checkpoint
 
         Arguments:
@@ -2693,6 +2675,8 @@ class DeepSpeedEngine(Module):
             load_module_strict: Optional. Boolean to strictly enforce that the keys in state_dict of module and checkpoint match.
             load_optimizer_states: Optional. Boolean to load the training optimizer states from Checkpoint. Ex. ADAM's momentum and variance
             load_lr_scheduler_states: Optional. Boolean to add the learning rate scheduler states from Checkpoint.
+            load_module_only: Optional. Boolean to load only the model weights from the checkpoint. Ex. warmstarting.
+            custom_load_fn: Optional. Custom model load function.
         Returns:
             A tuple of ``load_path`` and ``client_state``.
 
@@ -2797,7 +2781,8 @@ class DeepSpeedEngine(Module):
                                                 num_experts=self.num_experts)
 
         self.load_module_state_dict(state_dict=checkpoint['module'],
-                                    strict=load_module_strict)
+                                    strict=load_module_strict,
+                                    custom_load_fn=custom_load_fn)
 
         self.loaded_checkpoint_dp_world_size = checkpoint['dp_world_size']
 

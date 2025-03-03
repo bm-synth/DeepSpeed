@@ -14,6 +14,7 @@ import math
 from torch._six import inf
 from torch.autograd import Variable
 
+from deepspeed.runtime import ZeROOptimizer
 from deepspeed.utils.logging import logger
 from deepspeed.runtime.fp16.loss_scaler import LossScaler, DynamicLossScaler
 from deepspeed.runtime.utils import get_global_norm, see_memory_usage, is_model_parallel_parameter, DummyOptim
@@ -103,6 +104,7 @@ def _apply_to_tensors_only(module, functional, backward_function, outputs):
                                                   backward_function,
                                                   outputs[key])
         return outputs
+
     elif type(outputs) is torch.Tensor:
         return functional.apply(module, backward_function, outputs)
     else:
@@ -229,7 +231,7 @@ class PostBackwardFunction(torch.autograd.Function):
 INITIAL_MICRO_STEP_ID = -1
 
 
-class DeepSpeedZeroOptimizer_Stage3(object):
+class DeepSpeedZeroOptimizer_Stage3(ZeROOptimizer):
     """
     DeepSpeedZeroOptimizer designed to reduce the memory footprint
     required for training large deep learning models.
@@ -298,6 +300,9 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         self.unflatten = util_ops.unflatten
         self.dtype = self.optimizer.param_groups[0]['params'][0].dtype
         self._global_grad_norm = 0.
+
+        self.custom_loss_scaler = False
+        self.external_loss_scale = None
 
         self.optimizer_swapper = None
         self.swap_optimizer = False
@@ -570,6 +575,15 @@ class DeepSpeedZeroOptimizer_Stage3(object):
                     offset,
                     param.ds_tensor.numel())
             offset += param.ds_tensor.numel()
+
+    def set_lr(self, lr):
+        """Set the learning rate."""
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lr
+
+    def get_lr(self):
+        """Return the current learning rate."""
+        return self.optimizer.param_groups[0]["lr"]
 
     # TODO. factor out to a utility outside of stage3
     @staticmethod
@@ -2454,6 +2468,15 @@ class DeepSpeedZeroOptimizer_Stage3(object):
         else:
             self._partitioned_params_swap_out(sub_group_id)
 
+    def override_loss_scale(self, loss_scale):
+        if loss_scale != self.external_loss_scale:
+            logger.info(
+                f'[deepspeed] setting loss scale from {self.external_loss_scale} -> {loss_scale}'
+            )
+        self.custom_loss_scaler = True
+        self.external_loss_scale = loss_scale
+
+    @instrument_w_nvtx
     def step(self, closure=None):
         """
             Not supporting closure.
@@ -2655,7 +2678,11 @@ class DeepSpeedZeroOptimizer_Stage3(object):
                 self.ipg_buffer.append(buf_1)
             self.ipg_index = 0
 
-        self.loss_scaler.backward(loss.float(), retain_graph=retain_graph)
+        if self.custom_loss_scaler:
+            scaled_loss = self.external_loss_scale * loss
+            scaled_loss.backward()
+        else:
+            self.loss_scaler.backward(loss.float(), retain_graph=retain_graph)
 
         self._get_param_coordinator(training=True).reset_step()
 
@@ -2699,7 +2726,10 @@ class DeepSpeedZeroOptimizer_Stage3(object):
 
     # Promote loss scale so it can be retrieved or set via "fp16_optimizer_instance.loss_scale"
     def _get_loss_scale(self):
-        return self.loss_scaler.loss_scale
+        if self.custom_loss_scaler:
+            return self.external_loss_scale
+        else:
+            return self.loss_scaler.cur_scale
 
     def _set_loss_scale(self, value):
         self.loss_scaler.cur_scale = value
