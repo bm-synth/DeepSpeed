@@ -23,6 +23,59 @@ class SimpleModel(torch.nn.Module):
         return self.cross_entropy_loss(hidden_dim, y)
 
 
+class LinearStack(torch.nn.Module):
+    def __init__(self, input_dim=128, hidden_dim=128, output_dim=128, num_layers=4):
+        super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+
+        self.input_layer = torch.nn.Linear(in_features=self.input_dim,
+                                           out_features=self.hidden_dim)
+        self.layers = torch.nn.ModuleList([
+            torch.nn.Linear(in_features=self.hidden_dim,
+                            out_features=self.hidden_dim,
+                            bias=False) for x in range(num_layers)
+        ])
+        self.output_layer = torch.nn.Linear(in_features=self.hidden_dim,
+                                            out_features=self.output_dim)
+
+        self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
+
+    def forward(self, x, y):
+        x = self.input_layer(x)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.output_layer(x)
+        return x
+
+
+class LinearStackPipe(PipelineModule):
+    def __init__(self,
+                 input_dim=128,
+                 hidden_dim=128,
+                 output_dim=128,
+                 num_layers=4,
+                 **kwargs):
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+
+        layers = []
+        layers.append(LayerSpec(torch.nn.Linear, self.input_dim, self.hidden_dim))
+        for x in range(self.num_layers):
+            layers.append(
+                LayerSpec(torch.nn.Linear,
+                          self.hidden_dim,
+                          self.hidden_dim,
+                          bias=False))
+            layers.append(lambda x: x)
+        layers.append(LayerSpec(torch.nn.Linear, self.hidden_dim, self.output_dim))
+
+        super().__init__(layers=layers, loss_fn=torch.nn.CrossEntropyLoss(), **kwargs)
+
+
 class SimpleOptimizer(torch.optim.Optimizer):
     def __init__(self, params, lr=0.11072018):
         defaults = dict(lr=lr)
