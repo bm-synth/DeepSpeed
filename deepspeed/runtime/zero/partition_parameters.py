@@ -19,7 +19,12 @@ from deepspeed import comm as dist
 from torch.nn import Module
 from torch.nn import Parameter
 
-from .linear import zero3_linear_wrap
+from .linear import LinearModuleForZeroStage3, LinearFunctionForZeroStage3
+from .offload_constants import *
+
+from ..utils import see_memory_usage
+from deepspeed.utils import log_dist, init_distributed
+from deepspeed.utils.debug import debug_param2name_id_shape, debug_module2name, debug_param2name, debug_param2name_id_shape_status, printflock, log_rank_file
 
 from deepspeed.utils import groups
 import deepspeed
@@ -96,7 +101,7 @@ def _dist_allgather_fn(input_tensor: Tensor, output_tensor: Tensor, group=None):
 
 
 def print_rank_0(message, debug=False, force=False):
-    rank = dist.get_rank()
+    rank = torch.distributed.get_rank()
     if rank == 0 and (debug or force):
         print(message)
     # other variations
@@ -1122,10 +1127,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
         print_rank_0(f'Converting Params in {module.__class__.__name__}', force=False)
         see_memory_usage(f"Before converting and partitioning params in {module.__class__.__name__}", force=False)
 
-        for name, param in module.named_parameters(recurse=False):
-            print_rank_0(f'Analyzing param {name} in {module.__class__.__name__}', force=False)
-            InsertPostInitMethodToModuleSubClasses.num_module_parameters += 1
-            InsertPostInitMethodToModuleSubClasses.num_module_elements += param.numel()
+        global param_count
+        for param in module.parameters(recurse=False):
+            param_count += param.numel()
             if not is_zero_param(param):
                 if not get_accelerator().on_accelerator(param):
                     param.data = param.data.to(self.local_device)
@@ -1135,8 +1139,9 @@ class Init(InsertPostInitMethodToModuleSubClasses):
 
                 self._zero_init_param(param)
                 print_rank_0(
-                    f"Partitioning param {debug_param2name_id_shape(param)} module={debug_module2name(module)}")
-
+                    f"Partitioning param {debug_param2name_id_shape(param)} module={debug_module2name(module)}"
+                )
+                param.partition()
         see_memory_usage(
             f"Param count {InsertPostInitMethodToModuleSubClasses.num_module_elements}. After converting and partitioning params in {module.__class__.__name__}",
             force=False)

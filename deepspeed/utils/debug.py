@@ -1,21 +1,10 @@
-# Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: Apache-2.0
+""" debug utils """
 
-# DeepSpeed Team
-
-# For lazy import with printflock()
-fcntl = None
+import fcntl
 
 # for debug purposes map module and param objects to their fully qualified names
 module_names = {}
 param_names = {}
-
-
-def debug_clear_module_and_param_names():
-    global module_names
-    global param_names
-    module_names = {}
-    param_names = {}
 
 
 def debug_extract_module_and_param_names(model):
@@ -79,8 +68,8 @@ def printflock(*msgs):
     1. Enable the force debug in say partitioning and zero3 files
     2. Override the usual versions with ::
 
-        def print_rank_0(message, debug=False, force=False):
-            rank = deepspeed.comm.get_rank()
+        def print_rank_0(message, debug=False, force=True):
+            rank = torch.distributed.get_rank()
             printflock(f"[{rank}] {message}")
     3. run the program and you get both logs non-interleaved
 
@@ -89,9 +78,6 @@ def printflock(*msgs):
     then compare those.
 
     """
-    global fcntl
-    if fcntl is None:
-        import fcntl
 
     with open(__file__, "r") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
@@ -113,8 +99,8 @@ def log_rank_file(rank, *msgs):
     1. Enable the force debug in say partitioning and zero3 files
     2. Override the usual versions of print_rank_0 in those files with ::
 
-        def print_rank_0(message, debug=False, force=False):
-            rank = deepspeed.comm.get_rank()
+        def print_rank_0(message, debug=False, force=True):
+            rank = torch.distributed.get_rank()
             log_rank_file(rank, message)
 
     3. run the program
@@ -134,20 +120,3 @@ def log_rank_file(rank, *msgs):
     for m in msgs:
         fh.write(f"{m}\n")
     fh.flush()
-
-
-def print_backward_tensors(tensor):
-
-    def _print_bwd_tensors(grad_fn):
-        print(f"Backward tensors in {grad_fn}")
-        for funcs in grad_fn.next_functions:
-            if funcs[0]:
-                try:
-                    tensor = getattr(funcs[0], 'variable')
-                    print(funcs[0])
-                    print(f"Tensor - id: {id(tensor)}, shape: {tensor.shape}, data: {tensor}, grad: {tensor.grad}")
-                except AttributeError as e:
-                    _print_bwd_tensors(funcs[0])
-
-    if hasattr(tensor, 'grad_fn'):
-        _print_bwd_tensors(tensor.grad_fn)
