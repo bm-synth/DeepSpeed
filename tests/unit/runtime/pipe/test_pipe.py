@@ -7,14 +7,12 @@ import copy
 import torch.nn as nn
 import pytest
 
-import torch
-
-import deepspeed
 import deepspeed.comm as dist
 from deepspeed.runtime.pipe.topology import PipeDataParallelTopology
 from deepspeed.runtime.pipe.module import PipelineModule
 from unit.alexnet_model import AlexNetPipe, train_cifar
 from unit.common import DistributedTest
+from unit.util import skip_on_arch
 
 PipeTopo = PipeDataParallelTopology
 
@@ -48,25 +46,53 @@ def rel_diff(A, B):
     return abs(A - B) / abs(A)
 
 
-@pytest.mark.parametrize('topo_config', [
-    {
-        "num_pp": 1,
-        "num_dp": 4
-    },
-    {
-        "num_pp": 2,
-        "num_dp": 2
-    },
-    {
-        "num_pp": 4,
-        "num_dp": 1
-    },
-])
+@pytest.mark.parametrize('topo_config',
+                         [
+                             {
+                                 "num_pp": 1,
+                                 "num_dp": 4
+                             },
+                             {
+                                 "num_pp": 2,
+                                 "num_dp": 2
+                             },
+                             {
+                                 "num_pp": 4,
+                                 "num_dp": 1
+                             },
+                         ])
 class TestPipeCifar10(DistributedTest):
     world_size = 4
 
-    def test_pipe_base(self, topo_config):
+    def test(self, topo_config):
         skip_on_arch(min_arch=7)
+
+        config_dict = {
+            "train_batch_size": 16,
+            "train_micro_batch_size_per_gpu": 4,
+            "steps_per_print": 20,
+            "optimizer": {
+                "type": "Adam",
+                "params": {
+                    "lr": 0.001,
+                    "betas": [0.9,
+                              0.999],
+                    "eps": 1e-8,
+                    "weight_decay": 3e-7
+                }
+            },
+            "zero_optimization": {
+                "stage": 0
+            },
+            "fp16": {
+                "enabled": False
+            },
+            "pipeline": {
+                "seed_layers": True,
+                "activation_checkpoint_interval": 1
+            }
+        }
+
         topo = PipeTopo(**topo_config)
         steps = 100  # must be >=100
 
