@@ -142,9 +142,6 @@ class InferenceEngine(Module):
             assert pkg_version.parse(torch.__version__) >= pkg_version.parse("1.10"), \
                 "If you want to use cuda graph, please upgrade torch to at least v1.10"
 
-        if config.checkpoint and not config.replace_with_kernel_inject:
-            self._load_checkpoint(config.checkpoint)
-
         # convert model to intended dtype
         if config.dtype:
             self._convert_to_dtype(config)
@@ -163,10 +160,6 @@ class InferenceEngine(Module):
 
         if moe and dist.get_world_size() > 1:
             self._create_ep_parallel_group(config.moe.moe_experts)
-
-        # retain this from the old conditional argument being passed to apply_injection_policy()
-        if not config.replace_with_kernel_inject:
-            config.checkpoint = None
 
         # We only support three modes: 1) user specified policy for tensor-parallelism, 2) kernel injection (replace_with_kernel_inject), and 3) automatic tensor parallelism.
         if self.injection_dict:
@@ -334,225 +327,13 @@ class InferenceEngine(Module):
         def load(module, state_dict, prefix):
             args = (state_dict, prefix, {}, True, [], [], error_msgs)
             if hasattr(module, 'weight'):
-                if 'query_key_value' in prefix:
-                    module.weight = self.mp_replace.qkv_copy(module.weight.data, state_dict[prefix + 'weight'])
-                else:
-                    module.weight = self.mp_replace.copy(module.weight.data, state_dict[prefix + 'weight'])
-            else:
-                module.norm.weight = self.mp_replace.copy(module.norm.weight.data, state_dict[prefix + 'weight'])
-            if prefix + 'bias' in self.key_list:
-                if hasattr(module, 'norm'):
-                    module.norm.bias = self.mp_replace.copy(module.norm.bias, state_dict[prefix + 'bias'])
-                else:
-                    data = state_dict[prefix + 'bias']
-                    data = data.to(get_accelerator().current_device_name())
-                    module.bias = self.mp_replace.copy(module.bias, data)
-
-        layer_policies = {
-            nn.Linear: load,
-            nn.Embedding: load,
-            nn.LayerNorm: load,
-            LinearLayer: load,
-            LinearAllreduce: load
-        }
-
-        def load_module_recursive(module, prefix='', level=0):
-            for name, child in module.named_children():
-                if child.__class__ in layer_policies:
-                    checking_key = prefix + name + '.'
-                    if not any(checking_key in item for item in self.key_list):
-                        continue
-                    if len(list(child.parameters())) > 0 and list(child.parameters())[0].numel() == 0:
-                        if len(child.weight.ds_shape) == 1:
-                            child = Normalize(dim=child.weight.ds_shape[-1], dtype=child.weight.dtype, eps=child.eps)
-                            setattr(module, name, child)
-                    load(child, self.sd, prefix + name + '.')
-                else:
-                    load_module_recursive(child, prefix if level == 0 else prefix + name + '.', level + 1)
-
-        load_module_recursive(r_module)
-
-    def _apply_injection_policy(self, config, client_module=None):
-        # client_module is only passed when using the injection_dict method.
-        checkpoint_dir = config.checkpoint
-        checkpoint = SDLoaderFactory.get_sd_loader_json(checkpoint_dir,
-                                                        self.checkpoint_engine) if checkpoint_dir is not None else None
-
-        generic_injection(self.module,
-                          fp16=(config.dtype == torch.half) or (config.dtype == torch.int8),
-                          enable_cuda_graph=config.enable_cuda_graph)
-
-        if isinstance(self.module, torch.nn.Module):
-            # config is our DeepSpeedInferenceConfig and self.config is the HF model config
-            replace_transformer_layer(client_module, self.module, checkpoint, config, self.config)
-
-    def _get_all_ckpt_names(self, checkpoints_path, tag):
-        ckpt_file_pattern = self._get_ckpt_name(checkpoints_path, tag, mp_placeholder="*")
-        import glob
-
-        ckpt_files = glob.glob(ckpt_file_pattern)
-        ckpt_files.sort()
-        return ckpt_files
-
-    def _get_ckpt_name(self, checkpoints_path, tag, mp_placeholder=None):
-        if mp_placeholder is not None:
-            mp_rank_str = mp_placeholder
-        else:
-            mp_rank = 0 if self.mpu is None else self.mpu.get_model_parallel_rank()
-            mp_rank_str = "{:02d}".format(mp_rank)
-
-        ckpt_name = os.path.join(
-            checkpoints_path,
-            "mp_rank_" + mp_rank_str + "_model_states.pt",
-        )
-        return ckpt_name
-
-    def _load_checkpoint(self, load_dir, load_module_strict=True, tag=None):
-        is_pipe_parallel = isinstance(self.module, PipelineModule)
-        if is_pipe_parallel:
-            raise RuntimeError('pipeline parallelism is currently not supported in inference.')
-        if not isinstance(load_dir, dict) and os.path.isdir(load_dir):
-            if tag is None:
-                latest_path = os.path.join(load_dir, "latest")
-                if os.path.isfile(latest_path):
-                    with open(latest_path, "r") as fd:
-                        tag = fd.read().strip()
-
-            ckpt_list = self._get_all_ckpt_names(load_dir, tag)
-            sd_loader = SDLoaderFactory.get_sd_loader(ckpt_list, self.checkpoint_engine)
-        else:
-            sd_loader = SDLoaderFactory.get_sd_loader_json(load_dir, self.checkpoint_engine)
-
-        mp_rank = 0 if self.mpu is None else self.mpu.get_model_parallel_rank()
-
-        load_path, checkpoint, quantize_config = sd_loader.load(self.mp_world_size,
-                                                  mp_rank,
-                                                  is_pipe_parallel=is_pipe_parallel,
-                                                  quantize=(self.dtype is torch.int8),
-                                                  quantize_groups=self.quantize_groups,
-                                                  mlp_extra_grouping=self.mlp_extra_grouping)
-
-        self.quantization_scales, self.quantize_merge_count = quantize_config
-
-        moe, _ = has_moe_layers(self.module)
-        if moe:
-            from deepspeed.runtime.engine import DeepSpeedEngine
-            old_moe_load = False
-            if not isinstance(checkpoint['num_experts'], list):
-                old_moe_load = True
-            DeepSpeedEngine.load_moe_state_dict(
-                load_dir,
-                tag,
-                state_dict=checkpoint[self._choose_module_key(checkpoint)],
-                old_moe_load=old_moe_load,
-                model=self.module,
-                mpu=self.mpu)
-
-        self.module.load_state_dict(state_dict=checkpoint['model'],
-                                    strict=load_module_strict)
-
-    def _convert_to_dtype(self):
-        if self.dtype is torch.int8 and self.quantization_scales is None:
-            quantizer = WeightQuantization(mlp_extra_grouping=self.mlp_extra_grouping)
-            model, self.quantization_scales = quantizer.model_quantize(self.module,
-                                                                        self.injection_dict,
-                                                                        self.quatize_bits,
-                                                                        self.quantize_groups)
-        elif self.dtype == torch.half:
-            self.module.half()
-        elif self.dtype == torch.float:
-            self.module.float()
-
-    def _pre_forward_hook(self, module, *inputs, **kwargs):
-        for input in inputs:
-            if torch.is_tensor(input):
-                input = input.to(torch.cuda.current_device())
-                if self.mp_world_size > 1:
-                    if not input.is_contiguous():
-                        input = input.contiguous()
-                    dist.broadcast(input, 0)
-
-    def _post_forward_hook(self, module, input, output):
-        if self.use_cuda_events:
-            self.timers(INFERENCE_MODEL_TIMER).stop()
-            elapsed_time = self.timers(INFERENCE_MODEL_TIMER).elapsed(reset=True)
-        else:
-            get_accelerator().synchronize()
-            self._end = time.time()
-            elapsed_time = (self._end - self._start) * 1e3  # convert seconds to ms
-        self._model_times.append(elapsed_time)
-
-    def _create_model_parallel_group(self, config):
-        # Call the init process
-        if InferenceEngine.inference_mp_group is None:
-            init_distributed()
-            local_rank = int(os.getenv('LOCAL_RANK', '0'))
-            get_accelerator().set_device(local_rank)
-
-            ranks = [i for i in range(config.tensor_parallel.tp_size)]
-            self.mp_group = dist.new_group(ranks)
-            InferenceEngine.inference_mp_group = self.mp_group
-        else:
-            self.mp_group = InferenceEngine.inference_mp_group
-
-    def _create_ep_parallel_group(self, moe_experts):
-        # Call the init process
-        self.ep_group = {}
-        self.expert_mp_group = {}
-        moe_experts = moe_experts if type(moe_experts) is list else [moe_experts]
-        for e in moe_experts:
-            self.ep_group.update({e: None})
-            self.expert_mp_group.update({e: None})
-        for moe_ep_size in self.ep_group.keys():
-            num_ep_groups = dist.get_world_size() // moe_ep_size
-            for i in range(num_ep_groups):
-                ep_cnt = i * moe_ep_size
-                size = dist.get_world_size() if moe_ep_size > dist.get_world_size() else moe_ep_size
-                ranks = list(range(ep_cnt, ep_cnt + size))
-                _ep_group = dist.new_group(ranks)
-                if dist.get_rank() in ranks:
-                    self.ep_group.update({moe_ep_size: _ep_group})
-
-            if dist.get_world_size() > moe_ep_size:
-                num_expert_mp_groups = dist.get_world_size() // num_ep_groups
-                expert_mp_size = dist.get_world_size() // moe_ep_size
-                for i in range(num_expert_mp_groups):
-                    expert_mp_comm_ranks = [i + nr * moe_ep_size for nr in range(expert_mp_size)]
-                    _expert_mp_group = dist.new_group(expert_mp_comm_ranks)
-                    if dist.get_rank() in expert_mp_comm_ranks:
-                        self.expert_mp_group.update({moe_ep_size: _expert_mp_group})
-
-    def _init_quantization_setting(self, quantization_setting):
-        self.quantize_bits = 8
-        self.mlp_extra_grouping = False
-        self.quantize_groups = 1
-        if type(quantization_setting) is tuple:
-            self.mlp_extra_grouping, \
-            self.quantize_groups = quantization_setting
-        elif quantization_setting is not None:
-            self.quantize_groups = quantization_setting
-        log_dist(
-            f"quantize_bits = {self.quantize_bits} "
-            f"mlp_extra_grouping = {self.mlp_extra_grouping}, "
-            f"quantize_groups = {self.quantize_groups}", [0])
-
-    def load_model_with_checkpoint(self, r_module):
-        self.mp_replace = ReplaceWithTensorSlicing(
-            mp_group=self.mp_group, mp_size=self._config.tensor_parallel.tp_size)  #, out_dim=0, in_dim=1)
-        error_msgs = []
-
-        def load(module, state_dict, prefix):
-            args = (state_dict, prefix, {}, True, [], [], error_msgs)
-            if hasattr(module, 'weight'):
                 if module.weight.data.is_meta:
                     # meta tensor cannot be casted or copied to, so we need to replace it with a normal tensor here
                     module.weight = torch.nn.parameter.Parameter(data=torch.empty_like(module.weight.data,
                                                                                        device="cpu"),
                                                                  requires_grad=module.weight.data.requires_grad)
                 if 'query_key_value' in prefix:
-                    module.weight = self.mp_replace.strided_copy(module.weight.data,
-                                                                 state_dict[prefix + 'weight'],
-                                                                 num_splits=3)
+                    module.weight = self.mp_replace.qkv_copy(module.weight.data, state_dict[prefix + 'weight'])
                 else:
                     module.weight = self.mp_replace.copy(module.weight.data, state_dict[prefix + 'weight'])
             else:
@@ -619,7 +400,9 @@ class InferenceEngine(Module):
         checkpoint = SDLoaderFactory.get_sd_loader_json(checkpoint_dir,
                                                         self.checkpoint_engine) if checkpoint_dir is not None else None
 
-        generic_injection(self.module, dtype=config.dtype, enable_cuda_graph=config.enable_cuda_graph)
+        generic_injection(self.module,
+                          fp16=(config.dtype == torch.half) or (config.dtype == torch.int8),
+                          enable_cuda_graph=config.enable_cuda_graph)
 
         if isinstance(self.module, torch.nn.Module):
             # config is our DeepSpeedInferenceConfig and self.config is the HF model config
@@ -665,7 +448,7 @@ class InferenceEngine(Module):
         checkpoint = sd_loader['checkpoints']
 
         if type(checkpoint) is list:
-            self.sd = torch.load(checkpoint[0], map_location='cpu', weights_only=False)
+            self.sd = torch.load(checkpoint[0], map_location='cpu')
             self.key_list = list(self.sd.keys())
 
             self.load_model_with_checkpoint(self.module)
@@ -673,7 +456,7 @@ class InferenceEngine(Module):
             for i in range(1, len(checkpoint)):
                 if not dist.is_initialized() or dist.get_rank() == 0:
                     print(f"loading checkpoint ({i})")
-                self.sd = torch.load(sd_loader[i], map_location=get_accelerator().device_name())
+                self.sd = torch.load(checkpoint[i], map_location=get_accelerator().device_name())
                 self.key_list = list(self.sd.keys())
                 self.load_model_with_checkpoint(self.module)
         else:
