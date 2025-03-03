@@ -4,82 +4,11 @@
 # DeepSpeed Team
 
 import math
-from ... import op_builder
-
-inference_cuda_module = None
-
-
-class DeepSpeedMLPFunction(Function):
-    @staticmethod
-    def forward(ctx,
-                input,
-                residual,
-                residual_norm,
-                bias,
-                inter_w,
-                inter_b,
-                attn_nw,
-                attn_nb,
-                config,
-                mp_group,
-                output_b,
-                output_w,
-                q_scales,
-                q_groups,
-                merge_count,
-                mlp_gemm_func,
-                fused_gemm_gelu,
-                vector_matmul_func,
-                bias_residual_func,
-                residual_add_func,
-                activation_func_type=ActivationFuncType.GELU):
-
-        if attn_nw is None:
-            output = fused_gemm_gelu(residual_norm,
-                                     inter_w,
-                                     inter_w.scale,
-                                     inter_b,
-                                     output_w,
-                                     output_w.scale,
-                                     config.epsilon,
-                                     config.pre_layer_norm,
-                                     config.q_int8,
-                                     False)
-        else:
-            output, residual_add = mlp_gemm_func(input,
-                                             residual,
-                                             bias,
-                                             inter_w,
-                                             output_w,
-                                             inter_b,
-                                             attn_nw,
-                                             attn_nb,
-                                             config.epsilon,
-                                             config.pre_layer_norm,
-                                             config.mlp_after_attn,
-                                             inter_w.scale,
-                                             output_w.scale,
-                                             config.q_int8,
-                                             config.mlp_act_func_type)
-        residual = residual if config.pre_layer_norm else residual_add
-        residual_add_func(
-            output,                # hidden state
-            residual,              # residual
-            input,                 # attention output
-            bias if bias is not None else output_b,
-            output_b,
-            config.mp_size,         # model parallel size
-            config.mlp_after_attn,  # whether mlp is after attention (GPTJ model architecture runs the MLP layer in parallel with attention)
-            bias is not None,       # whether bias addition is fused
-            config.pre_layer_norm)  # whether the layer norm is applied before attention
-        if mp_group is not None and dist.get_world_size(group=mp_group) > 1:
-            dist.all_reduce(residual, group=mp_group)
-        return residual
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        raise RuntimeError('You are running with DeepSpeed Inference mode. \
-                            Please switch to Training mode for running backward!')
+import torch
+import torch.nn as nn
+from deepspeed import comm as dist
+from deepspeed.accelerator import get_accelerator
+from .op_binding import MLPGemmOp, VectorMatMulOp, GELUGemmOp, ResidualAddOp
 
 
 class DeepSpeedMLP(nn.Module):
@@ -91,7 +20,7 @@ class DeepSpeedMLP(nn.Module):
         self.config = config
         data_type = torch.int8 if config.q_int8 else torch.half if config.fp16 else torch.float
         data_type_fp = torch.half if config.fp16 else torch.float
-        device = torch.cuda.current_device()  #if config.bigscience_bloom else 'cpu'
+        device = get_accelerator().current_device_name()
         self.attn_nw = nn.Parameter(torch.empty(self.config.hidden_size,
                                                 dtype=data_type_fp,
                                                 device=device),
@@ -131,52 +60,31 @@ class DeepSpeedMLP(nn.Module):
         self.fused_gemm_gelu = GELUGemmOp(config)
         self.residual_add_func = ResidualAddOp(config)
 
-        if len(DeepSpeedMLP._inter_w_buffers) == 0:
-            DeepSpeedMLP._inter_w_buffers = [
-                torch.empty(self.intm_w_sz_per_partition, self.config.hidden_size, dtype=data_type, device=device),
-                torch.empty(self.intm_w_sz_per_partition, dtype=data_type_fp, device=device)
-            ]
-
-    def _merge_inter_w(self):
-        inter_w = DeepSpeedMLP._inter_w_buffers[0]
-        inter_w[:self.intm_w_sz_per_partition // 2, :] = self.inter_up_w  # type: ignore
-        inter_w[self.intm_w_sz_per_partition // 2:, :] = self.inter_gate_w  # type: ignore
-        if self.inter_up_b is not None:
-            inter_b = DeepSpeedMLP._inter_w_buffers[1]
-            inter_b[:self.intm_w_sz_per_partition // 2] = self.inter_up_b  # type: ignore
-            inter_b[self.intm_w_sz_per_partition // 2:] = self.inter_gate_b  # type: ignore
-        return DeepSpeedMLP._inter_w_buffers
-
     def forward(self, input, residual, residual_norm, bias):
-        if self.inter_w is None:
-            self._inter_w, self._inter_b = self._merge_inter_w()
-        else:
-            self._inter_w = self.inter_w
-            self._inter_b = self.inter_b
-
         residual_add = None
         if self.attn_nw is None:
             output = self.fused_gemm_gelu(input=residual_norm,
-                                          weight=self._inter_w,
-                                          bias=self._inter_b,
+                                          weight=self.inter_w,
+                                          bias=self.inter_b,
                                           weight_out=self.output_w)
         else:
             output, residual_add = self.mlp_gemm_func(input=input,
                                                       residual=residual,
-                                                      weight_interm=self._inter_w,
-                                                      weight_out=self.output_w,
                                                       input_bias=bias,
-                                                      bias=self._inter_b,
+                                                      weight_interm=self.inter_w,
+                                                      weight_out=self.output_w,
+                                                      bias=self.inter_b,
                                                       gamma=self.attn_nw,
                                                       beta=self.attn_nb)
+        residual = self.residual_add_func(
+            hidden_state=output,
+            residual=residual,
+            attention_output=input,
+            attention_bias=bias if bias is not None else self.output_b,
+            final_bias=self.output_b,
+            add_bias=bias is not None,
+            residual_add=residual_add)
 
-        residual = self.residual_add_func(hidden_state=output,
-                                          residual=residual,
-                                          add_bias=bias is not None,
-                                          attention_output=input,
-                                          attention_bias=bias if bias is not None else self.output_b,
-                                          final_bias=self.output_b,
-                                          residual_add=residual_add)
         if self.mp_group is not None and dist.get_world_size(group=self.mp_group) > 1:
             dist.all_reduce(residual, group=self.mp_group)
 
