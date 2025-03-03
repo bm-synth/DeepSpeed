@@ -123,21 +123,6 @@ class BF16_Optimizer(ZeROOptimizer):
             for key in groups._get_expert_data_parallel_group_dict().keys():
                 self.expert_gradients[key] = []
 
-    def _configure_moe_settings(self):
-        assert any(
-            [is_moe_param_group(group) for group in self.optimizer.param_groups]
-        ), "The model has moe layers, but None of the param groups are marked as MoE. Create a param group with 'moe' key set to True before creating optimizer"
-
-        for i, group in enumerate(self.optimizer.param_groups):
-            if is_moe_param_group(group):
-                assert all([is_moe_param(param)
-                            for param in group['params']]), "All params in MoE group must be MoE params"
-                self.real_dp_process_group[i] = groups._get_expert_data_parallel_group(group['name'])
-        self.expert_gradients = {}
-        if self.has_moe_layers:
-            for key in groups._get_expert_data_parallel_group_dict().keys():
-                self.expert_gradients[key] = []
-
     def _setup_for_real_optimizer(self):
         self.partition_count = [dist.get_world_size(group=pg) for pg in self.real_dp_process_group]
 
@@ -211,6 +196,10 @@ class BF16_Optimizer(ZeROOptimizer):
             param_group['params'] = [self.fp32_groups_flat_partition[i]]
 
             see_memory_usage(f'after initializing group {i}', force=True)
+
+        see_memory_usage('before initialize_optimizer', force=True)
+        self.initialize_optimizer_states()
+        see_memory_usage('end initialize_optimizer', force=True)
 
         self._grad_acc_hooks = []
         if self.immediate_grad_update:
