@@ -1,7 +1,6 @@
-// Copyright (c) Microsoft Corporation.
-// SPDX-License-Identifier: Apache-2.0
-
-// DeepSpeed Team
+/*
+Copyright 2022 The Microsoft DeepSpeed Team
+*/
 
 #pragma once
 
@@ -145,22 +144,9 @@ of reduce should be straightforward (can just wrap the sum reduction) and
 would be a good extension of the header.
 */
 
-DS_D_INLINE int _warp_rank()
-{
-    const int thread_rank =
-        threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
-    return thread_rank / hw_warp_size;
-}
-
 /* Float element reduce implementations */
 template <>
 DS_D_INLINE float element<ROpType::Add>(const float lhs, const float rhs)
-{
-    return lhs + rhs;
-}
-
-template <>
-DS_D_INLINE double element<ROpType::Add>(const double lhs, const double rhs)
 {
     return lhs + rhs;
 }
@@ -195,19 +181,6 @@ DS_D_INLINE __half element<ROpType::Max>(const __half lhs, const __half rhs)
 #endif
 }
 
-#ifdef BF16_AVAILABLE
-template <>
-DS_D_INLINE __nv_bfloat16 element<ROpType::Max>(const __nv_bfloat16 lhs, const __nv_bfloat16 rhs)
-{
-#if __CUDA_ARCH__ >= 800
-    // Intrinsic limited to Ampere + newer
-    return __hmax(lhs, rhs);
-#else
-    return (lhs > rhs) ? lhs : rhs;
-#endif
-}
-#endif
-
 template <>
 DS_D_INLINE __half element<ROpType::Min>(const __half lhs, const __half rhs)
 {
@@ -239,21 +212,6 @@ DS_D_INLINE __half2 element<ROpType::Max>(const __half2 lhs, const __half2 rhs)
 #endif
 }
 
-#ifdef BF16_AVAILABLE
-template <>
-DS_D_INLINE __nv_bfloat162 element<ROpType::Max>(const __nv_bfloat162 lhs, const __nv_bfloat162 rhs)
-{
-#if __CUDA_ARCH__ >= 800
-    return __hmax2(lhs, rhs);
-#else
-    __nv_bfloat162 ret_val;
-    ret_val.x = (lhs.x > rhs.x) ? lhs.x : rhs.x;
-    ret_val.y = (lhs.y > rhs.y) ? lhs.y : rhs.y;
-    return ret_val;
-#endif
-}
-#endif
-
 template <>
 DS_D_INLINE __half2 element<ROpType::Min>(const __half2 lhs, const __half2 rhs)
 {
@@ -267,60 +225,6 @@ DS_D_INLINE __half2 element<ROpType::Min>(const __half2 lhs, const __half2 rhs)
 #endif
 }
 
-template <>
-DS_D_INLINE int32_t element<ROpType::Add>(const int32_t lhs, const int32_t rhs)
-{
-    return lhs + rhs;
-}
-
-template <>
-DS_D_INLINE int32_t element<ROpType::Max>(const int32_t lhs, const int32_t rhs)
-{
-    return (lhs > rhs) ? lhs : rhs;
-}
-
-template <>
-DS_D_INLINE int32_t element<ROpType::Min>(const int32_t lhs, const int32_t rhs)
-{
-    return (lhs < rhs) ? lhs : rhs;
-}
-
-template <>
-DS_D_INLINE uint32_t element<ROpType::Add>(const uint32_t lhs, const uint32_t rhs)
-{
-    return lhs + rhs;
-}
-
-template <>
-DS_D_INLINE uint32_t element<ROpType::Max>(const uint32_t lhs, const uint32_t rhs)
-{
-    return (lhs > rhs) ? lhs : rhs;
-}
-
-template <>
-DS_D_INLINE uint32_t element<ROpType::Min>(const uint32_t lhs, const uint32_t rhs)
-{
-    return (lhs < rhs) ? lhs : rhs;
-}
-
-template <>
-DS_D_INLINE int64_t element<ROpType::Add>(const int64_t lhs, const int64_t rhs)
-{
-    return lhs + rhs;
-}
-
-template <>
-DS_D_INLINE int64_t element<ROpType::Max>(const int64_t lhs, const int64_t rhs)
-{
-    return (lhs > rhs) ? lhs : rhs;
-}
-
-template <>
-DS_D_INLINE int64_t element<ROpType::Min>(const int64_t lhs, const int64_t rhs)
-{
-    return (lhs < rhs) ? lhs : rhs;
-}
-
 /*
 Reduction initialization primitives
 */
@@ -328,11 +232,6 @@ template <>
 DS_D_INLINE float init<ROpType::Add>()
 {
     return 0.0f;
-}
-template <>
-DS_D_INLINE double init<ROpType::Add>()
-{
-    return (double)0.0f;
 }
 
 template <>
@@ -364,124 +263,31 @@ DS_D_INLINE __half init<ROpType::Min>()
 }
 
 template <>
-DS_D_INLINE __half init<ROpType::Max>()
+__half init<ROpType::Max>()
 {
     constexpr __half_raw neg_inf = {0xFC00};
     return __half(neg_inf);
 }
 
-#ifdef BF16_AVAILABLE
-template <>
-DS_D_INLINE __nv_bfloat16 init<ROpType::Max>()
-{
-    constexpr __nv_bfloat16_raw neg_inf = {0xFF80};
-    return __nv_bfloat16(neg_inf);
-}
-#endif
-
 template <>
 DS_D_INLINE __half2 init<ROpType::Add>()
 {
-#ifdef __HIP_PLATFORM_AMD__
-    return __half2{_Float16_2{0x0000, 0x0000}};
-#else
     constexpr __half2_raw zero = {0x0000, 0x0000};
     return __half2(zero);
-#endif
 }
 
 template <>
 DS_D_INLINE __half2 init<ROpType::Min>()
 {
-#ifdef __HIP_PLATFORM_AMD__
-    return __half2{_Float16_2{0x7C00, 0x7C00}};
-#else
     constexpr __half2_raw inf = {0x7C00, 0x7C00};
     return __half2(inf);
-#endif
 }
 
 template <>
 DS_D_INLINE __half2 init<ROpType::Max>()
 {
-#ifdef __HIP_PLATFORM_AMD__
-    return __half2{_Float16_2{0xFC00, 0xFC00}};
-#else
     constexpr __half2_raw neg_inf = {0xFC00, 0xFC00};
     return __half2(neg_inf);
-#endif
-}
-
-template <>
-DS_D_INLINE int32_t init<ROpType::Add>()
-{
-    return 0;
-}
-
-template <>
-DS_D_INLINE int32_t init<ROpType::Min>()
-{
-    return 0x7FFFFFFF;
-}
-
-template <>
-DS_D_INLINE int32_t init<ROpType::Max>()
-{
-    return 0x80000000;
-}
-
-template <>
-DS_D_INLINE uint32_t init<ROpType::Add>()
-{
-    return 0;
-}
-
-template <>
-DS_D_INLINE uint32_t init<ROpType::Min>()
-{
-    return 0xFFFFFFFF;
-}
-
-template <>
-DS_D_INLINE uint32_t init<ROpType::Max>()
-{
-    return 0;
-}
-
-template <>
-DS_D_INLINE int64_t init<ROpType::Add>()
-{
-    return 0;
-}
-
-template <>
-DS_D_INLINE int64_t init<ROpType::Min>()
-{
-    return 0x7FFFFFFFFFFFFFFF;
-}
-
-template <>
-DS_D_INLINE int64_t init<ROpType::Max>()
-{
-    return 0x8000000000000000;
-}
-
-template <>
-DS_D_INLINE uint64_t init<ROpType::Add>()
-{
-    return 0;
-}
-
-template <>
-DS_D_INLINE uint64_t init<ROpType::Min>()
-{
-    return 0xFFFFFFFFFFFFFFFF;
-}
-
-template <>
-DS_D_INLINE uint64_t init<ROpType::Max>()
-{
-    return 0;
 }
 
 template <ROpType Op, typename T>
@@ -526,8 +332,8 @@ here (fold is C++17 only and I don't think helps and recursion feels like
 huge overkill that harms readability) that would be wonderful.
 */
 
-template <typename T, ROpType Op, int reduce_width = hw_warp_size>
-DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
+template <ROpType Op, int reduce_width = hw_warp_size>
+DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, float* data)
 {
 #pragma unroll
     for (int i = 1; i < reduce_width; i *= 2) {
@@ -535,8 +341,8 @@ DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
     }
 }
 
-template <typename T, ROpType Op1, ROpType Op2, int reduce_width = hw_warp_size>
-DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
+template <ROpType Op1, ROpType Op2, int reduce_width = hw_warp_size>
+DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, float* data)
 {
 #pragma unroll
     for (int i = 1; i < reduce_width; i *= 2) {
@@ -545,8 +351,8 @@ DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
     }
 }
 
-template <typename T, ROpType Op1, ROpType Op2, ROpType Op3, int reduce_width = hw_warp_size>
-DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
+template <ROpType Op1, ROpType Op2, ROpType Op3, int reduce_width = hw_warp_size>
+DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, float* data)
 {
 #pragma unroll
     for (int i = 1; i < reduce_width; i *= 2) {
@@ -556,13 +362,8 @@ DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
     }
 }
 
-template <typename T,
-          ROpType Op1,
-          ROpType Op2,
-          ROpType Op3,
-          ROpType Op4,
-          int reduce_width = hw_warp_size>
-DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
+template <ROpType Op1, ROpType Op2, ROpType Op3, ROpType Op4, int reduce_width = hw_warp_size>
+DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, float* data)
 {
 #pragma unroll
     for (int i = 1; i < reduce_width; i *= 2) {
@@ -577,45 +378,48 @@ DS_D_INLINE void _warp(cg::thread_block_tile<hw_warp_size>& warp, T* data)
 Implementation for primary block reduction that serves both `block` and
 `partitioned_block`.
 
-Total warps refers to the reduction width of the reduction, not
-the number of warps in the block (which may exceed that
-if the block is partitioned or if we do a conservative bound at
-compile time).
+`local_warp_rank` refers to the warp's location within the partition, so
+for an unpartitioned threadblock this will be equivalent to
+`warp_arg.meta_group_rank()`.
+
+Similarly, the warp offset is the `local_warp_rank` of the warp with the
+lowest rank in the partition. In the case of an 8 warp block with a
+4 warp reduction, this would map to [0, 0, 0, 0, 4, 4, 4, 4].
+
+Partition size is the number of warps per partition (equal to the thread
+block in the default case). This enables us to only perform the warp reduction
+when able to.
 */
-template <typename T, int total_warps, ROpType... Ops>
+template <int total_warps, ROpType... Ops>
 DS_D_INLINE void _block(cg::thread_block& tb,
                         cg::thread_block_tile<hw_warp_size>& warp_arg,
-                        T* data)
+                        float* data,
+                        int warp_offset)
 {
     constexpr int elems = sizeof...(Ops);
-    constexpr int bytes = sizeof(T);
+    // Separated for now in case this no longer is true
+    constexpr int bytes = sizeof(float);
     // Unused when `partition_size == 1` or total_warps == 1
-    __shared__ T reduce_buffer[max_warps * elems];
-
-#ifdef __HIP_PLATFORM_AMD__
-    const int total_threads = blockDim.x * blockDim.y * blockDim.z;
-    const int running_warps = total_threads / hw_warp_size;
-#else
-    const int running_warps = warp_arg.meta_group_size();
-#endif
+    __shared__ float reduce_buffer[max_warps * elems];
 
     // Always perform warp-scope reduction
-    _warp<T, Ops...>(warp_arg, data);
+    _warp<Ops...>(warp_arg, data);
 
     // If max_warps == 1 let's skip the runtime check
-    if (total_warps != 1) {
+    if (warp_arg.meta_group_size() > 1 && total_warps != 1) {
         if (warp_arg.thread_rank() == 0) {
 #pragma unroll
             for (int i = 0; i < elems; i++) {
-                mem_access::store_shared<bytes>(reduce_buffer + elems * _warp_rank() + i, data + i);
+                mem_access::store_shared<bytes>(
+                    reduce_buffer + elems * warp_arg.meta_group_rank() + i, data + i);
             }
         }
 
         // Synchronization inside block-uniform conditional is safe
         tb.sync();
 
-        if (_warp_rank() == 0) {
-            if (warp_arg.thread_rank() < running_warps) {
+        if (warp_arg.meta_group_rank() == 0) {
+            if (warp_arg.thread_rank() < warp_arg.meta_group_size()) {
 #pragma unroll
                 for (int i = 0; i < elems; i++) {
                     mem_access::load_shared<bytes>(
@@ -625,7 +429,7 @@ DS_D_INLINE void _block(cg::thread_block& tb,
                 init<Ops...>(data);
             }
 
-            _warp<T, Ops..., total_warps>(warp_arg, data);
+            _warp<Ops..., total_warps>(warp_arg, data);
 
 #pragma unroll
             for (int i = 0; i < elems; i++) {
@@ -639,7 +443,8 @@ DS_D_INLINE void _block(cg::thread_block& tb,
 
 #pragma unroll
         for (int i = 0; i < elems; i++) {
-            mem_access::load_shared<bytes>(data + i, reduce_buffer + _warp_rank() * elems + i);
+            mem_access::load_shared<bytes>(data + i,
+                                           reduce_buffer + warp_arg.meta_group_rank() * elems + i);
         }
     }
 }
@@ -654,7 +459,7 @@ us to obfuscate the details of the partitioned implementation.
 template <ROpType Op, int warp_bound>
 DS_D_INLINE void block(cg::thread_block& tb, cg::thread_block_tile<hw_warp_size>& warp, float& val)
 {
-    _block<float, warp_bound, Op>(tb, warp, &val);
+    _block<warp_bound, Op>(tb, warp, &val, 0);
 }
 
 template <ROpType Op1, ROpType Op2, int warp_bound>
@@ -664,7 +469,7 @@ DS_D_INLINE void block(cg::thread_block& tb,
                        float& val2)
 {
     float data[2] = {val1, val2};
-    _block<float, warp_bound, Op1, Op2>(tb, warp, data);
+    _block<warp_bound, Op1, Op2>(tb, warp, data, 0);
     val1 = data[0];
     val2 = data[1];
 }
@@ -677,7 +482,7 @@ DS_D_INLINE void block(cg::thread_block& tb,
                        float& val3)
 {
     float data[3] = {val1, val2, val3};
-    _block<float, warp_bound, Op1, Op2, Op3>(tb, warp, data);
+    _block<warp_bound, Op1, Op2, Op3>(tb, warp, data, 0);
     val1 = data[0];
     val2 = data[1];
     val3 = data[2];
@@ -692,7 +497,7 @@ DS_D_INLINE void block(cg::thread_block& tb,
                        float& val4)
 {
     float data[4] = {val1, val2, val3, val4};
-    _block<float, warp_bound, Op1, Op2, Op3, Op4>(tb, warp, data);
+    _block<warp_bound, Op1, Op2, Op3, Op4>(tb, warp, data, 0);
     val1 = data[0];
     val2 = data[1];
     val3 = data[2];
@@ -709,10 +514,11 @@ DS_D_INLINE void partitioned_block(cg::thread_block& tb,
                                    float& val)
 {
     if (num_threads <= hw_warp_size) {
-        _warp<float, Op, num_threads>(warp, &val);
+        _warp<Op, num_threads>(warp, val);
     } else {
         constexpr int num_warps = num_threads / hw_warp_size;
-        _block<float, num_warps, Op>(tb, warp, &val);
+        const int warp_offset = warp.meta_group_rank() & ~(num_warps - 1);
+        _block<num_warps, Op>(tb, warp, val, warp_offset);
     }
 }
 
@@ -725,10 +531,11 @@ DS_D_INLINE void partitioned_block(cg::thread_block& tb,
     float data[2] = {val1, val2};
 
     if (num_threads <= hw_warp_size) {
-        _warp<float, Op1, Op2, num_threads>(warp, data);
+        _warp<Op1, Op2, num_threads>(warp, data);
     } else {
         constexpr int num_warps = num_threads / hw_warp_size;
-        _block<float, num_warps, Op1, Op2>(tb, warp, data);
+        const int warp_offset = warp.meta_group_rank() & ~(num_warps - 1);
+        _block<num_warps, Op1, Op2>(tb, warp, data, warp_offset);
     }
 
     val1 = data[0];
@@ -745,10 +552,11 @@ DS_D_INLINE void partitioned_block(cg::thread_block& tb,
     float data[3] = {val1, val2, val3};
 
     if (num_threads <= hw_warp_size) {
-        _warp<float, Op1, Op2, Op3, num_threads>(warp, data);
+        _warp<Op1, Op2, Op3, num_threads>(warp, data);
     } else {
         constexpr int num_warps = num_threads / hw_warp_size;
-        _block<float, num_warps, Op1, Op2, Op3>(tb, warp, data);
+        const int warp_offset = warp.meta_group_rank() & ~(num_warps - 1);
+        _block<num_warps, Op1, Op2, Op3>(tb, warp, data, warp_offset);
     }
 
     val1 = data[0];
@@ -767,60 +575,17 @@ DS_D_INLINE void partitioned_block(cg::thread_block& tb,
     float data[4] = {val1, val2, val3, val4};
 
     if (num_threads <= hw_warp_size) {
-        _warp<float, Op1, Op2, Op3, Op4, num_threads>(warp, data);
+        _warp<Op1, Op2, Op3, Op4, num_threads>(warp, data);
     } else {
         constexpr int num_warps = num_threads / hw_warp_size;
-        _block<float, num_warps, Op1, Op2, Op3, Op4>(tb, warp, data);
+        const int warp_offset = warp.meta_group_rank() & ~(num_warps - 1);
+        _block<num_warps, Op1, Op2, Op3, Op4>(tb, warp, data, warp_offset);
     }
 
     val1 = data[0];
     val2 = data[1];
     val3 = data[2];
     val4 = data[3];
-}
-
-/*
-Arg-reduce is a specialization of the above. We only support this with a single reduction
-parameter. This only works for max/min reductions.
-*/
-
-__align__(8) struct IdxReduceResult {
-    /*
-    NOTE: ORDERING MATTERS HERE! The idx is the least significant set of bits
-    and the val is the most significant. Changing the order of this declaration
-    will break the code.
-    */
-    int idx;
-    float val;
-};
-
-template <ROpType Op, int warpBound>
-DS_D_INLINE IdxReduceResult
-idx_reduce(cg::thread_block& tb, cg::thread_block_tile<hw_warp_size>& warp, float val, int idx)
-{
-    IdxReduceResult res = {idx, val};
-
-    // Clear out the nan. This shouldn't be an issue for our initial applications
-    if (isnan(val)) res.val = init<Op>();
-
-    // Can do float compares as integers. By packing the index into the lower bits
-    // we can just do a single int64 rather than a branch, compare, and select.
-    // One side benefit of this is that it is by nature a stable algorithm and
-    // will always bias ties to the higher index.
-    int64_t* res_as_int = reinterpret_cast<int64_t*>(&res);
-
-    // The way floating point compare works is normally to perform a sign comparison
-    // and if they match, then do a comparison of the rest of the bits as unsigned
-    // integers. Since we are bundling these, that means for negative values we need
-    // to reverse the sort order, which we can do with an XOR.
-    if (val < 0) { *res_as_int ^= 0x7fffffff00000000; }
-
-    _block<int64_t, warpBound, Op>(tb, warp, res_as_int);
-
-    // Sign bit is preserved, so we can check if we need to invert the mantissa back
-    if (res.val < 0) { *res_as_int ^= 0x7fffffff00000000; }
-
-    return res;
 }
 
 }  // namespace reduce
