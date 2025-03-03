@@ -16,7 +16,6 @@ from torch.nn.parameter import Parameter
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.distributed.distributed_c10d import _get_global_rank
-from tensorboardX import SummaryWriter
 
 from typing import Callable, Dict, Optional, Union, Iterable
 
@@ -398,8 +397,17 @@ class DeepSpeedEngine(Module):
             summary_writer_dir_name = os.path.join(infra_job_id, "logs")
             log_dir = os.path.join(base, summary_writer_dir_name, name)
 
-    def eigenvalue_stability(self):
-        return self._config.eigenvalue_stability
+        os.makedirs(log_dir, exist_ok=True)
+        try:
+            # torch.utils.tensorboard will fail if `tensorboard` is not available,
+            # see their docs for more details: https://pytorch.org/docs/1.8.0/tensorboard.html
+            import tensorboard
+        except ImportError:
+            print(
+                'If you want to use tensorboard logging please `pip install tensorboard`'
+            )
+            raise
+        from torch.utils.tensorboard import SummaryWriter
 
     def eigenvalue_gas_boundary_resolution(self):
         return self._config.eigenvalue_gas_boundary_resolution
