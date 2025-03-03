@@ -108,13 +108,19 @@ The following results were collected using V100 SXM2 32GB GPUs.
 
 The following results were collected using V100 SXM2 32GB GPUs.
 
-![OPT Throughput Graph](/assets/images/auto-tp-chart-opt-throughput.png){: .align-center}
+### Max New Tokens = 50
+| Test     | Memory Allocated per GPU | Max Batch Size | Max Throughput per GPU |
+|----------|--------------------------|----------------|------------------------|
+| No TP    | 23.94 GB                 | 64             | 18.84 TFlops           |
+| 2 GPU TP | 12.23 GB                 | 320            | 27.17 TFlops           |
+| 4 GPU TP | 6.36 GB                  | 664            | 27.63 TFlops           |
 
-| Test       | Memory Allocated per GPU   | Max Batch Size   | Max Throughput per GPU   |
-| ---------- | -------------------------- | ---------------- | ------------------------ |
-| No TP      | 23.94 GB                   | 2                | 1.65 TFlops              |
-| 2 GPU TP   | 12.23 GB                   | 20               | 4.61 TFlops              |
-| 4 GPU TP   | 6.36 GB                    | 56               | 4.90 TFlops              |
+### Max New Tokens = 1024
+| Test     | Memory Allocated per GPU | Max Batch Size | Max Throughput per GPU |
+|----------|--------------------------|----------------|------------------------|
+| No TP    | 23.94 GB                 | 2              | 1.65 TFlops            |
+| 2 GPU TP | 12.23 GB                 | 20             | 4.61 TFlops            |
+| 4 GPU TP | 6.36 GB                  | 56             | 4.90 TFlops            |
 
 # Supported Models
 
