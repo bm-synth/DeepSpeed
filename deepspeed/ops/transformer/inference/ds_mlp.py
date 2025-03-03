@@ -17,8 +17,9 @@ class DeepSpeedMLP(nn.Module):
         super(DeepSpeedMLP, self).__init__()
 
         self.config = config
-        data_type = torch.int8 if config.q_int8 else torch.half if config.fp16 else torch.float
-        data_type_fp = torch.half if config.fp16 else torch.float
+
+        data_type = torch.int8 if self.config.dtype == torch.int8 else self.config.dtype
+        data_type_fp = torch.half if self.config.dtype == torch.int8 else self.config.dtype
         device = get_accelerator().current_device_name()
         if self.config.set_empty_params:
             self.attn_nw = None
