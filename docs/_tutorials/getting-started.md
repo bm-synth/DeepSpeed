@@ -224,36 +224,6 @@ deepspeed --include="worker-2:0,1" \
 	<client_entry.py> <client args> \
 	--deepspeed --deepspeed_config ds_config.json
 ```
-### Launching without passwordless SSH
-
-DeepSpeed now supports launching training jobs without the need for passwordless SSH. This mode is
-particularly useful in cloud environments such as Kubernetes, where flexible container orchestration
-is possible, and setting up a leader-worker architecture with passwordless SSH adds unnecessary
-complexity.
-
-To use this mode, you need to run the DeepSpeed command separately on all nodes. The command should
-be structured as follows:
-
-```bash
-deepspeed --hostfile=myhostfile --no_ssh --node_rank=<n> \
-    --master_addr=<addr> --master_port=<port> \
-    <client_entry.py> <client args> \
-    --deepspeed --deepspeed_config ds_config.json
-```
-
-- `--hostfile=myhostfile`: Specifies the hostfile that contains information about the nodes and GPUs.
-- `--no_ssh`: Enables the no-SSH mode.
-- `--node_rank=<n>`: Specifies the rank of the node. This should be a unique integer from 0 to n - 1.
-- `--master_addr=<addr>`: The address of the leader node (rank 0).
-- `--master_port=<port>`: The port of the leader node.
-
-In this setup, the hostnames in the hostfile do not need to be reachable via passwordless SSH.
-However, the hostfile is still required for the launcher to collect information about the environment,
-such as the number of nodes and the number of GPUs per node.
-
-Each node must be launched with a unique `node_rank`, and all nodes must be provided with the address
-and port of the leader node (rank 0). This mode causes the launcher to act similarly to the `torchrun`
-launcher, as described in the [PyTorch documentation](https://pytorch.org/docs/stable/elastic/run.html).
 
 ## Multi-Node Environment Variables
 
@@ -263,26 +233,20 @@ propagate all NCCL and PYTHON related environment variables that are set. If
 you would like to propagate additional variables you can specify them in a
 dot-file named `.deepspeed_env` that contains a new-line separated list of
 `VAR=VAL` entries. The DeepSpeed launcher will look in the local path you are
-executing from and also in your home directory (`~/`). If you would like to
-override the default name of this file or path and name with your own, you
-can specify this with the environment variable, `DS_ENV_FILE`.  This is
-mostly useful if you are launching multiple jobs that all require different
-variables.
+executing from and also in your home directory (`~/`).
 
 As a concrete example, some clusters require special NCCL variables to set
 prior to training. The user can simply add these variables to a
 `.deepspeed_env` file in their home directory that looks like this:
-
 ```
 NCCL_IB_DISABLE=1
 NCCL_SOCKET_IFNAME=eth0
 ```
-
 DeepSpeed will then make sure that these environment variables are set when
 launching each process on every node across their training job.
 
-### MPI and AzureML Compatibility
 
+### MPI Compatibility
 As described above, DeepSpeed provides its own parallel launcher to help launch
 multi-node/multi-gpu training jobs. If you prefer to launch your training job
 using MPI (e.g., mpirun), we provide support for this. It should be noted that
