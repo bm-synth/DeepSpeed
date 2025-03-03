@@ -267,12 +267,7 @@ class PipelineEngine(DeepSpeedEngine):
         # (see https://github.com/EleutherAI/gpt-neox/issues/62#issuecomment-761471944)
         if self.zero_optimization_partition_gradients():
             self.optimizer.overlapping_partition_gradients_reduce_epilogue()
-
-        weight_group_list = self.module.get_tied_weights_and_groups()
-        for weight, group in weight_group_list:
-            grad = weight._hp_grad if self.using_bf16_optimizer else weight.grad
-            if grad is not None:
-                dist.all_reduce(grad, group=group)
+        self.module.allreduce_tied_weight_gradients()
 
     def _exec_reduce_grads(self):
         self._force_grad_boundary = True
