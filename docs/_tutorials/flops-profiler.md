@@ -1,6 +1,6 @@
 ---
 title: "Flops Profiler"
-excerpt: "Measure the parameters, latency, and floating point operations of your model"
+excerpt: "Measure the parameters, latency, and floating-point operations of your model"
 ---
 
 In this tutorial, we introduce the DeepSpeed flops profiler and provide examples of its usage.
@@ -12,10 +12,7 @@ In this tutorial, we introduce the DeepSpeed flops profiler and provide examples
 
 ## Overview
 
-The DeepSpeed flops profiler profiles the forward pass of a PyTorch model and prints the model graph with the measured profile attached to each module.
-It shows the parameters, latency, and number of floating point operations of the modules within the model to identify potential bottlenecks.
-It also outputs the names of the top `k` modules in terms of aggregated time, flops, and number of parameters at depth `l` with `k` and `l` specified by the user.
-The DeepSpeed flops profiler can be used with the DeepSpeed runtime or as a standalone package.
+Effective use of hardware resources is critical to good performance, but performance inefficiency in existing implementations for large-scale model training and inference are often hard to spot and attributed to specific module components. DeepSpeed Flops Profiler helps users easily measure both the model training/inference speed (latency, throughput) and efficiency (floating-point operations per second, i.e., FLOPS) of a model and its submodules, with an eye towards eliminating inefficiencies in existing implementations.
 
 The output profile is computed for each batch of input and printed to the `stdout`. For each module, the measured profile is annotated after the name and is listed in the order of `number of parameters, percentage of total parameters, number of multiply-accumulate operations (MACs), percentage of total MACs, latency of the module, percentage of the total latency, floating point operations per second (FLOPS)`. Note that the number of floating point operations is estimated as `2 * MACs` in the profiler (each MAC operation is counted as 2 floating point operations).
 
@@ -23,18 +20,31 @@ Below is an example output for LeNet5 with batch size 1024:
 
 ```shell
 -------------------------- DeepSpeed Flops Profiler --------------------------
-Summary of forward pass:
-Profile step:                   1
-Number of parameters:           61.71 k
-Number of multiply-accumulate operations (MACs):   439.56 M
-Number of floating point operations ( = 2 * MACs):   879.12 M
-Latency:                        25.7 ms
-Floating point operations per second(FLOPS):   34.2 GFLOPS
+Profile Summary at step 10:
+Notations:
+data parallel size (dp_size), model paralel size(mp_size),
+number of parameters (params), number of multiply-accumulate operations(MACs),
+number of floating-point operations (flops), floating-point operations per second (FLOPS),
+fwd latency (forward propagation latency), bwd latency (backward propagation latency),
+step (weights update latency), iter latency (sum of fwd, bwd and step latency)
 
------------------------------ Aggregated Profile -----------------------------
-Top 3 modules in MACs at depth 2 are {'Conv2d': '421.91 MMACs', 'Linear': '11.18 MMACs', 'AvgPool2d': '6.46 MMACs'}
-Top 3 modules in params at depth 2 are {'Conv2d': '50.69 k', 'Linear': '11.01 k', 'Tanh': '0'}
-Top 3 modules in latency at depth 2 are {'Conv2d': '11.37 ms', 'Linear': '5.27 ms', 'AvgPool2d': '5.02 ms'}
+world size:                                                   1
+data parallel size:                                           1
+model paralel size:                                           1
+batch size per GPU:                                           80
+params per gpu:                                               336.23 M
+params of model = params per GPU * mp_size:                   336.23 M
+fwd MACs per GPU:                                             3139.93 G
+fwd flops per GPU:                                            6279.86 G
+fwd flops of model = fwd flops per GPU * mp_size:             6279.86 G
+fwd latency:                                                  76.67 ms
+bwd latency:                                                  108.02 ms
+fwd FLOPS per GPU = fwd flops per GPU / fwd latency:          81.9 TFLOPS
+bwd FLOPS per GPU = 2 * fwd flops per GPU / bwd latency:      116.27 TFLOPS
+fwd+bwd FLOPS per GPU = 3 * fwd flops per GPU / (fwd+bwd latency):   102.0 TFLOPS
+step latency:                                                 34.09 us
+iter latency:                                                 184.73 ms
+samples/second:                                               433.07
 
 ------------------------------ Detailed Profile ------------------------------
 Each module profile is listed after its name in the following order:
@@ -66,7 +76,7 @@ LeNet5(
 ------------------------------------------------------------------------------
 ```
 
-## Supported Models
+In the summary profile, the DeepSpeed Flops Profiler outputs the number of parameters, floating-point operations (flops), FLOPS, latency, and throughput in samples/second of the model. This profile shows how much performance gap (compared to the peak hardware performance) the current model execution has and helps users tune the training or inference setup (e.g., hyperparameters, data parallelism, model parallelism, system configurations, etc.) for better performance.
 
 The flops estimation is partly inspired by [ptflops](https://github.com/sovrasov/flops-counter.pytorch) with the major difference being that the DeepSpeed flops profiler captures ```torch.nn.functional``` invoked in a module to estimate the flops. Thus the DeepSpeed flops profiler allows for customized modules in the model, e.g., ```ParallelTransformerLayerworks, ParallelSelfAttention, RowParallelLinear, etc.``` in [Megatron-LM](https://github.com/NVIDIA/Megatron-LM). This is in contrast to tools that profile at ```torch.nn.module``` level, such as ptflops, which require users to write customized flops calculation functions for each customized module. Finally, the DeepSpeed flops profiler also supports flops computation at module level (for RNNs).
 
@@ -117,18 +127,31 @@ An example output of 4-layer Megatron-LM model (`hidden_size = 512, num_attentio
 
 ```shell
 -------------------------- DeepSpeed Flops Profiler --------------------------
-Summary of forward pass:
-Profile step:                   1
-Number of parameters:           38.89 M
-Number of multiply-accumulate operations (MACs):   314.61 G
-Number of floating point operations ( = 2 * MACs):   629.21 G
-Latency:                        33.81 ms
-Floating point operations per second(FLOPS):   18.61 TFLOPS
+Profile Summary at step 10:
+Notations:
+data parallel size (dp_size), model paralel size(mp_size),
+number of parameters (params), number of multiply-accumulate operations(MACs),
+number of floating-point operations (flops), floating-point operations per second (FLOPS),
+fwd latency (forward propagation latency), bwd latency (backward propagation latency),
+step (weights update latency), iter latency (sum of fwd, bwd and step latency)
 
------------------------------ Aggregated Profile -----------------------------
-Top 3 modules in MACs at depth 8 are {'ColumnParallelLinear': '60.13 GMACs', 'RowParallelLinear': '42.95 GMACs', 'FusedScaleMaskSoftmax': '536.87 MMACs'}
-Top 3 modules in params at depth 8 are {'ColumnParallelLinear': '7.35 M', 'RowParallelLinear': '5.25 M', 'FusedScaleMaskSoftmax': '0'}
-Top 3 modules in latency at depth 8 are {'ColumnParallelLinear': '659.23 us', 'RowParallelLinear': '587.94 us', 'FusedScaleMaskSoftmax': '370.98 us'}
+world size:                                                   1
+data parallel size:                                           1
+model paralel size:                                           1
+batch size per GPU:                                           1024
+params per gpu:                                               1.29 M
+params of model = params per GPU * mp_size:                   1.29 M
+fwd MACs per GPU:                                             41271.95 G
+fwd flops per GPU:                                            82543.9 G
+fwd flops of model = fwd flops per GPU * mp_size:             82543.9 G
+fwd latency:                                                  1.89 s
+bwd latency:                                                  5.38 s
+fwd FLOPS per GPU = fwd flops per GPU / fwd latency:          43.68 TFLOPS
+bwd FLOPS per GPU = 2 * fwd flops per GPU / bwd latency:      30.7 TFLOPS
+fwd+bwd FLOPS per GPU = 3 * fwd flops per GPU / (fwd+bwd latency):   34.07 TFLOPS
+step latency:                                                 34.12 s
+iter latency:                                                 41.39 s
+samples/second:                                               24.74
 
 ------------------------------ Detailed Profile ------------------------------
 Each module profile is listed after its name in the following order:
@@ -137,19 +160,34 @@ Note:
 1. A module can have torch.nn.functional (e.g. to compute logits) along with submodules, thus making the difference between the parent's MACs(or latency) and the sum of its submodules'.
 2. Number of floating point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.
 
-DistributedDataParallel(
-  38.89 M, 100.00% Params, 314.61 GMACs, 100.00% MACs, 33.81 ms, 100.00% latency, 18.61 TFLOPS,
-  (module): FP16_Module(
-    38.89 M, 100.00% Params, 314.61 GMACs, 100.00% MACs, 33.77 ms, 99.89% latency, 18.63 TFLOPS,
-    (module): GPT2Model(
-      38.89 M, 100.00% Params, 314.61 GMACs, 100.00% MACs, 33.69 ms, 99.66% latency, 18.67 TFLOPS,
-      (language_model): TransformerLanguageModel(
-        38.89 M, 100.00% Params, 103.62 GMACs, 32.94% MACs, 5.58 ms, 16.51% latency, 37.13 TFLOPS,
-        (embedding): Embedding(
-          26.28 M, 67.57% Params, 0 MACs, 0.00% MACs, 545.98 us, 1.61% latency, 0.0 FLOPS,
-          (word_embeddings): VocabParallelEmbedding(25.76 M, 66.23% Params, 0 MACs, 0.00% MACs, 223.88 us, 0.66% latency, 0.0 FLOPS, )
-          (position_embeddings): Embedding(524.29 k, 1.35% Params, 0 MACs, 0.00% MACs, 147.1 us, 0.44% latency, 0.0 FLOPS, 1024, 512)
-          (embedding_dropout): Dropout(0, 0.00% Params, 0 MACs, 0.00% MACs, 79.39 us, 0.23% latency, 0.0 FLOPS, p=0.1, inplace=False)
+Note: 1. A module can have torch.nn.module or torch.nn.functional to compute logits (e.g. CrossEntropyLoss). They are not counted as submodules, thus not to be printed out. However they make up the difference between a parent's MACs(or latency) and the sum of its submodules'.
+1. Number of floating-point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.
+2. The fwd latency listed in the top module's profile is directly captured at the module forward function in PyTorch, thus it's less than the fwd latency shown above which is captured in DeepSpeed.
+
+GPT2Model(
+  1.29 M, 100.00% Params, 41271.95 GMACs, 100.00% MACs, 1.84 s, 100.00% latency, 44.78 TFLOPS,
+  (language_model): TransformerLanguageModel(
+    1.29 M, 100.00% Params, 39584.03 GMACs, 95.91% MACs, 1.83 s, 99.11% latency, 43.34 TFLOPS,
+    (embedding): Embedding(
+      2, 0.00% Params, 0 MACs, 0.00% MACs, 18.1 ms, 0.98% latency, 0.0 FLOPS,
+      (word_embeddings): VocabParallelEmbedding(1, 0.00% Params, 0 MACs, 0.00% MACs, 164.75 us, 0.01% latency, 0.0 FLOPS, )
+      (position_embeddings): Embedding(1, 0.00% Params, 0 MACs, 0.00% MACs, 489.23 us, 0.03% latency, 0.0 FLOPS, 1024, 8192)
+      (embedding_dropout): Dropout(0, 0.00% Params, 0 MACs, 0.00% MACs, 93.94 us, 0.01% latency, 0.0 FLOPS, p=0.1, inplace=False)
+    )
+    (transformer): ParallelTransformer(
+      1.29 M, 100.00% Params, 39584.03 GMACs, 95.91% MACs, 1.81 s, 98.11% latency, 43.78 TFLOPS,
+      (layers): ModuleList(
+        1.28 M, 98.73% Params, 39584.03 GMACs, 95.91% MACs, 1.3 s, 70.66% latency, 60.79 TFLOPS,
+        (0): ParallelTransformerLayerPart1(
+          49.15 k, 3.80% Params, 1099.65 GMACs, 2.66% MACs, 23.5 ms, 1.27% latency, 93.6 TFLOPS,
+          (input_layernorm): FusedLayerNorm(16.38 k, 1.27% Params, 0 MACs, 0.00% MACs, 128.75 us, 0.01% latency, 0.0 FLOPS, torch.Size([8192]), eps=1e-05, elementwise_affine=True)
+          (attention): ParallelSelfAttention(
+            32.77 k, 2.53% Params, 1099.65 GMACs, 2.66% MACs, 22.8 ms, 1.24% latency, 96.46 TFLOPS,
+            (query_key_value): ColumnParallelLinear(24.58 k, 1.90% Params, 824.63 GMACs, 2.00% MACs, 8.93 ms, 0.48% latency, 184.7 TFLOPS, )
+            (scale_mask_softmax): FusedScaleMaskSoftmax(0, 0.00% Params, 134.22 MMACs, 0.00% MACs, 151.16 us, 0.01% latency, 1.78 TFLOPS, )
+            (attention_dropout): Dropout(0, 0.00% Params, 0 MACs, 0.00% MACs, 79.63 us, 0.00% latency, 0.0 FLOPS, p=0.1, inplace=False)
+            (dense): RowParallelLinear(8.19 k, 0.63% Params, 274.88 GMACs, 0.67% MACs, 2.67 ms, 0.14% latency, 205.81 TFLOPS, )
+          )
         )
         (transformer): ParallelTransformer(
           12.61 M, 32.43% Params, 103.62 GMACs, 32.94% MACs, 5.0 ms, 14.78% latency, 41.49 TFLOPS,
@@ -205,7 +243,7 @@ from deepspeed.profiling.flops_profiler import get_model_profile
 with torch.cuda.device(0):
     model = models.alexnet()
     batch_size = 256
-    macs, params = get_model_profile(model=model, # model
+    flops, macs, params = get_model_profile(model=model, # model
                                      input_res=(batch_size, 3, 224, 224), # input shape or input to the input_constructor
                                      input_constructor=None, # if specified, a constructor taking input_res is used as input to the model
                                      print_profile=True, # prints the model graph with the measured profile attached to each module
@@ -407,7 +445,8 @@ BertForSequenceClassification(
 To profile model forward in a training workflow, use the `FlopsProfiler`class.
 The `FlopsProfiler`class provides the follwing methods:
   * `start_profile()` - starts profiling
-  * `get_total_flops(as_string=False)` - returns the total number of MACs in the model
+  * `get_total_flops(as_string=False)` - returns the total number of floating-point operations in the model
+  * `get_total_macs(as_string=False)` - returns the total number of MACs in the model
   * `get_total_params(as_string=False)` - returns the total number of parameters in the model
   * `print_model_profile(profile_step=1, module_depth=-1, top_modules=3, detailed=True)` - prints the model profile
   * `end_profile()` - ends profiling and cleans up. This should be invoked at the end of the profiling and AFTER `get_total_flops`, `get_total_params` or `print_model_profile`.
@@ -435,8 +474,10 @@ for step, batch in enumerate(data_loader):
 
   # end profiling and print output
   if step == profile_step: # if using multi nodes, check global_rank == 0 as well
-    flops = prof.get_total_flops(as_string=True)
-    params = prof.get_total_params(as_string=True)
+    prof.stop_profile()
+    flops = prof.get_total_flops()
+    macs = prof.get_total_macs()
+    params = prof.get_total_params()
     if print_profile:
         prof.print_model_profile(profile_step=profile_step)
     prof.end_profile()

@@ -3,13 +3,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+from typing import Callable, List, Optional, Tuple
+from collections import OrderedDict
+import numpy as np
+
+Tensor = torch.Tensor
 
 module_flop_count = []
+module_mac_count = []
 old_functions = {}
 
 
 class FlopsProfiler(object):
-    """Measures the latency, number of estimated floating point operations and parameters of each module in a PyTorch model.
+    """Measures the latency, number of estimated floating-point operations and parameters of each module in a PyTorch model.
 
     The flops-profiler profiles the forward pass of a PyTorch model and prints the model graph with the measured profile attached to each module. It shows how latency, flops and parameters are spent in the model and which modules or layers could be the bottleneck. It also outputs the names of the top k modules in terms of aggregated latency, flops, and parameters at depth l with k and l specified by the user. The output profile is computed for each batch of input.
     The DeepSpeed flops profiler can be used with the DeepSpeed runtime or as a standalone package.
@@ -57,6 +63,7 @@ class FlopsProfiler(object):
         """
         self.reset_profile()
         _patch_functionals()
+        _patch_tensor_methods()
 
         def register_module_hooks(module, ignore_list):
             if ignore_list and type(module) in ignore_list:
@@ -71,6 +78,7 @@ class FlopsProfiler(object):
             # if computing the flops of the functionals in a module
             def pre_hook(module, input):
                 module_flop_count.append([])
+                module_mac_count.append([])
 
             module.__pre_hook_handle__ = module.register_forward_pre_hook(pre_hook)
 
@@ -78,6 +86,8 @@ class FlopsProfiler(object):
                 if module_flop_count:
                     module.__flops__ += sum([elem[1] for elem in module_flop_count[-1]])
                     module_flop_count.pop()
+                    module.__macs__ += sum([elem[1] for elem in module_mac_count[-1]])
+                    module_mac_count.pop()
 
             module.__post_hook_handle__ = module.register_forward_hook(post_hook)
 
@@ -99,6 +109,11 @@ class FlopsProfiler(object):
 
         Added attributes and handles are removed recursively on all the modules and the torch.nn.functionals are restored.
         """
+        if self.started and self.func_patched:
+            _reload_functionals()
+            _reload_tensor_methods()
+            self.func_patched = False
+
         def remove_profile_attrs(module):
             if hasattr(module, "__flops__"):
                 del module.__flops__
@@ -134,12 +149,37 @@ class FlopsProfiler(object):
         """
         def add_or_reset_attrs(module):
             module.__flops__ = 0
+            module.__macs__ = 0
             module.__params__ = sum(p.numel() for p in module.parameters()
                                     if p.requires_grad)
             module.__start_time__ = 0
             module.__duration__ = 0
 
         self.model.apply(add_or_reset_attrs)
+
+    def end_profile(self):
+        """Ends profiling.
+
+        The added attributes and handles are removed recursively on all the modules.
+        """
+        if not self.started:
+            return
+        self.stop_profile()
+        self.started = False
+
+        def remove_profile_attrs(module):
+            if hasattr(module, "__flops__"):
+                del module.__flops__
+            if hasattr(module, "__macs__"):
+                del module.__macs__
+            if hasattr(module, "__params__"):
+                del module.__params__
+            if hasattr(module, "__start_time__"):
+                del module.__start_time__
+            if hasattr(module, "__duration__"):
+                del module.__duration__
+
+        self.model.apply(remove_profile_attrs)
 
     def get_total_flops(self, as_string=False):
         """Returns the total flops of the model.
@@ -151,7 +191,19 @@ class FlopsProfiler(object):
             The number of multiply-accumulate operations of the model forward pass.
         """
         total_flops = get_module_flops(self.model)
-        return macs_to_string(total_flops) if as_string else total_flops
+        return num_to_string(total_flops) if as_string else total_flops
+
+    def get_total_macs(self, as_string=False):
+        """Returns the total MACs of the model.
+
+        Args:
+            as_string (bool, optional): whether to output the flops as string. Defaults to False.
+
+        Returns:
+            The number of multiply-accumulate operations of the model forward pass.
+        """
+        total_macs = get_module_macs(self.model)
+        return macs_to_string(total_macs) if as_string else total_macs
 
     def get_total_duration(self, as_string=False):
         """Returns the total duration of the model forward pass.
@@ -192,10 +244,12 @@ class FlopsProfiler(object):
         """
 
         total_flops = self.get_total_flops()
+        total_macs = self.get_total_macs()
         total_duration = self.get_total_duration()
         total_params = self.get_total_params()
 
         self.flops = total_flops
+        self.macs = total_macs
         self.params = total_params
 
         print(
@@ -203,7 +257,7 @@ class FlopsProfiler(object):
         )
         print(f'Profile Summary at step {profile_step}:')
         print(
-            "Notations:\ndata parallel size (dp_size), model parallel size(mp_size),\nnumber of parameters (params), number of multiply-accumulate operations(MACs),\nnumber of floating point operations (flops), floating point operations per second (FLOPS),\nfwd latency (forward propagation latency), bwd latency (backward propagation latency),\nstep (weights update latency), iter latency (sum of fwd, bwd and step latency)\n"
+            "Notations:\ndata parallel size (dp_size), model parallel size(mp_size),\nnumber of parameters (params), number of multiply-accumulate operations(MACs),\nnumber of floating-point operations (flops), floating-point operations per second (FLOPS),\nfwd latency (forward propagation latency), bwd latency (backward propagation latency),\nstep (weights update latency), iter latency (sum of fwd, bwd and step latency)\n"
         )
         if self.ds_engine:
             print('{:<60}  {:<8}'.format('world size: ', self.ds_engine.world_size))
@@ -221,13 +275,13 @@ class FlopsProfiler(object):
             params_to_string(total_params *
                              (self.ds_engine.mp_world_size) if self.ds_engine else 1)))
 
-        print('{:<60}  {:<8}'.format('fwd MACs per GPU: ', num_to_string(total_flops)))
-        print('{:<60}  {:<8}'.format('fwd flops per GPU = 2 * fwd MACs per GPU: ',
-                                     num_to_string(2 * total_flops)))
+        print('{:<60}  {:<8}'.format('fwd MACs per GPU: ', macs_to_string(total_macs)))
+
+        print('{:<60}  {:<8}'.format('fwd flops per GPU: ', num_to_string(total_flops)))
 
         print('{:<60}  {:<8}'.format(
             'fwd flops of model = fwd flops per GPU * mp_size: ',
-            num_to_string(2 * total_flops *
+            num_to_string(total_flops *
                           (self.ds_engine.mp_world_size) if self.ds_engine else 1)))
 
         fwd_latency = self.get_total_duration()
@@ -236,7 +290,7 @@ class FlopsProfiler(object):
         print('{:<60}  {:<8}'.format('fwd latency: ', duration_to_string(fwd_latency)))
         print('{:<60}  {:<8}'.format(
             'fwd FLOPS per GPU = fwd flops per GPU / fwd latency: ',
-            flops_to_string(2 * total_flops / fwd_latency)))
+            flops_to_string(total_flops / fwd_latency)))
 
         if self.ds_engine and self.ds_engine.wall_clock_breakdown():
             bwd_latency = self.ds_engine.timers('backward').elapsed(False)
@@ -245,10 +299,10 @@ class FlopsProfiler(object):
                                          duration_to_string(bwd_latency)))
             print('{:<60}  {:<8}'.format(
                 'bwd FLOPS per GPU = 2 * fwd flops per GPU / bwd latency: ',
-                flops_to_string(2 * 2 * total_flops / bwd_latency)))
+                flops_to_string(2 * total_flops / bwd_latency)))
             print('{:<60}  {:<8}'.format(
                 'fwd+bwd FLOPS per GPU = 3 * fwd flops per GPU / (fwd+bwd latency): ',
-                flops_to_string(3 * 2 * total_flops / (fwd_latency + bwd_latency))))
+                flops_to_string(3 * total_flops / (fwd_latency + bwd_latency))))
 
             print('{:<60}  {:<8}'.format('step latency: ',
                                          duration_to_string(step_latency)))
@@ -258,7 +312,7 @@ class FlopsProfiler(object):
                                          duration_to_string(iter_latency)))
             print('{:<60}  {:<8}'.format(
                 'FLOPS per GPU = 3 * fwd flops per GPU / iter latency: ',
-                flops_to_string(3 * 2 * total_flops / iter_latency)))
+                flops_to_string(3 * total_flops / iter_latency)))
 
             samples_per_iter = self.ds_engine.train_micro_batch_size_per_gpu(
             ) * self.ds_engine.world_size
@@ -268,11 +322,12 @@ class FlopsProfiler(object):
         def flops_repr(module):
             params = module.__params__
             flops = get_module_flops(module)
+            macs = get_module_macs(module)
             items = [
                 params_to_string(params),
                 "{:.2%} Params".format(params / total_params),
-                macs_to_string(flops),
-                "{:.2%} MACs".format(0.0 if total_flops == 0 else flops / total_flops),
+                macs_to_string(macs),
+                "{:.2%} MACs".format(0.0 if total_macs == 0 else macs / total_macs),
             ]
             duration = module.__duration__
             if duration == 0:  # e.g. ModuleList
@@ -283,8 +338,7 @@ class FlopsProfiler(object):
             items.append(
                 "{:.2%} latency".format(0.0 if total_duration == 0 else duration /
                                         total_duration))
-            # flops = 2 * MACs
-            items.append(flops_to_string(0.0 if duration == 0 else 2 * flops / duration))
+            items.append(flops_to_string(0.0 if duration == 0 else flops / duration))
             items.append(module.original_extra_repr())
             return ", ".join(items)
 
@@ -316,7 +370,7 @@ class FlopsProfiler(object):
                 "Each module profile is listed after its name in the following order: \nnumber of parameters, percentage of total parameters, number of multiply-accumulate operations (MACs), percentage of total MACs, latency, percentage of total latency, number of floating point operations per second (FLOPS, computed as 2 * MACs / latency)."
             )
             print(
-                "\nNote: 1. A module can have torch.nn.module or torch.nn.functional to compute logits (e.g. CrossEntropyLoss). They are not counted as submodules, thus not to be printed out. However they make up the difference between a parent's MACs (or latency) and the sum of its submodules'.\n2. Number of floating point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.\n3. The fwd latency listed in the top module's profile is directly captured at the module forward function in PyTorch, thus it's less than the fwd latency shown above which is captured in DeepSpeed.\n"
+                "\nNote: 1. A module can have torch.nn.module or torch.nn.functional to compute logits (e.g. CrossEntropyLoss). They are not counted as submodules, thus not to be printed out. However they make up the difference between a parent's MACs (or latency) and the sum of its submodules'.\n2. Number of floating-point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.\n3. The fwd latency listed in the top module's profile is directly captured at the module forward function in PyTorch, thus it's less than the fwd latency shown above which is captured in DeepSpeed.\n"
             )
             print(self.model)
 
@@ -348,8 +402,8 @@ class FlopsProfiler(object):
                     0,
                     0,
                     0,
-                ]  # flops, params, time
-            info[curr_depth][module.__class__.__name__][0] += module.__flops__
+                ]  # macs, params, time
+            info[curr_depth][module.__class__.__name__][0] += get_module_macs(module)
             info[curr_depth][module.__class__.__name__][1] += module.__params__
             info[curr_depth][module.__class__.__name__][2] += (module.__duration__)
             has_children = len(module._modules.items()) != 0
@@ -365,30 +419,35 @@ class FlopsProfiler(object):
 
         num_items = min(top_modules, len(info[depth]))
 
-        sort_flops = {
-            k: macs_to_string(v[0])
-            for k,
-            v in sorted(info[depth].items(),
-                        key=lambda item: item[1][0],
-                        reverse=True)[:num_items]
-        }
-        sort_params = {
-            k: params_to_string(v[1])
-            for k,
-            v in sorted(info[depth].items(),
-                        key=lambda item: item[1][1],
-                        reverse=True)[:num_items]
-        }
-        sort_time = {
-            k: duration_to_string(v[2])
-            for k,
-            v in sorted(info[depth].items(),
-                        key=lambda item: item[1][2],
-                        reverse=True)[:num_items]
-        }
-        print(f"Top {num_items} modules in MACs at depth {depth} are {sort_flops}")
-        print(f"Top {num_items} modules in params at depth {depth} are {sort_params}")
-        print(f"Top {num_items} modules in latency at depth {depth} are {sort_time}")
+        for d in range(depth):
+            num_items = min(top_modules, len(info[d]))
+
+            sort_macs = {
+                k: macs_to_string(v[0])
+                for k,
+                v in sorted(info[d].items(),
+                            key=lambda item: item[1][0],
+                            reverse=True)[:num_items]
+            }
+            sort_params = {
+                k: params_to_string(v[1])
+                for k,
+                v in sorted(info[d].items(),
+                            key=lambda item: item[1][1],
+                            reverse=True)[:num_items]
+            }
+            sort_time = {
+                k: duration_to_string(v[2])
+                for k,
+                v in sorted(info[d].items(),
+                            key=lambda item: item[1][2],
+                            reverse=True)[:num_items]
+            }
+
+            print(f"depth {d}:")
+            print(f"    params      - {sort_params}")
+            print(f"    MACs        - {sort_macs}")
+            print(f"    fwd latency - {sort_time}")
 
 
 def _prod(dims):
@@ -400,11 +459,38 @@ def _prod(dims):
 
 def _linear_flops_compute(input, weight, bias=None):
     out_features = weight.shape[0]
-    return torch.numel(input) * out_features
+    macs = torch.numel(input) * out_features
+    return 2 * macs, macs
 
 
 def _relu_flops_compute(input, inplace=False):
-    return torch.numel(input)
+    return torch.numel(input), 0
+
+
+def _prelu_flops_compute(input: Tensor, weight: Tensor):
+    return torch.numel(input), 0
+
+
+def _elu_flops_compute(input: Tensor, alpha: float = 1.0, inplace: bool = False):
+    return torch.numel(input), 0
+
+
+def _leaky_relu_flops_compute(input: Tensor,
+                              negative_slope: float = 0.01,
+                              inplace: bool = False):
+    return torch.numel(input), 0
+
+
+def _relu6_flops_compute(input: Tensor, inplace: bool = False):
+    return torch.numel(input), 0
+
+
+def _silu_flops_compute(input: Tensor, inplace: bool = False):
+    return torch.numel(input), 0
+
+
+def _gelu_flops_compute(input):
+    return torch.numel(input), 0
 
 
 def _pool_flops_compute(
@@ -416,7 +502,7 @@ def _pool_flops_compute(
     count_include_pad=True,
     divisor_override=None,
 ):
-    return torch.numel(input)
+    return torch.numel(input), 0
 
 
 def _conv_flops_compute(input,
@@ -447,17 +533,16 @@ def _conv_flops_compute(input,
         output_dims.append(output_dim)
 
     filters_per_channel = out_channels // groups
-    conv_per_position_flops = int(_prod(kernel_dims)) * in_channels * filters_per_channel
+    conv_per_position_macs = int(_prod(kernel_dims)) * in_channels * filters_per_channel
     active_elements_count = batch_size * int(_prod(output_dims))
-    overall_conv_flops = conv_per_position_flops * active_elements_count
+    overall_conv_macs = conv_per_position_macs * active_elements_count
+    overall_conv_flops = 2 * overall_conv_macs
 
     bias_flops = 0
     if bias is not None:
         bias_flops = out_channels * active_elements_count
 
-    overall_flops = overall_conv_flops + bias_flops
-
-    return int(overall_flops)
+    return int(overall_conv_flops + bias_flops), int(overall_conv_macs)
 
 
 def _conv_trans_flops_compute(
@@ -494,17 +579,16 @@ def _conv_trans_flops_compute(
     dilations = dilation if type(dilation) is tuple else (dilation, dilation)
 
     filters_per_channel = out_channels // groups
-    conv_per_position_flops = int(_prod(kernel_dims)) * in_channels * filters_per_channel
+    conv_per_position_macs = int(_prod(kernel_dims)) * in_channels * filters_per_channel
     active_elements_count = batch_size * int(_prod(input_dims))
-    overall_conv_flops = conv_per_position_flops * active_elements_count
+    overall_conv_macs = conv_per_position_macs * active_elements_count
+    overall_conv_flops = 2 * overall_conv_macs
 
     bias_flops = 0
     if bias is not None:
         bias_flops = out_channels * batch_size * int(_prod(output_dims))
 
-    overall_flops = overall_conv_flops + bias_flops
-
-    return int(overall_flops)
+    return int(overall_conv_flops + bias_flops), int(overall_conv_macs)
 
 
 def _batch_norm_flops_compute(
@@ -517,9 +601,49 @@ def _batch_norm_flops_compute(
     momentum=0.1,
     eps=1e-05,
 ):
-    # assume affine is true
-    flops = 2 * torch.numel(input)
-    return flops
+    has_affine = weight is not None
+    if training:
+        # estimation
+        return torch.numel(input) * (5 if has_affine else 4), 0
+    flops = torch.numel(input) * (2 if has_affine else 1)
+    return flops, 0
+
+
+def _layer_norm_flops_compute(
+    input: Tensor,
+    normalized_shape: List[int],
+    weight: Optional[Tensor] = None,
+    bias: Optional[Tensor] = None,
+    eps: float = 1e-5,
+):
+    has_affine = weight is not None
+    # estimation
+    return torch.numel(input) * (5 if has_affine else 4), 0
+
+
+def _group_norm_flops_compute(input: Tensor,
+                              num_groups: int,
+                              weight: Optional[Tensor] = None,
+                              bias: Optional[Tensor] = None,
+                              eps: float = 1e-5):
+    has_affine = weight is not None
+    # estimation
+    return torch.numel(input) * (5 if has_affine else 4), 0
+
+
+def _instance_norm_flops_compute(
+    input: Tensor,
+    running_mean: Optional[Tensor] = None,
+    running_var: Optional[Tensor] = None,
+    weight: Optional[Tensor] = None,
+    bias: Optional[Tensor] = None,
+    use_input_stats: bool = True,
+    momentum: float = 0.1,
+    eps: float = 1e-5,
+):
+    has_affine = weight is not None
+    # estimation
+    return torch.numel(input) * (5 if has_affine else 4), 0
 
 
 def _upsample_flops_compute(input,
@@ -528,18 +652,21 @@ def _upsample_flops_compute(input,
                             mode="nearest",
                             align_corners=None):
     if size is not None:
-        return int(_prod(size))
-    assert scale_factor is not None
+        if isinstance(size, tuple):
+            return int(_prod(size)), 0
+        else:
+            return int(size), 0
+    assert scale_factor is not None, "either size or scale_factor should be defined"
     flops = torch.numel(input)
-    if len(scale_factor) == len(input):
+    if isinstance(scale_factor, tuple) and len(scale_factor) == len(input):
         flops * int(_prod(scale_factor))
     else:
         flops * scale_factor**len(input)
-    return flops
+    return flops, 0
 
 
 def _softmax_flops_compute(input, dim=None, _stacklevel=3, dtype=None):
-    return torch.numel(input)
+    return torch.numel(input), 0
 
 
 def _embedding_flops_compute(
@@ -551,11 +678,83 @@ def _embedding_flops_compute(
     scale_grad_by_freq=False,
     sparse=False,
 ):
-    return 0
+    return 0, 0
 
 
 def _dropout_flops_compute(input, p=0.5, training=True, inplace=False):
-    return 0
+    return 0, 0
+
+
+def _matmul_flops_compute(input, other, *, out=None):
+    """
+    Count flops for the matmul operation.
+    """
+    macs = _prod(input.shape) * other.shape[-1]
+    return 2 * macs, macs
+
+
+def _addmm_flops_compute(input, mat1, mat2, *, beta=1, alpha=1, out=None):
+    """
+    Count flops for the addmm operation.
+    """
+    macs = _prod(mat1.shape) * mat2.shape[-1]
+    return 2 * macs + _prod(input.shape), macs
+
+
+def _einsum_flops_compute(equation, *operands):
+    """
+    Count flops for the einsum operation.
+    """
+    equation = equation.replace(" ", "")
+    input_shapes = [o.shape for o in operands]
+
+    # Re-map equation so that same equation with different alphabet
+    # representations will look the same.
+    letter_order = OrderedDict((k, 0) for k in equation if k.isalpha()).keys()
+    mapping = {ord(x): 97 + i for i, x in enumerate(letter_order)}
+    equation = equation.translate(mapping)
+
+    np_arrs = [np.zeros(s) for s in input_shapes]
+    optim = np.einsum_path(equation, *np_arrs, optimize="optimal")[1]
+    for line in optim.split("\n"):
+        print(line.lower())
+        if "optimized flop" in line.lower():
+            flop = int(float(line.split(":")[-1]))
+            return flop, 0
+    raise NotImplementedError("Unsupported einsum operation.")
+
+
+def _tensor_addmm_flops_compute(self, mat1, mat2, *, beta=1, alpha=1, out=None):
+    """
+    Count flops for the tensor addmm operation.
+    """
+    macs = _prod(mat1.shape) * mat2.shape[-1]
+    return 2 * macs + _prod(self.shape), macs
+
+
+def _elementwise_flops_compute(input, other, *, out=None):
+    if not torch.is_tensor(input):
+        if torch.is_tensor(other):
+            return _prod(other.shape), 0
+        else:
+            return 1, 0
+    elif not torch.is_tensor(other):
+        return _prod(input.shape), 0
+    else:
+        dim_input = len(input.shape)
+        dim_other = len(other.shape)
+        max_dim = max(dim_input, dim_other)
+
+        final_shape = []
+        for i in range(max_dim):
+            in_i = input.shape[i] if i < dim_input else 1
+            ot_i = other.shape[i] if i < dim_other else 1
+            if in_i > ot_i:
+                final_shape.append(in_i)
+            else:
+                final_shape.append(ot_i)
+        flops = _prod(final_shape)
+        return flops, 0
 
 
 def wrapFunc(func, funcFlopCompute):
@@ -564,9 +763,11 @@ def wrapFunc(func, funcFlopCompute):
     old_functions[func.__name__] = oldFunc
 
     def newFunc(*args, **kwds):
-        flops = funcFlopCompute(*args, **kwds)
+        flops, macs = funcFlopCompute(*args, **kwds)
         if module_flop_count:
             module_flop_count[-1].append((name, flops))
+        if module_mac_count and macs:
+            module_mac_count[-1].append((name, macs))
         return oldFunc(*args, **kwds)
 
     return newFunc
@@ -588,13 +789,19 @@ def _patch_functionals():
 
     # activations
     F.relu = wrapFunc(F.relu, _relu_flops_compute)
-    F.prelu = wrapFunc(F.prelu, _relu_flops_compute)
-    F.elu = wrapFunc(F.elu, _relu_flops_compute)
-    F.leaky_relu = wrapFunc(F.leaky_relu, _relu_flops_compute)
-    F.relu6 = wrapFunc(F.relu6, _relu_flops_compute)
+    F.prelu = wrapFunc(F.prelu, _prelu_flops_compute)
+    F.elu = wrapFunc(F.elu, _elu_flops_compute)
+    F.leaky_relu = wrapFunc(F.leaky_relu, _leaky_relu_flops_compute)
+    F.relu6 = wrapFunc(F.relu6, _relu6_flops_compute)
+    if hasattr(F, "silu"):
+        F.silu = wrapFunc(F.silu, _silu_flops_compute)
+    F.gelu = wrapFunc(F.gelu, _gelu_flops_compute)
 
-    # BatchNorms
+    # Normalizations
     F.batch_norm = wrapFunc(F.batch_norm, _batch_norm_flops_compute)
+    F.layer_norm = wrapFunc(F.layer_norm, _layer_norm_flops_compute)
+    F.instance_norm = wrapFunc(F.instance_norm, _instance_norm_flops_compute)
+    F.group_norm = wrapFunc(F.group_norm, _group_norm_flops_compute)
 
     # poolings
     F.avg_pool1d = wrapFunc(F.avg_pool1d, _pool_flops_compute)
@@ -619,6 +826,26 @@ def _patch_functionals():
 
     # embedding
     F.embedding = wrapFunc(F.embedding, _embedding_flops_compute)
+
+
+def _patch_tensor_methods():
+    torch.matmul = wrapFunc(torch.matmul, _matmul_flops_compute)
+    torch.Tensor.matmul = wrapFunc(torch.Tensor.matmul, _matmul_flops_compute)
+    torch.mm = wrapFunc(torch.mm, _matmul_flops_compute)
+    torch.Tensor.mm = wrapFunc(torch.Tensor.mm, _matmul_flops_compute)
+    torch.bmm = wrapFunc(torch.bmm, _matmul_flops_compute)
+    torch.Tensor.bmm = wrapFunc(torch.bmm, _matmul_flops_compute)
+
+    torch.addmm = wrapFunc(torch.addmm, _addmm_flops_compute)
+    torch.Tensor.addmm = wrapFunc(torch.Tensor.addmm, _tensor_addmm_flops_compute)
+
+    torch.mul = wrapFunc(torch.mul, _elementwise_flops_compute)
+    torch.Tensor.mul = wrapFunc(torch.Tensor.mul, _elementwise_flops_compute)
+
+    torch.add = wrapFunc(torch.add, _elementwise_flops_compute)
+    torch.Tensor.add = wrapFunc(torch.Tensor.add, _elementwise_flops_compute)
+
+    torch.einsum = wrapFunc(torch.einsum, _einsum_flops_compute)
 
 
 def _reload_functionals():
@@ -652,6 +879,10 @@ def _reload_functionals():
     F.interpolate = old_functions["interpolate"]
     F.softmax = old_functions["softmax"]
     F.embedding = old_functions["embedding"]
+
+
+def _reload_tensor_methods():
+    torch.matmul = old_functions[torch.matmul.__name__]
 
 
 def _rnn_flops(flops, rnn_module, w_ih, w_hh, input_size):
@@ -767,6 +998,27 @@ def macs_to_string(macs, units=None, precision=2):
             return str(macs) + " MACs"
 
 
+def number_to_string(num, units=None, precision=2):
+    if units is None:
+        if num // 10**9 > 0:
+            return str(round(num / 10.0**9, precision)) + " G"
+        elif num // 10**6 > 0:
+            return str(round(num / 10.0**6, precision)) + " M"
+        elif num // 10**3 > 0:
+            return str(round(num / 10.0**3, precision)) + " K"
+        else:
+            return str(num) + " "
+    else:
+        if units == "G":
+            return str(round(num / 10.0**9, precision)) + " " + units
+        elif units == "M":
+            return str(round(num / 10.0**6, precision)) + " " + units
+        elif units == "K":
+            return str(round(num / 10.0**3, precision)) + " " + units
+        else:
+            return str(num) + " "
+
+
 def flops_to_string(flops, units=None, precision=2):
     if units is None:
         if flops // 10**12 > 0:
@@ -838,6 +1090,22 @@ def get_module_flops(module):
     return sum
 
 
+def get_module_macs(module):
+    sum = module.__macs__
+    # iterate over immediate children modules
+    for child in module.children():
+        sum += get_module_macs(child)
+    return sum
+
+
+def get_module_duration(module):
+    duration = module.__duration__
+    if duration == 0:  # e.g. ModuleList
+        for m in module.children():
+            duration += m.__duration__
+    return duration
+
+
 def get_model_profile(
     model,
     input_res,
@@ -850,7 +1118,7 @@ def get_model_profile(
     as_string=True,
     ignore_modules=None,
 ):
-    """Returns the total MACs and parameters of a model.
+    """Returns the total floating-point operations, MACs, and parameters of a model.
 
     Example:
 
@@ -858,7 +1126,7 @@ def get_model_profile(
 
         model = torchvision.models.alexnet()
         batch_size = 256
-        macs, params = get_model_profile(model=model, input_res= (batch_size, 3, 224, 224)))
+        flops, macs, params = get_model_profile(model=model, input_res= (batch_size, 3, 224, 224)))
 
     Args:
         model ([torch.nn.Module]): the PyTorch model to be profiled.
@@ -873,7 +1141,7 @@ def get_model_profile(
         ignore_modules ([type], optional): the list of modules to ignore during profiling. Defaults to None.
 
     Returns:
-        The number of multiply-accumulate operations (MACs) and parameters in the model.
+        The number of floating-point operations, multiply-accumulate operations (MACs), and parameters in the model.
     """
     assert type(input_res) is tuple
     assert len(input_res) >= 1
@@ -914,6 +1182,7 @@ def get_model_profile(
         _ = model(batch)
 
     flops = prof.get_total_flops()
+    macs = prof.get_total_macs()
     params = prof.get_total_params()
     if print_profile:
         prof.print_model_profile(profile_step=warm_up,
@@ -923,6 +1192,6 @@ def get_model_profile(
 
     prof.end_profile()
     if as_string:
-        return macs_to_string(flops), params_to_string(params)
+        return number_to_string(flops), macs_to_string(macs), params_to_string(params)
 
-    return flops, params
+    return flops, macs, params
