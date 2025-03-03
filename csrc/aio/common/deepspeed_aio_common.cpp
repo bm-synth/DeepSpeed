@@ -115,12 +115,12 @@ static int _do_io_complete(const int64_t min_completes,
                            std::vector<std::chrono::duration<double>>& reap_times)
 {
     const auto start_time = std::chrono::high_resolution_clock::now();
-    long long int n_completes = io_pgetevents(aio_ctxt->_io_ctxt,
-                                              min_completes,
-                                              max_completes,
-                                              aio_ctxt->_io_events.data(),
-                                              nullptr,
-                                              nullptr);
+    int64_t n_completes = io_pgetevents(aio_ctxt->_io_ctxt,
+                                        min_completes,
+                                        max_completes,
+                                        aio_ctxt->_io_events.data(),
+                                        nullptr,
+                                        nullptr);
     reap_times.push_back(std::chrono::high_resolution_clock::now() - start_time);
     assert(n_completes >= min_completes);
     return n_completes;
@@ -284,13 +284,12 @@ int open_file(const char* filename, const bool read_op)
 
 int regular_read(const char* filename, std::vector<char>& buffer)
 {
+    int64_t num_bytes;
+    const auto f_size = get_file_size(filename, num_bytes);
+    assert(f_size != -1);
+    buffer.resize(num_bytes);
     const auto fd = open(filename, O_RDONLY, 0600);
     assert(fd != -1);
-    struct stat fs;
-    const auto result = fstat(fd, &fs);
-    assert(result != -1);
-    int64_t num_bytes = fs.st_size;
-    buffer.resize(num_bytes);
     int64_t read_bytes = 0;
     auto r = 0;
     do {
