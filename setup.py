@@ -5,12 +5,10 @@
 """
 DeepSpeed library
 
-To build wheels on Windows:
-1. Install pytorch, such as pytorch 2.3 + cuda 12.1.
-2. Install visual cpp build tool.
-3. Include cuda toolkit.
-4. Launch cmd console with Administrator privilege for creating required symlink folders.
-
+To build wheel on Windows:
+    1. Install pytorch, such as pytorch 1.8 + cuda 11.1
+    2. Install visual cpp build tool
+    3. Launch cmd console with Administrator privilege for creating required symlink folders
 
 Create a new wheel via the following command:
 build_win.bat
@@ -223,6 +221,21 @@ else:
     git_hash = "unknown"
     git_branch = "unknown"
 
+
+def create_dir_symlink(src, dest):
+    if not os.path.islink(dest):
+        if os.path.exists(dest):
+            os.remove(dest)
+        assert not os.path.exists(dest)
+        os.symlink(src, dest)
+
+
+if sys.platform == "win32":
+    # This creates a symbolic links on Windows.
+    # It needs Administrator privilege to create symlinks on Windows.
+    create_dir_symlink('..\\..\\csrc', '.\\deepspeed\\ops\\csrc')
+    create_dir_symlink('..\\..\\op_builder', '.\\deepspeed\\ops\\op_builder')
+
 # Parse the DeepSpeed version string from version.txt
 version_str = open('version.txt', 'r').read().strip()
 
@@ -266,6 +279,8 @@ thisdir = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(thisdir, 'README.md'), encoding='utf-8') as fin:
     readme_text = fin.read()
 
+start_time = time.time()
+
 setup(name='deepspeed',
       version=ds_version,
       description='DeepSpeed library',
@@ -276,13 +291,22 @@ setup(name='deepspeed',
       url='http://deepspeed.ai',
       install_requires=install_requires,
       packages=find_packages(exclude=["docker",
-                                      "third_party",
-                                      "csrc"]),
-      scripts=['bin/deepspeed',
-               'bin/deepspeed.pt',
-               'bin/ds',
-               'bin/ds_ssh'],
-      classifiers=['Programming Language :: Python :: 3.6'],
+                                      "third_party"]),
+      include_package_data=True,
+      scripts=[
+          'bin/deepspeed',
+          'bin/deepspeed.pt',
+          'bin/ds',
+          'bin/ds_ssh',
+          'bin/ds_report',
+          'bin/ds_elastic'
+      ],
+      classifiers=[
+          'Programming Language :: Python :: 3.6',
+          'Programming Language :: Python :: 3.7',
+          'Programming Language :: Python :: 3.8'
+      ],
+      license='MIT',
       ext_modules=ext_modules,
       cmdclass=cmdclass)
 
