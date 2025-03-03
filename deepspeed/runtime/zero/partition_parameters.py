@@ -1802,7 +1802,8 @@ class Init(InsertPostInitMethodToModuleSubClasses):
                                              sec_numel).copy_(one_dim_param.narrow(0, secondary_start, sec_numel))
 
             # TODO: This is a temporary fix to avoid the issue that 2nd tensor all-gather happens before 2nd tensor partition is done
-            get_accelerator().current_stream().synchronize()
+            if not get_accelerator().resolves_data_dependency():
+                get_accelerator().current_stream().synchronize()
 
             print_rank_0(f"{param.ds_id} partitioned type {param.dtype} dev {param.device} shape {param.shape}",
                          force=False)
