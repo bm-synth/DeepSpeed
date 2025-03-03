@@ -64,21 +64,22 @@ def bf16_required_version_check(accelerator_check=True):
         return False
 
 
-def bf16_required_version_check():
-    TORCH_MAJOR = int(torch.__version__.split('.')[0])
-    TORCH_MINOR = int(torch.__version__.split('.')[1])
+def bf16_required_version_check(accelerator_check=True):
+    split_version = lambda x: map(int, x.split('.')[:2])
+    TORCH_MAJOR, TORCH_MINOR = split_version(torch_info['version'])
+    NCCL_MAJOR, NCCL_MINOR = split_version(torch_info['nccl_version'])
+    CUDA_MAJOR, CUDA_MINOR = split_version(torch_info['cuda_version'])
 
-    if type(torch.cuda.nccl.version()) != tuple:
-        return False
+    # Sometimes bf16 tests are runnable even if not natively supported by accelerator
+    if accelerator_check:
+        accelerator_pass = torch_info['bf16_support']
     else:
-        NCCL_MAJOR = torch.cuda.nccl.version()[0]
-        NCCL_MINOR = torch.cuda.nccl.version()[1]
+        accelerator_pass = True
 
-    CUDA_MAJOR = int(torch_info['cuda_version'].split('.')[0])
     if (TORCH_MAJOR > 1 or
         (TORCH_MAJOR == 1 and TORCH_MINOR >= 10)) and (CUDA_MAJOR >= 11) and (
             NCCL_MAJOR > 2 or
-            (NCCL_MAJOR == 2 and NCCL_MINOR >= 10)) and torch.cuda.is_bf16_supported():
+            (NCCL_MAJOR == 2 and NCCL_MINOR >= 10)) and accelerator_pass:
         return True
     else:
         return False

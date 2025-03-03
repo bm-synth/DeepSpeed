@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+'''Copyright The Microsoft DeepSpeed Team'''
 
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
