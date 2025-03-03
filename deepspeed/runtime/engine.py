@@ -2024,7 +2024,14 @@ class DeepSpeedEngine(Module):
                 forward on user defined choice of retain_graph
         """
 
-        see_memory_usage("Engine before backward", force=self.memory_breakdown())
+        if not allreduce_gradients:
+            logger.warning(
+                f'Argument `allreduce_gradients` is deprecated, ignored, and will soon be removed'
+            )
+
+        # scale loss w.r.t. gradient accumulation if needed
+        if self.gradient_accumulation_steps() > 1:
+            loss = self._scale_loss(loss.float())
 
         if self.scale_wrt_gas is not None:
             scale_wrt_gas = self.scale_wrt_gas
@@ -2081,7 +2088,7 @@ class DeepSpeedEngine(Module):
 
         self._start_timers(self.engine_timers.backward_reduce_timers)
 
-        if allreduce_gradients and self.enable_backward_allreduce:
+        if self.enable_backward_allreduce:
             self.allreduce_gradients()
 
         self._stop_timers(self.engine_timers.backward_reduce_timers)
