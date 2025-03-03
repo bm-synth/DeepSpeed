@@ -17,9 +17,6 @@ import collections
 from copy import deepcopy
 import signal
 import time
-from typing import Tuple, List, Dict
-from collections import defaultdict
-import shlex
 
 from .multinode_runner import PDSHRunner, OpenMPIRunner, MVAPICHRunner, SlurmRunner
 from .constants import PDSH_LAUNCHER, OPENMPI_LAUNCHER, MVAPICH_LAUNCHER, SLURM_LAUNCHER
@@ -27,10 +24,8 @@ from ..constants import TORCH_DISTRIBUTED_DEFAULT_PORT
 from ..nebula.constants import NEBULA_EXPORT_ENVS
 from ..utils import logger
 
-from .multinode_runner import PDSHRunner, OpenMPIRunner, MVAPICHRunner
-from .constants import TORCH_DISTRIBUTED_DEFAULT_PORT, \
-    PDSH_LAUNCHER, OPENMPI_LAUNCHER, MVAPICH_LAUNCHER
-from ..utils import logger
+from ..autotuning import Autotuner
+from deepspeed.accelerator import get_accelerator
 
 DLTS_HOSTFILE = "/job/hostfile"
 EXPORT_ENVS = ['MLFLOW', 'NCCL', 'PYTHON', 'MV2', 'UCX']

@@ -9,7 +9,9 @@ import typing
 import torch
 from deepspeed import comm as dist
 
-from deepspeed.utils.torch import required_torch_version
+# To query whether we have send/recv support
+from packaging.version import Version
+from deepspeed.git_version_info import torch_info
 from deepspeed.accelerator import get_accelerator
 
 _groups = None
@@ -108,10 +110,12 @@ def send_obj(msg: typing.Any, dest: int):
     # serialize the message
     msg = msgpack.packb(msg)
     # construct a tensor to send
-    msg = torch.ByteTensor(torch.ByteStorage.from_buffer(msg)).to(get_accelerator().device_name())
+    msg = torch.ByteTensor(torch.ByteStorage.from_buffer(msg)).to(
+        get_accelerator().device_name())
 
     # Send meta and message
-    length_tensor = torch.tensor([len(msg)], dtype=torch.long).to(get_accelerator().device_name())
+    length_tensor = torch.tensor([len(msg)],
+                                 dtype=torch.long).to(get_accelerator().device_name())
     dist.send(length_tensor, dst=dest)
     dist.send(msg, dst=dest)
 
@@ -130,7 +134,8 @@ def recv_obj(sender: int) -> typing.Any:
     dist.recv(length, src=sender)
 
     # Receive and deserialize
-    msg = torch.empty(length.item(), dtype=torch.uint8).to(get_accelerator().device_name())
+    msg = torch.empty(length.item(),
+                      dtype=torch.uint8).to(get_accelerator().device_name())
     dist.recv(msg, src=sender)
 
     msg = msgpack.unpackb(msg.cpu().numpy().tobytes())

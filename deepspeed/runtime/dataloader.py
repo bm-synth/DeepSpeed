@@ -13,12 +13,6 @@ from deepspeed.runtime.data_pipeline.constants import CURRICULUM_LEARNING, \
 from deepspeed.runtime.constants import GRADIENT_ACCUMULATION_STEPS, \
     DATA_PARALLEL_GROUP, GLOBAL_RANK
 
-from deepspeed.runtime.data_pipeline.data_sampling.data_sampler import DeepSpeedDataSampler
-from deepspeed.runtime.data_pipeline.constants import CURRICULUM_LEARNING, \
-    DATA_EFFICIENCY, DATA_SAMPLING_NUM_WORKERS
-from deepspeed.runtime.constants import GRADIENT_ACCUMULATION_STEPS, \
-    DATA_PARALLEL_GROUP, GLOBAL_RANK
-
 
 class RepeatingLoader:
 
@@ -78,7 +72,7 @@ class DeepSpeedDataLoader(object):
                 self.deepspeed_dataloader_config[GRADIENT_ACCUMULATION_STEPS],
                 self.deepspeed_dataloader_config[GLOBAL_RANK],
                 drop_last=dataloader_drop_last)
-            device_count = torch.cuda.device_count()
+            device_count = get_accelerator().device_count()
             num_local_io_workers = self.deepspeed_dataloader_config[
                 DATA_SAMPLING_NUM_WORKERS]
         else:
@@ -92,7 +86,7 @@ class DeepSpeedDataLoader(object):
             else:
                 if data_sampler is None:
                     data_sampler = RandomSampler(dataset)
-                device_count = torch.cuda.device_count()
+                device_count = get_accelerator().device_count()
                 batch_size *= device_count
 
             if num_local_io_workers is None:

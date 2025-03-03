@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from ..op_builder import CPUAdamBuilder
 from deepspeed.utils.logging import should_log_le
+from deepspeed.ops.op_builder import CPUAdamBuilder
 
 
 class DeepSpeedCPUAdam(torch.optim.Optimizer):

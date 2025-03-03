@@ -15,7 +15,7 @@ from deepspeed.runtime.utils import get_global_norm, get_grad_norm, CheckOverflo
 from deepspeed.runtime.fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, MIN_LOSS_SCALE
 from deepspeed.utils import groups, logger, log_dist
 from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, CLIP_GRAD
-import torch.distributed as dist
+from deepspeed.accelerator import get_accelerator
 
 
 class FP16_Optimizer(DeepSpeedOptimizer):
@@ -44,8 +44,8 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         self.deepspeed = deepspeed
         self.has_moe_layers = has_moe_layers
         self.using_pipeline = self.deepspeed.pipeline_parallelism
-        if not torch.cuda.is_available():
-            raise SystemError("Cannot use fp16 without CUDA.")
+        if not get_accelerator().is_available():
+            raise SystemError("Cannot use fp16 without accelerator.")
         self.optimizer = init_optimizer
 
         # param flattened by groups

@@ -10,10 +10,7 @@ import torch.nn as nn
 from packaging import version as pkg_version
 from deepspeed.utils.logging import log_dist
 from deepspeed.accelerator import get_accelerator
-from deepspeed.ops.transformer.inference.op_binding.workspace import WorkspaceOp
-from deepspeed.ops.transformer.inference.op_binding.softmax_context import SoftmaxContextOp
-from deepspeed.ops.transformer.inference.op_binding import LinearOp
-from deepspeed.ops.transformer.inference.op_binding.pad_transform import PadTransformOp
+from deepspeed.ops.op_builder import InferenceBuilder
 
 minus_inf = -10000.0
 triton_flash_attn = None
@@ -149,8 +146,12 @@ class DeepSpeedDiffusersAttention(nn.Module):
         device = get_accelerator().current_device_name() if config.bigscience_bloom else 'cpu'
         qkv_size_per_partition = (self.config.hidden_size // self.config.mp_size) * 3
 
-        data_type = self.config.dtype
-        data_type_fp = torch.half if self.config.dtype == torch.int8 else self.config.dtype
+        data_type = torch.int8 if config.q_int8 else torch.half if config.fp16 else torch.float
+        data_type_fp = torch.half if config.fp16 else torch.float
+        global inference_cuda_module
+        if inference_cuda_module is None:
+            builder = InferenceBuilder()
+            inference_cuda_module = builder.load()
 
         if DeepSpeedDiffusersAttention.layer_id == 1:
             log_dist(f"DeepSpeed-Attention config: {self.config.__dict__}", [0])

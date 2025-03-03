@@ -9,17 +9,6 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn.parameter import Parameter
 from deepspeed.accelerator import get_accelerator
-from deepspeed.module_inject.tp_shard import get_shard_size, get_shard_size_list
-from abc import ABC, abstractmethod
-from typing import Iterable, Any, Optional, List, Tuple
-from .fusedqkv_utils import shard_value_with_share_qk, shard_chunk_mlp, prepare_tp_fused_qkvw
-from deepspeed.runtime.tensor_parallel import AUTOTP_MODE
-from copy import deepcopy
-from typing import Union
-
-DEEPSPEED_AUTOTP_MODE = AUTOTP_MODE.INFERENCE
-DS_IS_REPLACED_MODULE = 'ds_is_replaced_module'
-DS_TENSOR_MODEL_PARALLEL = 'tensor_model_parallel'
 
 
 def get_auto_tp_mode():
@@ -593,29 +582,42 @@ class LinearLayer(nn.Module):
             self.weight = Parameter(
                 torch.empty(weight_shape,
                             dtype=dtype,
-                            device=torch.cuda.current_device()))
+                            device=get_accelerator().current_device_name()))
 
             self.bias = Parameter(
                 torch.empty(weight_shape[0],
                             dtype=dtype,
-                            device=torch.cuda.current_device())) \
+                            device=get_accelerator().current_device_name())) \
                 if bias is not None else None
 
     def forward(self, input):
-        return nn.functional.layer_norm(input, input.shape[-1:], self.weight, self.bias, eps=self.eps)
+        output = torch.matmul(input, self.weight.transpose(-1, -2))
+        if self.bias is not None:
+            output += self.bias
+        return output
+
+
+class Normalize(nn.Module):
+    def __init__(self, dim, dtype=torch.float, eps=1e-5):
+        super(Normalize, self).__init__()
+        self.norm = nn.LayerNorm(dim,
+                                 eps=eps).to(dtype).to(
+                                     get_accelerator().current_device_name())
+        self.weight = self.norm.weight
+        self.bias = self.norm.bias
+
+    def forward(self, input):
+        return self.norm(input)
 
 
 class EmbeddingLayer(nn.Module):
     def __init__(self, weight_shape, dtype=torch.half):
         super(EmbeddingLayer, self).__init__()
-        if weight is None:
-            self.weight = Parameter(
-                torch.empty(weight_shape[0],
-                            weight_shape[1],
-                            dtype=dtype,
-                            device=get_accelerator().current_device_name()))
-        else:
-            self.weight = weight
+        self.weight = Parameter(
+            torch.empty(weight_shape[0],
+                        weight_shape[1],
+                        dtype=dtype,
+                        device=get_accelerator().current_device_name()))
 
     def forward(self, input):
         return F.embedding(input, self.weight)

@@ -6,11 +6,8 @@ Licensed under the MIT license.
 from dataclasses import dataclass
 import functools
 import collections
-from collections import OrderedDict, UserDict
-from typing import Deque, Dict, Iterable, Set, Tuple
-import torch
-from torch.cuda import Event, Stream
-from torch.nn import Module, Parameter
+from collections import UserDict
+from typing import Deque, Set
 
 from deepspeed import comm as dist
 from deepspeed.utils.logging import logger
@@ -18,6 +15,7 @@ from deepspeed.runtime.zero.offload_config import OffloadDeviceEnum
 from deepspeed.runtime.zero.partition_parameters import *
 from deepspeed.runtime.swap_tensor.partitioned_param_swapper import PartitionedParamStatus
 from deepspeed.utils.debug import debug_module2name_id, debug_param2name_id
+from deepspeed.accelerator import get_accelerator
 
 
 def debug_rank0(message: str) -> None:
@@ -69,7 +67,7 @@ class PartitionedParameterCoordinator:
         prefetch_bucket_sz: int,
         max_reuse_distance_in_numel: int,
         max_available_parameters_in_numel: int,
-        allgather_stream: Stream,
+        allgather_stream: get_accelerator().Stream,
         prefetch_nvme: bool = False,
     ) -> None:
         # mapping of param -> handle for each param that is currently in flight
@@ -98,7 +96,7 @@ class PartitionedParameterCoordinator:
         self.hierarchy: int = 0
 
         # stream that will be used for allgather operations
-        self.__allgather_stream: Stream = allgather_stream
+        self.__allgather_stream: get_accelerator().Stream = allgather_stream
 
         # limit the number of fetch events that can be queued at once
         # otherwise, what happens is memory is allocated by the host thread at the
@@ -109,7 +107,7 @@ class PartitionedParameterCoordinator:
         # cudaMallocAsync/cudaFreeAsync. Choosing to not expose this to the user now
         # because ideally in the future its replaced by an async allocation
         # mechanism which doesn't require any configuration by the user.
-        self.__ongoing_fetch_events: Deque[Event] = collections.deque()
+        self.__ongoing_fetch_events: Deque[get_accelerator().Event] = collections.deque()
         # TODO. make this configurable via JSON
         self.__max_ongoing_fetch_events: int = 2
 
@@ -265,7 +263,7 @@ class PartitionedParameterCoordinator:
             param.ds_active_sub_modules.add(current_submodule.id)
             debug_rank0(f"-wait: {param.ds_summary()}")
             if param in self.__inflight_param_registry:
-                with torch.cuda.stream(self.__allgather_stream):
+                with get_accelerator().stream(self.__allgather_stream):
                     while self.__ongoing_fetch_events and self.__ongoing_fetch_events[
                             0].query():
                         self.__ongoing_fetch_events.popleft()
@@ -275,12 +273,12 @@ class PartitionedParameterCoordinator:
 
                     self.__inflight_param_registry.pop(param).wait()
 
-                    event = Event()
+                    event = get_accelerator().Event()
                     event.record()
                     self.__ongoing_fetch_events.append(event)
 
             assert param.ds_status == ZeroParamStatus.AVAILABLE, param.ds_summary()
-        torch.cuda.current_stream().wait_stream(self.__allgather_stream)
+        get_accelerator().current_stream().wait_stream(self.__allgather_stream)
 
         # kick off parameter prefetches for upcoming modules
         # don't prefetch if we dont have a completed model trace
@@ -398,7 +396,7 @@ class PartitionedParameterCoordinator:
                 self.__n_available_params += param.ds_numel
 
         if partitioned_params:
-            with torch.cuda.stream(self.__allgather_stream):
+            with get_accelerator().stream(self.__allgather_stream):
                 handle = partitioned_params[0].all_gather_coalesced(partitioned_params)
 
             for param in partitioned_params:

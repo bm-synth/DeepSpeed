@@ -11,6 +11,8 @@ from deepspeed.utils.logging import log_dist
 
 from deepspeed.ops.transformer.inference.ds_mlp import DeepSpeedMLP
 from deepspeed.ops.transformer.inference.ds_attention import DeepSpeedSelfAttention, BloomSelfAttention
+from deepspeed.accelerator import get_accelerator
+from deepspeed.ops.op_builder import InferenceBuilder
 
 inference_cuda_module = None
 
@@ -47,7 +49,11 @@ class DeepSpeedTransformerInference(nn.Module):
         self.config.layer_id = DeepSpeedTransformerInference.layer_id
         DeepSpeedTransformerInference.layer_id += 1
 
-        data_type = torch.half if self.config.dtype == torch.int8 else self.config.dtype
+        data_type = torch.half if config.fp16 else torch.float
+        global inference_cuda_module
+        if inference_cuda_module is None:
+            builder = InferenceBuilder()
+            inference_cuda_module = builder.load()
 
         if DeepSpeedTransformerInference.layer_id == 1:
             log_dist(f"DeepSpeed-Inference config: {self.config.__dict__}", [0])
@@ -75,7 +81,8 @@ class DeepSpeedTransformerInference(nn.Module):
                                 merge_count,
                                 mlp_extra_grouping)
 
-        device = torch.cuda.current_device()  #if config.bigscience_bloom else 'cpu'
+        device = get_accelerator().current_device_name(
+        )  # if config.bigscience_bloom else 'cpu'
         self.norm_w = nn.Parameter(torch.empty(self.config.hidden_size,
                                                dtype=data_type,
                                                device=device),

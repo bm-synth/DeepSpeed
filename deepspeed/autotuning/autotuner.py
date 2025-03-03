@@ -38,22 +38,6 @@ OFFLOAD_OPTIMIZER = "offload_optimizer"
 OFFLOAD_PARAM = "offload_param"
 ZERO_OPTIMIZATION_STAGE_DEFAULT = ZeroStageEnum.disabled
 
-try:
-    from tabulate import tabulate
-except ImportError:
-    tabulate = None
-
-try:
-    import mlflow
-    has_mlflow = True
-except Exception as e:
-    has_mlflow = False
-
-ZERO_OPTIMIZATION_STAGE = "stage"
-OFFLOAD_OPTIMIZER = "offload_optimizer"
-OFFLOAD_PARAM = "offload_param"
-ZERO_OPTIMIZATION_STAGE_DEFAULT = ZeroStageEnum.disabled
-
 
 class Autotuner:
     """The DeepSpeed Autotuner automatically discovers the optimal DeepSpeed configuration that delivers good training speed. The Autotuner uses model information, system information, and heuristics to efficiently tune system knobs that affect compute and memory efficiencies, such as ZeRO optimization stages, micro-batch sizes, and many other ZeRO optimization configurations. It not only reduces the time and resources user spend on tuning, but also can discover configurations better than hand-tuned methods.

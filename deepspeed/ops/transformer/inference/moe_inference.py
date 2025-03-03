@@ -16,7 +16,8 @@ from .op_binding.einsum_sec_sm_ecm import EinsumSecSmEcmOp
 from .op_binding.layer_norm import LayerNormOp
 from ....moe.sharded_moe import TopKGate
 from deepspeed import comm as dist
-from .op_binding.moe_res_matmul import MoEResMatmulOp
+from deepspeed.accelerator import get_accelerator
+from deepspeed.ops.op_builder import InferenceBuilder
 
 
 class DeepSpeedMoEInferenceConfig(DeepSpeedInferenceConfig):
@@ -187,8 +188,18 @@ class DeepSpeedMoEInference(nn.Module):
 
         self.config = config
         self.config.layer_id = DeepSpeedMoEInference.layer_id
-
-        assert self.config.dtype != torch.bfloat16, "DeepSpeed MoE Transformer Inference not yet tested for bfloat support"
+        global inference_cuda_module
+        global specialized_mode
+        if inference_cuda_module is None:
+            specialized_mode = False
+            # InferenceSpecializedBuilder is not among DeepSpeed provided builder yet, so we infer by builder name string
+            builder = get_accelerator().create_op_builder("InferenceSpecializedBuilder")
+            if builder != None and builder.is_compatible():
+                inference_cuda_module = builder.load()
+                specialized_mode = True
+            else:
+                inference_cuda_module = InferenceBuilder().load()
+        self.config.specialized_mode = specialized_mode
 
         DeepSpeedMoEInference.layer_id += 1
         self.attention = DeepSpeedSelfAttention(self.config, mp_group, quantize_scales, quantize_groups, merge_count)
