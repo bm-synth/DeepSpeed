@@ -72,6 +72,7 @@ from deepspeed.monitor.monitor import MonitorMaster
 from deepspeed.runtime.progressive_layer_drop import ProgressiveLayerDrop
 from deepspeed.runtime.eigenvalue import Eigenvalue
 from deepspeed.runtime.data_pipeline.curriculum_scheduler import CurriculumScheduler
+from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
 
 from .pipe.module import PipelineModule
 from .utils import ensure_directory_exists
@@ -171,6 +172,12 @@ class DeepSpeedEngine(Module):
         self.moe_layers = []
         self._step_applied = False
         self._global_grad_norm = None
+        self.use_ds_comm = False  # False --> Use torch.dist, True --> Use ds.comm backend.
+
+        self.checkpoint_engine = None
+
+        global dist
+        from deepspeed import comm as dist
         self._is_gradient_accumulation_boundary = None
         self.scale_wrt_gas = None
 
@@ -784,6 +791,18 @@ class DeepSpeedEngine(Module):
 
     def _configure_checkpointing(self, dist_init_required):
         self.checkpoint_engine = TorchCheckpointEngine()
+
+        if self._config is not None and self._config.nebula_config.enabled:
+            try:
+                from deepspeed.runtime.checkpoint_engine.nebula_checkpoint_engine import \
+                    NebulaCheckpointEngine
+                self.checkpoint_engine = NebulaCheckpointEngine(
+                    config_params=self._config.nebula_config)
+            except ImportError as err:
+                logger.error(
+                    f"No torch_nebula was found! Will fall back to torch.save. Details: {err}"
+                )
+                self.checkpoint_engine = TorchCheckpointEngine()
 
         if self._config is not None and self._config.nebula_config.enabled:
             try:
@@ -2454,7 +2473,8 @@ class DeepSpeedEngine(Module):
                             old_moe_load,
                             model=None,
                             mpu=None,
-                            num_experts=1):
+                            num_experts=1,
+                            checkpoint_engine=TorchCheckpointEngine()):
         if old_moe_load:
             expp_rank = groups._get_expert_data_parallel_rank(groups._get_max_expert_size_name())
 
@@ -2463,7 +2483,7 @@ class DeepSpeedEngine(Module):
                     groups.get_max_expert_size_name())
             for local_expert_id in range(num_local_experts):
                 global_expert_id = expp_rank * num_local_experts + local_expert_id
-                expert_state_dict = torch.load(DeepSpeedEngine._get_expert_ckpt_name(
+                expert_state_dict = checkpoint_engine.load(DeepSpeedEngine._get_expert_ckpt_name(
                     checkpoint_path,
                     -1, # -1 means ignore layer_id
                     global_expert_id,
@@ -2489,7 +2509,7 @@ class DeepSpeedEngine(Module):
                     # loop all local_experts
                     for local_expert_id in range(num_local_experts):
                         global_expert_id = expp_rank * num_local_experts + local_expert_id
-                        expert_state_dict = torch.load(
+                        expert_state_dict = checkpoint_engine.load(
                             DeepSpeedEngine._get_expert_ckpt_name(
                                 checkpoint_path,
                                 moe_layer_id,
@@ -2511,7 +2531,8 @@ class DeepSpeedEngine(Module):
         if custom_load_fn:
             custom_load_fn(src=state_dict, dst=self.module)
         else:
-            self.module.load_state_dict(state_dict, strict=strict)
+            self.module.load_state_dict(state_dict, # TODO
+                                        strict=strict)
 
     def _get_zero_ckpt_prefix(self, dp_rank, bf16_mode):
         return f'{"bf16_" if bf16_mode else ""}zero_pp_rank_{dp_rank}'
@@ -2682,7 +2703,9 @@ class DeepSpeedEngine(Module):
         from deepspeed.runtime.state_dict_factory import SDLoaderFactory
 
         ckpt_list = self._get_all_ckpt_names(load_dir, tag)
-        sd_loader = SDLoaderFactory.get_sd_loader(ckpt_list, checkpoint_engine=self.checkpoint_engine)
+        sd_loader = SDLoaderFactory.get_sd_loader(
+            ckpt_list,
+            checkpoint_engine=self.checkpoint_engine)
 
         is_pipe_parallel = isinstance(self.module, PipelineModule)
 
@@ -2725,7 +2748,8 @@ class DeepSpeedEngine(Module):
                                                 old_moe_load=old_moe_load,
                                                 model=self.module,
                                                 mpu=self.mpu,
-                                                num_experts=self.num_experts)
+                                                num_experts=self.num_experts,
+                                                checkpoint_engine=self.checkpoint_engine)
         if not self.load_universal_checkpoint():
             self.load_module_state_dict(state_dict=checkpoint['module'],
                                         strict=load_module_strict,
@@ -2741,8 +2765,9 @@ class DeepSpeedEngine(Module):
             if self.has_moe_layers:
                 expp_rank = groups.get_expert_parallel_rank()
                 optim_load_path = self._get_optimizer_ckpt_name(load_dir, tag, expp_rank)
-                optim_checkpoint = torch.load(optim_load_path,
-                                              map_location=torch.device('cpu'))
+                optim_checkpoint = self.checkpoint_engine.load(
+                    optim_load_path,
+                    map_location=torch.device('cpu'))
             else:
                 optim_checkpoint = checkpoint
 
@@ -2913,7 +2938,8 @@ class DeepSpeedEngine(Module):
             if ckpt_name is None:
                 _state = {OPTIMIZER_STATE_DICT: None}
             # Fully load state for current rank
-            elif self.zero_elastic_checkpoint() or dist.get_rank(group=self.optimizer.dp_process_group) == i:
+            if self.zero_elastic_checkpoint() or dist.get_rank(
+                    group=self.optimizer.dp_process_group) == i:
                 _state = self.checkpoint_engine.load(
                     ckpt_name,
                     map_location='cpu',
@@ -2992,6 +3018,7 @@ class DeepSpeedEngine(Module):
 
         # Ensure tag is a string
         tag = str(tag)
+        self.checkpoint_engine.create(tag)
 
         # Ensure checkpoint tag is consistent across ranks
         self._checkpoint_tag_validation(tag)
@@ -3022,7 +3049,8 @@ class DeepSpeedEngine(Module):
             self.optimizer.checkpoint_event_epilogue()
 
         # Save latest checkpoint tag
-        torch.distributed.barrier()
+        dist.barrier()
+        self.checkpoint_engine.commit(tag)
         if save_latest and self.global_rank == 0:
             with open(os.path.join(save_dir, 'latest'), 'w') as fd:
                 fd.write(tag)
@@ -3093,7 +3121,7 @@ class DeepSpeedEngine(Module):
                         global_expert_id,
                         tag,
                         self.mpu)
-                    torch.save(expert_state_dict, moe_save_path)
+                    self.checkpoint_engine.save(expert_state_dict, moe_save_path)
                 moe_layer_id += 1
 
         self._curr_ckpt_path = os.path.join(save_dir, tag)
@@ -3114,14 +3142,15 @@ class DeepSpeedEngine(Module):
             file_path = self._get_optimizer_ckpt_name(save_dir, tag, expp_rank)
             self.checkpoint_engine.save(optimizer_state, file_path)
 
-        # Load flow uses below saved file for model parameters, RNG and more
-        if groups._get_data_parallel_rank() == 0:
-            # Get non-moe parameters
-            # Classes DeepSpeedEngine and PipelineEngine have different behavior for method module_state_dict.
-            # DeepSpeedEngine returns the state dict, where PipelineEngine saves the state dict and returns None.
-            # We need to get the state dict, therefore, call to DeepSpeedEngine (base class for PipelineEngine)
-            model_state_dict = self._get_non_moe_state_dict(
-                DeepSpeedEngine.module_state_dict(self, exclude_frozen_parameters=exclude_frozen_parameters))
+        # Save optimizer states. They are different across each exp parallel rank.
+        optimizer_state = {
+            'optimizer':
+            self.optimizer.state_dict()
+            if self.optimizer and not self.zero_optimization() else None
+        }
+        # TODO: why use BufferedWriter not the path
+        file_path = self._get_optimizer_ckpt_name(save_dir, tag, expp_rank)
+        self.checkpoint_engine.save(optimizer_state, file_path)
 
             # TODO: update num experts info,.. in checkpoint
             state = {
@@ -3152,6 +3181,7 @@ class DeepSpeedEngine(Module):
             state.update(client_state)
             logger.info(f'Saving model checkpoint: {save_path}')
             self.checkpoint_engine.save(state, save_path)
+        self._curr_save_path = None
 
     def _create_checkpoint_file(self, save_dir, tag, zero_checkpoint):
         name_function = (self._get_zero_ckpt_name if zero_checkpoint else self._get_ckpt_name)
@@ -3207,9 +3237,9 @@ class DeepSpeedEngine(Module):
                      ds_version=version)
         state.update(client_state)
 
-        if self.save_non_zero_checkpoint:
-            log_dist(message=f'Saving model checkpoint: {save_path}', ranks=[0, 1])
-            self.checkpoint_engine.save(state, save_path)
+        log_dist(message=f'Saving model checkpoint: {save_path}', ranks=[0, 1])
+        self.checkpoint_engine.save(state, save_path)
+        self._curr_save_path = None
 
     def _get_buffer_names(self):
         buffer_names = []
@@ -3299,7 +3329,8 @@ class DeepSpeedEngine(Module):
                        param_shapes=self._get_zero_param_shapes(),
                        ds_config=self.config,
                        ds_version=version)
-        torch.save(zero_sd, zero_checkpoint_name)
+        self.checkpoint_engine.save(zero_sd, zero_checkpoint_name)
+
         if self.global_rank == 0:
             self._copy_recovery_script(save_path)
         ckpt_type = 'zero' if self.zero_optimization() else 'bf16_zero'
@@ -3407,6 +3438,6 @@ class DeepSpeedEngine(Module):
         if torch.distributed.get_rank() == 0:
             os.makedirs(save_dir, exist_ok=True)
             logger.info(f"Saving model weights to {path}")
-            torch.save(state_dict, path)
+            self.checkpoint_engine.save(state_dict, path)
 
         return True

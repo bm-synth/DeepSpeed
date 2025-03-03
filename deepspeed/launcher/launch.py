@@ -21,11 +21,6 @@ from argparse import ArgumentParser, REMAINDER
 from deepspeed.accelerator import get_accelerator
 from ..constants import TORCH_DISTRIBUTED_DEFAULT_PORT
 from ..nebula.constants import DLTS_POD_ENV_PATH
-from ..utils import logger, get_numactl_cmd
-from ..elasticity import is_torch_elastic_compatible
-from .constants import ELASTIC_TRAINING_ID_DEFAULT
-
-from .constants import TORCH_DISTRIBUTED_DEFAULT_PORT
 from ..utils import logger
 
 PID_FILE_BASEPATH = "/tmp"
@@ -205,6 +200,17 @@ def main():
         assert not os.path.isfile(pid_file), "pid file exists but shouldn't"
         with open(pid_file, 'w') as fd:
             fd.write(f"{launcher_pid}")
+
+    if os.path.exists(DLTS_POD_ENV_PATH):
+        with open(DLTS_POD_ENV_PATH) as file:
+            lines = file.readlines()
+            lines = [line.rstrip() for line in lines]
+            for line in lines:
+                if line.startswith('export FC_TASKROLE_NAME') or line.startswith(
+                        'export FC_TASK_INDEX'):
+                    key_val = line.split()[1]
+                    key, val = key_val.split('=')
+                    current_env[key] = val
 
     processes = []
     cmd = []

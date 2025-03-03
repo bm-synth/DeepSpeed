@@ -19,23 +19,19 @@ AUTO_MODULE_KEY = 'auto'
 
 
 class SDLoaderFactory:
-
     @staticmethod
     def get_sd_loader_json(json_file, checkpoint_engine):
-        if isinstance(json_file, str):
-            with open(json_file) as f:
-                data = json.load(f)
-        else:
-            assert isinstance(json_file, dict)
-            data = json_file
-        sd_type = data['type']
-        ckpt_list = data['checkpoints']
-        version = data['version']
-        ckpt_type = data.get('parallelization', 'pp')
-        mp_size = data.get('mp_size', 0)
-        if sd_type.lower() in ['bloom', 'ds_model']:
-            return data
-        return SDLoaderFactory.get_sd_loader(ckpt_list, checkpoint_engine, sd_type, version)
+        with open(json_file) as f:
+            data = json.load(f)
+            sd_type = data['type']
+            ckpt_list = data['checkpoints']
+            version = data['version']
+            if 'BLOOM' in sd_type or 'Bloom' in sd_type:
+                return ckpt_list
+            return SDLoaderFactory.get_sd_loader(ckpt_list,
+                                                 checkpoint_engine,
+                                                 sd_type,
+                                                 version)
 
     @staticmethod
     def get_sd_loader(ckpt_list, checkpoint_engine, sd_type='Megatron', version=None):
@@ -46,12 +42,12 @@ class SDLoaderFactory:
 
 
 class SDLoaderBase(ABC):
-
     def __init__(self, ckpt_list, version, checkpoint_engine):
         self.module_key = None
         self.ckpt_list = ckpt_list
         self.version = version
-        self.checkpoint_engine = TorchCheckpointEngine() if checkpoint_engine is None else checkpoint_engine
+        self.checkpoint_engine = TorchCheckpointEngine(
+        ) if checkpoint_engine is None else checkpoint_engine
         self.check_ckpt_list()
 
     def load(self,
@@ -120,7 +116,11 @@ class SDLoaderBase(ABC):
         ckpt_list = [self.ckpt_list[i] for i in range(num_to_merge * mp_rank, num_to_merge * (mp_rank + 1))]
 
         logger.info(f"mp_rank: {mp_rank}, ckpt_list: {ckpt_list}")
-        sd_list = [self.checkpoint_engine.load(ckpt, map_location=lambda storage, loc: storage) for ckpt in ckpt_list]
+        sd_list = [
+            self.checkpoint_engine.load(ckpt,
+                                        map_location=lambda storage,
+                                        loc: storage) for ckpt in ckpt_list
+        ]
         return sd_list
 
     def get_split_state_dict(self, mp_world_size, mp_rank):
@@ -133,7 +133,9 @@ class SDLoaderBase(ABC):
 
         logger.info(f"mp_rank: {mp_rank}, ckpt_list: {self.ckpt_list[ckpt_index]}, offset: {ckpt_offset}")
 
-        sd = self.checkpoint_engine.load(self.ckpt_list[ckpt_index], map_location=lambda storage, loc: storage)
+        sd = self.checkpoint_engine.load(self.ckpt_list[ckpt_index],
+                                         map_location=lambda storage,
+                                         loc: storage)
 
         return sd, num_to_split, ckpt_offset
 
@@ -167,7 +169,9 @@ class SDLoaderBase(ABC):
         #logger.info(f'checkpoint file list: {self.ckpt_list}')
         assert len(self.ckpt_list) > 0
 
-        sd = self.checkpoint_engine.load(self.ckpt_list[0], map_location=lambda storage, loc: storage)
+        sd = self.checkpoint_engine.load(self.ckpt_list[0],
+                                         map_location=lambda storage,
+                                         loc: storage)
 
         # check checkpoint count is same with saved mp_world_size
         if 'mp_world_size' in sd.keys():
@@ -188,7 +192,6 @@ class SDLoaderBase(ABC):
 
 
 class MegatronSDLoader(SDLoaderBase):
-
     def __init__(self, ckpt_list, version, checkpoint_engine):
         super().__init__(ckpt_list, version, checkpoint_engine)
         """
@@ -406,7 +409,9 @@ class MegatronSDLoader(SDLoaderBase):
             "mlp.dense_h_to_4h.weight", "mlp.dense_h_to_4h.bias"
         ]
 
-        sd = self.checkpoint_engine.load(ckpt_file_name, map_location=lambda storage, loc: storage)
+        sd = self.checkpoint_engine.load(ckpt_file_name,
+                                         map_location=lambda storage,
+                                         loc: storage)
 
         # partial_key is a sub-string of one key in the sd
         def check_key_exist(partial_key, sd):

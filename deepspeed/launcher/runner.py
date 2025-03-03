@@ -33,7 +33,8 @@ from .constants import TORCH_DISTRIBUTED_DEFAULT_PORT, \
 from ..utils import logger
 
 DLTS_HOSTFILE = "/job/hostfile"
-EXPORT_ENVS = ["NCCL", "PYTHON", "MV2", "UCX"]
+EXPORT_ENVS = ['NCCL', 'PYTHON', 'MV2', 'UCX']
+EXPORT_ENVS += NEBULA_EXPORT_ENVS
 DEEPSPEED_ENVIRONMENT_NAME = ".deepspeed_env"
 DEEPSPEED_ENVIRONMENT_PATHS = [os.path.expanduser("~"), '.']
 PDSH_MAX_FAN_OUT = 1024

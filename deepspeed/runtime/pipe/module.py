@@ -625,25 +625,9 @@ class PipelineModule(nn.Module):
         ckpt_files.sort()
         return ckpt_files
 
-    def save_state_dict(self, save_dir, checkpoint_engine, exclude_frozen_params=False):
-        # Processes having the same model parallel rank on different data parallel instances
-        # have identical layer weights.  We can distribute the task of saving the layer weights
-        # among the data parallel ranks.  For example, if a pipeline stage has 9 layers and
-        # if there are 2 data parallel instances, rank 0 will save the first 5 layers and
-        # rank 1 will save the last 4.
-        dp_rank = self._grid.data_parallel_id
-        dp_size = self._grid.data_parallel_size
-        num_layers = len(self.forward_funcs)
-        if self.checkpoint_parallel_write_pipeline:
-            # spread layers evenly across data parallel ranks
-            offsets = ds_utils.partition_uniform(num_layers, dp_size)
-            start, end = offsets[dp_rank], offsets[dp_rank + 1]
-        else:
-            # data parallel rank 0 writes all layers
-            if dp_rank != 0:
-                return
-            start, end = 0, num_layers
-        layer_list = self.forward_funcs[start:end]
+    def save_state_dict(self, save_dir, checkpoint_engine):
+        if self._grid.data_parallel_id != 0:
+            return
 
         checkpoint_engine.makedirs(save_dir, exist_ok=True)
         for idx, layer in enumerate(layer_list):
@@ -661,13 +645,6 @@ class PipelineModule(nn.Module):
                 {k: v.clone()
                  for k,
                  v in orig_state_dict.items()})
-            torch.save(final_state_dict, model_ckpt_path)
-
-            orig_state_dict = layer.state_dict()
-            if exclude_frozen_params:
-                for n in self._get_frozen_parameter_names(layer):
-                    del orig_state_dict[n]
-            final_state_dict = clone_tensors_for_torch_save(orig_state_dict)
             checkpoint_engine.save(final_state_dict, model_ckpt_path)
 
     def load_state_dir(self, load_dir, checkpoint_engine, strict=True):
@@ -681,9 +658,10 @@ class PipelineModule(nn.Module):
             mp_rank = self._grid.get_slice_parallel_rank()
             mp_world_size = self._grid.get_slice_parallel_world_size()
 
-            sd_loader = SDLoaderFactory.get_sd_loader(model_ckpt_list,
-                                                      version=2.0,
-                                                      checkpoint_engine=checkpoint_engine)
+            sd_loader = SDLoaderFactory.get_sd_loader(
+                model_ckpt_list,
+                version=2.0,
+                checkpoint_engine=checkpoint_engine)
             load_path, checkpoint, _ = sd_loader.load(mp_world_size, mp_rank, module_key=None, is_pipe_parallel=True)
 
             layer.load_state_dict(checkpoint, strict=strict)

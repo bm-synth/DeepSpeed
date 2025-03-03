@@ -9,8 +9,7 @@ import os
 from torch.nn.modules import Module
 from packaging import version as pkg_version
 from deepspeed.runtime.checkpoint_engine.torch_checkpoint_engine import TorchCheckpointEngine
-from deepspeed.utils.timer import SynchronizedWallClockTimer
-from deepspeed.runtime.compiler import is_compile_supported
+
 from ..runtime.state_dict_factory import SDLoaderFactory
 from ..runtime.weight_quantizer import WeightQuantization
 from ..module_inject.replace_module import replace_transformer_layer
@@ -93,7 +92,8 @@ class InferenceEngine(Module):
         self.ep_group = ep_group
         self.expert_mp_group = expert_mp_group
         self.enable_cuda_graph = enable_cuda_graph
-        self.cuda_grah_created = False
+        self.cuda_graph_created = False
+        self.checkpoint_engine = TorchCheckpointEngine()
         self._init_quantization_setting(quantization_setting)
 
         if not self.injection_dict and config.replace_with_kernel_inject:
@@ -264,9 +264,10 @@ class InferenceEngine(Module):
                         tag = fd.read().strip()
 
             ckpt_list = self._get_all_ckpt_names(load_dir, tag)
-            sd_loader = SDLoaderFactory.get_sd_loader(ckpt_list)
+            sd_loader = SDLoaderFactory.get_sd_loader(ckpt_list, self.checkpoint_engine)
         else:
-            sd_loader = SDLoaderFactory.get_sd_loader_json(load_dir)
+            sd_loader = SDLoaderFactory.get_sd_loader_json(load_dir,
+                                                           self.checkpoint_engine)
 
         mp_rank = 0 if self.mpu is None else self.mpu.get_model_parallel_rank()
 
@@ -539,16 +540,19 @@ class InferenceEngine(Module):
                 old_moe_load = False
                 if not isinstance(checkpoint['num_experts'], list):
                     old_moe_load = True
-                DeepSpeedEngine.load_moe_state_dict(load_dir,
-                                                    tag,
-                                                    state_dict=checkpoint[self._choose_module_key(checkpoint)],
-                                                    old_moe_load=old_moe_load,
-                                                    model=self.module,
-                                                    mpu=self.mpu,
-                                                    checkpoint_engine=self.checkpoint_engine)
+                DeepSpeedEngine.load_moe_state_dict(
+                    load_dir,
+                    tag,
+                    state_dict=checkpoint[self._choose_module_key(checkpoint)],
+                    old_moe_load=old_moe_load,
+                    model=self.module,
+                    mpu=self.mpu,
+                    checkpoint_engine=self.checkpoint_engine)
 
-            self.module.load_state_dict(state_dict=checkpoint[self._choose_module_key(checkpoint)],
-                                        strict=load_module_strict)
+            self.module.load_state_dict(
+                state_dict=checkpoint[self._choose_module_key(checkpoint)],
+                checkpoint_engine=self.checkpoint_engine,
+                strict=load_module_strict)
 
     def _choose_module_key(self, sd):
         assert not ('module' in sd
