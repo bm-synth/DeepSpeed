@@ -2567,33 +2567,13 @@ class DeepSpeedEngine(Module):
                                                          load_module_only=load_module_only,
                                                          custom_load_fn=custom_load_fn)
 
-        load_zero_checkpoint = load_path is not None and (self.zero_optimization() or self.bfloat16_enabled())
-        if load_zero_checkpoint:
-            if (load_optimizer_states and not load_module_only) or self.load_universal_checkpoint():
-                success = self._load_zero_checkpoint(load_dir, tag, load_optimizer_states=load_optimizer_states)
-            else:
-                success = False
+        if self.zero_optimization() and load_path is not None:
+            success = self._load_zero_checkpoint(
+                load_dir,
+                tag,
+                load_optimizer_states=load_optimizer_states)
             if not success:
-                self.optimizer._restore_from_bit16_weights()
-
-        if self.zero_nvme_offload_optimizer():
-            from shutil import copytree, disk_usage
-            offload_dir = self.optimizer.optimizer_swapper.swap_folder
-            offload_ckpt_dir = os.path.join(load_dir, tag, "offloaded_tensors")
-            _, _, free = disk_usage(offload_dir)
-            logger.info(
-                f"Copying NVMe offload checkpoint from {offload_ckpt_dir} to {offload_dir}, {free / 1e9:,.2f} GB free on target filesystem..."
-            )
-            copytree(offload_ckpt_dir, offload_dir, dirs_exist_ok=True)
-            _, _, free = disk_usage(offload_dir)
-            logger.info(f"Copying complete! {free / 1e9:,.2f} GB free on target filesystem")
-            self.optimizer.reset_swap_buffers()
-
-        if self._optimizer_has_ckpt_event_epilogue():
-            self.optimizer.checkpoint_event_epilogue()
-
-        if self.load_universal_checkpoint() and not self.zero_optimization_partition_weights():
-            self.optimizer.update_lp_params()
+                self.optimizer._restore_from_fp16_weights()
 
         return load_path, client_states
 
@@ -2744,30 +2724,18 @@ class DeepSpeedEngine(Module):
         return load_path, client_state
 
     def _load_zero_checkpoint(self, load_dir, tag, load_optimizer_states=True):
+        zero_sd_list = self._get_all_zero_checkpoints(load_dir, tag)
+        if zero_sd_list is None:
+            return False
 
-        load_serial = None
-        # When use loading checkpoint serial, checkpoint loading start from local rank 0,
-        # all other local rank would be paused, waiting for its rank-1 peer ready and its notification.
-        if self._config.zero_config.pipeline_loading_checkpoint:
-            assert self.zero_optimization_stage(
-            ) == ZeroStageEnum.weights, "Only stage3 support for pipeline checkpoint loading"
-            load_serial = torch.zeros(1).to(self.device)
-            if dist.get_local_rank() != 0:
-                dist.recv(tensor=load_serial, src=dist.get_rank() - 1)
-        if self.load_universal_checkpoint():
-            zero_sd_list = None
-            checkpoint_folder = f'{os.path.join(load_dir, tag)}'
-        else:
-            if load_optimizer_states and self.seq_dp_world_size != self.loaded_checkpoint_dp_world_size:
-                raise ZeRORuntimeException("The checkpoint being loaded used a DP " \
-                    f"world size of {self.loaded_checkpoint_dp_world_size} but the " \
-                    f"current world size is {self.seq_dp_world_size}. Automatic adjustment " \
-                    "of ZeRO's optimizer state partitioning with a new world size is not " \
-                    "currently supported.")
-            checkpoint_folder = None
-            zero_sd_list = self._get_all_zero_checkpoints(load_dir, tag)
-            if zero_sd_list is None:
-                return False
+        self.optimizer.load_state_dict(
+            state_dict_list=zero_sd_list,
+            load_optimizer_states=load_optimizer_states,
+            load_from_fp32_weights=self.zero_load_from_fp32_weights())
+        print(
+            f'loading {len(zero_sd_list)} zero partition checkpoints for rank {self.global_rank}'
+        )
+        return True
 
         param_shapes = self._get_zero_param_shapes()
         self.optimizer.load_state_dict(state_dict_list=zero_sd_list,
