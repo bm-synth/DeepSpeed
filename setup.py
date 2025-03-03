@@ -18,11 +18,8 @@ build_win.bat
 The wheel will be located at: dist/*.whl
 """
 
-import pathlib
-import os
-import shutil
-import sys
-import subprocess
+import torch
+from deepspeed import __version__ as ds_version
 from setuptools import setup, find_packages
 from setuptools.command import egg_info
 import time
@@ -304,7 +301,7 @@ else:
 start_time = time.time()
 
 setup(name='deepspeed',
-      version=version_str,
+      version=ds_version,
       description='DeepSpeed library',
       long_description=readme_text,
       long_description_content_type='text/markdown',
