@@ -85,14 +85,12 @@ class TestZeroUnbalancedGradients(DistributedTest):
         run_unbalanced_gradients(model, data_loader)
 
 
-# testing the fix https://github.com/deepspeedai/DeepSpeed/pull/1227
+# testing the fix https://github.com/microsoft/DeepSpeed/pull/1227
 @pytest.mark.parametrize("mics_enabled", [True, False])
 class TestZero3RepeatForwardLoop(DistributedTest):
     world_size = 1
 
     def test(self, mics_enabled, zero_stage=3):
-        if mics_enabled and get_accelerator().device_name() == "cpu":
-            pytest.skip("CPU accelerator does not support this test yet")
         # force all params to be partitioned by forcing threshold=0
         mics_shard_size = -1
         if mics_enabled:
