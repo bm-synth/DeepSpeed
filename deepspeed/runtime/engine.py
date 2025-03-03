@@ -141,6 +141,9 @@ class DeepSpeedEngine(Module):
         # for debug purposes - can then debug print: debug_get_module_name(module)
         debug_extract_module_and_param_names(model)
 
+        # needed for zero_to_fp32 weights reconstruction to remap nameless data to state_dict
+        self.param_names = {param: name for name, param in model.named_parameters()}
+
         # Set config using config_params for backwards compat
         if self.config is None and config_params is not None:
             self.config = config_params
@@ -1891,9 +1894,6 @@ class DeepSpeedEngine(Module):
                 clip_grad_norm_(parameters=master_params, max_norm=self.gradient_clipping(), mpu=self.mpu)
         self.optimizer.step()
 
-        if hasattr(self.optimizer, '_global_grad_norm'):
-            self._global_grad_norm = self.optimizer._global_grad_norm
-
         # Quantize the updated parameter if there is no overflow
         if self.quantizer:
             tensor_to_quantize = self.optimizer.bit16_groups if self.zero_optimization_stage(
@@ -3123,12 +3123,35 @@ class DeepSpeedEngine(Module):
 
         return buffer_names
 
-    def _get_param_shapes(self):
+    def _get_zero_param_shapes(self):
+        """Returns a dict of name to shape mapping, only for the flattened fp32 weights saved by the
+        optimizer. the names are exactly as in state_dict. The order is absolutely important, since
+        the saved data is just flattened data with no identifiers and requires reconstruction in the
+        same order it was saved.
+
+        We can't rely on self.module.named_parameters() to get the saved tensors, as some params
+        will be missing and others unsaved and then it'd be impossible to reconstruct state_dict
+        from the flattened weights.
+
+        optimizer.fp16_groups seems to be the easiest to use as it's in all zeroX versions.
+        """
         param_shapes = OrderedDict()
-        for name, param in self.module.named_parameters():
-            param_shapes[name] = param.ds_shape if hasattr(param,
-                                                           "ds_shape") else param.shape
-            # print(f"saving param {name} {param_shapes[name]}")
+        cnt = 0
+        numel = 0
+        for fp16_group in self.optimizer.fp16_groups:
+            for param in fp16_group:
+                cnt += 1
+                numel += param.ds_numel if hasattr(param, "ds_numel") else param.numel()
+                shape = param.ds_shape if hasattr(param, "ds_shape") else param.shape
+                if param not in self.param_names:
+                    raise ValueError(f"failed to find optimizer param in named params")
+                name = self.param_names[param]
+                param_shapes[name] = shape
+
+                # uncomment to debug zero_to_fp32.py problems
+                # if self.global_rank == 0: print(f"saving param {name} {shape} (numel={shape.numel()})")
+        # if self.global_rank == 0: print(f"Total saved {numel} numels in {cnt} params")
+
         return param_shapes
 
     def _copy_recovery_script(self, save_path):
@@ -3152,8 +3175,14 @@ class DeepSpeedEngine(Module):
 
     def _save_zero_checkpoint(self, save_path, tag):
         zero_checkpoint_name = self._get_zero_ckpt_name(save_path, tag)
-        zero_sd = dict(optimizer_state_dict=self.optimizer.state_dict(), ds_config=self.config, ds_version=version)
-        self.checkpoint_engine.save(zero_sd, zero_checkpoint_name)
+        zero_sd = dict(optimizer_state_dict=self.optimizer.state_dict(),
+                       param_shapes=self._get_zero_param_shapes(),
+                       ds_config=self.config,
+                       ds_version=version)
+        torch.save(zero_sd, zero_checkpoint_name)
+        if self.global_rank == 0:
+            self._copy_recovery_script(save_path)
+        logger.info('zero checkpoint saved {}'.format(zero_checkpoint_name))
 
         if self.global_rank == 0:
             self._copy_recovery_script(save_path)
