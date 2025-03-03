@@ -20,7 +20,6 @@ GROUP_PADDINGS = 'group_paddings'
 PARTITION_COUNT = 'partition_count'
 ZERO_STAGE = 'zero_stage'
 CLIP_GRAD = 'clip_grad'
-PARAM_SLICE_MAPPINGS = 'param_slice_mappings'
 FP32_WEIGHT_KEY = "fp32"
 
 #########################################
@@ -29,18 +28,17 @@ FP32_WEIGHT_KEY = "fp32"
 PARAM = 'param'
 PARAM_SHAPES = 'param_shapes'
 BUFFER_NAMES = 'buffer_names'
-VOCAB_DIVISIBILITY_PADDING_TENSOR = 'vocab_divisibility_padding_tensor'
-CAT_DIM = "cat_dim"
 
 #########################################
 # Checkpoint naming constants
 #########################################
 MODEL_FILE_PREFIX = 'mp_rank_'
-ZERO_FILE_PREFIX = 'bf16_' + 'zero_pp_rank_'
+ZERO_FILE_PREFIX = 'zero_pp_rank_'
 OPTIM_FILE_SUFFIX = '_optim_states.pt'
 MODEL_FILE_SUFFIX = '_model_states.pt'
 LAYER_FILE_PREFIX = 'layer_'
-BF16_ZERO_FILE_PREFIX = ZERO_FILE_PREFIX
+BF16_ZERO_FILE_PREFIX = 'bf16_' + ZERO_FILE_PREFIX
+FP16_ZERO_FILE_PREFIX = 'fp16_' + ZERO_FILE_PREFIX
 
 #########################################
 # Checkpoint utility keys
@@ -56,30 +54,16 @@ UNIVERSAL_CHECKPOINT_VERSION_KEY = 'universal_checkpoint_version'
 UNIVERSAL_CHECKPOINT_VERSION_VALUE = 0.2
 
 # Vocabulary padding
-VOCAB_TENSOR = 'vocab_tensor'
+VOCAB_DIVISIBILITY_PADDING_TENSOR = 'vocab_divisibility_padding_tensor'
 PADDED_VOCAB_SIZE = 'padded_vocab_size'
 ORIGINAL_VOCAB_SIZE = 'original_vocab_size'
 
 # Parameter splitting/merging
 PARAM_SLICE_MAPPINGS = 'param_slice_mappings'
 CAT_DIM = "cat_dim"
-# Following is a special case where a parameter effectively contains sub parameters.
-# As an example, consider Megatron-DeepSpeed GPT SWIGLU implementation (mlp.h_to_4h).
-# In this case, a single parameter ia allocated contiguously, but used as separate parameters.
-# When using universal checkpoint, we have to normalize the representation of the full parameter.
-# We normalize it by concatenating all slices of the sub params and then concatenating the sub params.
-# All concat operations are done on CAT_DIM (currently, no support for different concat dims sub params and TP slicing).
-# Similarly, load_hp_checkpoint_state has to take the needed actions when loading from universal.
-PARAM_N_SUB_PARAMS = "param_n_sub_params"
-
-SUB_PARAM_SHAPE = "sub_param_shape"
 
 # Regex list of parameters that require special handling
 VOCABULARY_PARAMETER_PATTERNS = 'vocabulary_parameter_patterns'
 PIPELINE_REPLICATED_PARAMETER_PATTERNS = 'pipeline_replicated_parameter_patterns'
 PARAMETER_TO_AVERAGE_PATTERNS = 'parameter_to_average_patterns'
 PARAMETER_WITH_ROW_PARALLELISM_PATTERNS = 'parameter_with_row_parallelism_patterns'
-TP_REPLICATED_PARAMETER_PATTERNS = 'tp_replicated_parameter_patterns'
-PARAMETER_WITH_2_SUB_PARAMS_CAT_DIM_0 = 'parameter_with_2_sub_params_cat_dim_0'
-PARAMETER_WITH_SUB_PARAMS = 'parameter_with_sub_params'
-SUB_PARAMS_SHAPE = 'sub_params_shape'
