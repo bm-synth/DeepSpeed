@@ -1,9 +1,15 @@
 ---
+layout: single
 title: "DeepSpeed-MoE for NLG: Reducing the training cost of language models by 5 times"
 excerpt: ""
+categories: news
+new_post: false
 date: 2021-12-09 22:00:00
-tags: training English
 ---
+
+Published on December 9, 2021
+
+[By DeepSpeed Team](https://www.microsoft.com/en-us/research/project/deepspeed/people/)
 
 Autoregressive transformer-based natural language generation (referred to as
 NLG in the rest of the blog) models can offer convincing solutions to a broad
@@ -75,7 +81,7 @@ We pre-trained both the dense and MoE version of the above models using
 combination of data parallel and expert parallel training to effectively scale
 the [MoE model training](https://www.microsoft.com/en-us/research/blog/deepspeed-powers-8x-larger-moe-model-training-with-high-performance/).
 
-We used the same training data as described in the [MT-NLG blog](https://www.microsoft.com/en-us/research/blog/using-deepspeed-and-megatron-to-train-megatron-turing-nlg-530b-the-worlds-largest-and-most-powerful-generative-language-model/). For a fair
+We used the same training data as described in the MT-NLG blog. For a fair
 comparison, we use 300B tokens to train both the dense model and the MoE model.
 
 ## MoE leads to better quality for NLG models
@@ -86,7 +92,7 @@ the validation loss of the MoE model, 350M+MoE-128, is on par with the
 validation loss of the 1.3B dense model with 4x larger base.  This is also true
 for 1.3B+MoE-128 in comparison with 6.7B dense model with 5x larger base.
 Furthermore, the model quality is on par not only for the validation loss but
-also for a wide variety of 6 ZeRO-shot evaluation tasks as shown in Table 1,
+also for a wide variety of 6 zero-shot evaluation tasks as shown in Table 1,
 demonstrating that these models in fact have very similar model quality.
 
 ![MoE NLG](/assets/images/moe-nlg.png){: .align-center}
@@ -103,7 +109,7 @@ Figure 1: Token-wise validation loss curves for dense and MoE NLG models with di
 | 350M+MoE-128 (13B) | 0.6270 | 0.7459 | 0.6046 | 0.3560 | 0.1658 | 0.0517 |
 | 1.3B+MoE-128 (52B) | 0.6984 | 0.7671 | 0.6492 | 0.3809 | 0.3129 | 0.0719 |
 
-Table 1: ZeRO-shot evaluation results (last six columns) for different dense and MoE NLG models. All ZeRO-shot evaluation results use the accuracy metric.
+Table 1: Zero-shot evaluation results (last six columns) for different dense and MoE NLG models. All zero-shot evaluation results use the accuracy metric.
 
 ## Same quality with 5x less training cost
 
@@ -170,15 +176,15 @@ high quality language models accessible to a broad audience, even with limited
 compute resources.
 
 To this end we are releasing our [end-to-end pipeline for training MoE based
-NLG models](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/moe-training),
+NLG models](https://github.com/microsoft/Megatron-DeepSpeed/tree/moe-training),
 along with [specific example
-scripts](https://github.com/deepspeedai/Megatron-DeepSpeed/tree/moe-training/examples_deepspeed/MoE)
-and [tutorial](/tutorials/mixture-of-experts-nlg) to help get started with our pipeline.  We look forward to the application and
+scripts](https://github.com/microsoft/Megatron-DeepSpeed/tree/moe-training/examples/MoE)
+to help get started with our pipeline.  We look forward to the application and
 the innovations that this may bring to the deep learning community.
 
 ## Acknowledgement
 
-This work was done in collaboration with Brandon Norick, Zhun Liu, Xia Song from the
+This work was done in collaboration with Brandon Norick and Xia Song from the
 Turing Team, and Young Jin Kim, Alex Muzio, Hany Hassan Awadalla from Z-Code
 Team. We also thank Luis Vargas, Umesh Madan, Gopi Kumar, Andrey Proskurin and
 Mikhail Parakhin for their continuous support and guidance.
