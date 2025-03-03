@@ -17,7 +17,7 @@ this problem, DeepSpeed has created a suite of I/O optimizations collectively ca
 
 DeepNVMe improves the performance and efficiency of I/O-bound DL applications by accelerating I/O operations
 and reducing hardware requirements. It achieves this by leveraging storage innovations such as Non-Volatile
-Memory Express (NVMe) Solid State Drives (SSDs) and NVIDIA Magnum IO<sup>TM</sup> GPUDirect® Storage (GDS). In this
+Memory Express (NVMe) Solid Storage Devices (SSDs) and Nvidia Magnum IO^TM GPUDirect® Storage (GDS). In this
 blog we show the benefits of DeepNVMe using microbenchmarks and an inference application. In experiments
 conducted on an Azure NC96ads\_A100\_v4 VM, we observed that DeepNVMe saturates available NVMe bandwidth for
 data transfers with GPU or CPU memory, achieving up to 10GB/sec reads and 5 GB/secs writes.
@@ -79,10 +79,6 @@ We measure the generation throughput of inferencing a LLAMA3-70B model on a sing
 Figure 3: Using DeepNVMe to scale LLAMA3-70B token generation performance with NVMe offloading.
 </div>
 
-# Summary
+# Conclusion
 
-In this blog post, we introduced DeepNVMe, an I/O optimization technology created to tackle the emergence of I/O operations as key bottlenecks of Deep Learning scalability. DeepNVMe enables fast and efficient data transfers between persistent storage and DL application memory through optimizations built on popular storage technologies such as NVMe SSDs and NVIDIA GDS. We showed benefits of using DeepNVMe for LLAMA3-70B token generation on single A100-80GB GPU with NVMe offloading, for which it achieves up to 7 tokens per second in generation throughput on an Azure NC96ads\_A100\_v4 VM. DeepNVMe will be open-sourced and generally available in DeepSpeed versions >= [0.15.0](https://github.com/deepspeedai/DeepSpeed/releases/tag/v0.15.0).  In future blogs, we will report DeepNVMe improvements for other I/O bound DL applications such as model checkpointing and data loading.
-
-
-# Acknowlegements
-This work is the result of a deep collaboration between Microsoft and Nvidia. The contributors include Joe Mayer, Martin Cai, and Olatunji Ruwase from Microsoft; Kiran Modukuri, Vahid Noormofidi, Sourab Gupta, and Sandeep Joshi from Nivida.
+In this blog post, we introduced DeepNVMe, an I/O optimization technology created to tackle the emergence of I/O operations as key bottlenecks of Deep Learning scalability. DeepNVMe enables fast and efficient data transfers between persistent storage and DL application memory through optimizations built on popular storage technologies such as NVMe SSDs and NVIDIA GDS. We showed benefits of using DeepNVMe for LLAMA3-70B token generation on single A100-80GB GPU with NVMe offloading, for which it achieves up to 7 tokens per second in generation throughput on an Azure NC96ads\_A100\_v4 VM. DeepNVMe will be generally available in DeepSpeed versions >= [0.15.0](https://github.com/microsoft/DeepSpeed/releases/tag/v0.15.0).  In future blogs, we will report DeepNVMe improvements for other I/O bound DL applications such as model checkpointing and data loading.
