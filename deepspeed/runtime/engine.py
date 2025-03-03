@@ -1765,8 +1765,7 @@ class DeepSpeedEngine(Module):
         r"""Execute backward pass on the loss
         Arguments:
             loss: Torch tensor on which to execute backward propagation
-            retain_graph: bool, default: false
-                forward on user defined choice of retain_graph
+            allreduce_gradients: is deprecated, ignored, and will soon be removed'
         """
 
         if not allreduce_gradients:
