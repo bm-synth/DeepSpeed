@@ -5,9 +5,17 @@ on:
     branches:
       - 'master'
       - 'staging**'
+    paths-ignore:
+      - 'docs/**'
+      - 'blogs/**'
   pull_request:
     branches:
       '**'
+    paths-ignore:
+      - 'docs/**'
+      - 'blogs/**'
+  schedule:
+    - cron: "0 0 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
