@@ -216,12 +216,11 @@ def _one_hot_to_float(x, num_classes):
 def top1gating(logits: Tensor,
                capacity_factor: float,
                min_capacity: int,
-               used_token: Tensor = None,
+               used_token: torch.Tensor = None,
                noisy_gate_policy: Optional[str] = None,
-               drop_tokens: bool = True,
-               use_rts: bool = True,
-               ep_group: Union[torch.distributed.ProcessGroup, None] = None,
-               use_tutel: bool = False) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+               drop_tokens: bool = True) -> Tuple[Tensor,
+                                                  Tensor,
+                                                  Tensor]:
     """Implements Top1Gating on logits."""
     if noisy_gate_policy == 'RSample':
         logits_w_noise = logits + gumbel_rsample(logits.shape, device=logits.device)
@@ -261,6 +260,12 @@ def top1gating(logits: Tensor,
             new_capacity = torch.ceil(new_capacity / tp).mul(tp).to(new_capacity.dtype)
         # Make sure the capacity value does not exceed the number of tokens.
         capacity = min(new_capacity, torch.tensor(mask1.size(0)).to(new_capacity.device))
+
+    # if we don't want to drop any tokens
+    if not drop_tokens:
+        new_capacity = torch.max(exp_counts).to(logits.device)
+        dist.all_reduce(new_capacity, op=dist.ReduceOp.MAX, group=dist.group.WORLD)
+        capacity = new_capacity
 
     # Compute l_aux
     me = torch.mean(gates, dim=0)
@@ -515,12 +520,9 @@ class TopKGate(Module):
                  k: int = 1,
                  capacity_factor: float = 1.0,
                  eval_capacity_factor: float = 1.0,
-                 min_capacity: int = 8,
+                 min_capacity: int = 4,
                  noisy_gate_policy: Optional[str] = None,
-                 drop_tokens: bool = True,
-                 use_rts: bool = True,
-                 ep_group: Union[torch.distributed.ProcessGroup, None] = None,
-                 top2_2nd_expert_sampling: bool = True) -> None:
+                 drop_tokens: bool = True) -> None:
         super().__init__()
 
         self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
@@ -533,6 +535,7 @@ class TopKGate(Module):
         self.timers = SynchronizedWallClockTimer()
         self.wall_clock_breakdown = False
         self.gate_time = 0.0
+        self.drop_tokens = drop_tokens
 
     def forward(
         self,
@@ -559,7 +562,8 @@ class TopKGate(Module):
                 self.capacity_factor if self.training else self.eval_capacity_factor,
                 self.min_capacity,
                 used_token,
-                self.noisy_gate_policy if self.training else None)
+                self.noisy_gate_policy if self.training else None,
+                self.drop_tokens)
 
         else:
             gate_output = top2gating(
