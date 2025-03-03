@@ -127,14 +127,12 @@ The following model families have been successfully tested with automatic tensor
 - bigbird_pegasus
 - bloom
 - camembert
-- chatglm2
-- chatglm3
 - codegen
-- codellama
 - deberta_v2
 - electra
 - ernie
 - esm
+- glm
 - gpt-j
 - gpt-neo
 - gpt-neox
@@ -143,8 +141,6 @@ The following model families have been successfully tested with automatic tensor
 - llama
 - m2m_100
 - marian
-- mistral
-- mixtral
 - mpt
 - mvp
 - nezha
@@ -166,14 +162,11 @@ The following model families have been successfully tested with automatic tensor
 - xglm
 - xlm_roberta
 - yoso
-- bloom
-- mpt
 
 # Unsupported Models
 
 The following models are not currently supported with automatic tensor parallelism. They may still be compatible with other DeepSpeed features (e.g., kernel injection for Bloom):
 
-- codegen
 - deberta
 - flaubert
 - fsmt
