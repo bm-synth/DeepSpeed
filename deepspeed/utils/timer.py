@@ -4,9 +4,7 @@
 # DeepSpeed Team
 
 import time
-from numpy import mean
-from deepspeed.utils.logging import log_dist
-from deepspeed.accelerator import get_accelerator
+import torch
 
 FORWARD_MICRO_TIMER = 'fwd_microstep'
 FORWARD_GLOBAL_TIMER = 'fwd'
@@ -23,6 +21,13 @@ TIME_EPSILON = 1e-6
 try:
     import psutil
 
+    PSUTILS_INSTALLED = True
+except ImportError:
+    PSUTILS_INSTALLED = False
+    pass
+
+try:
+    import psutil
     PSUTILS_INSTALLED = True
 except ImportError:
     PSUTILS_INSTALLED = False
@@ -161,46 +166,14 @@ class SynchronizedWallClockTimer:
         return means
 
 
-class NoopTimer:
-
-    class Timer:
-
-        def start(self):
-            ...
-
-        def reset(self):
-            ...
-
-        def stop(self, **kwargs):
-            ...
-
-        def elapsed(self, **kwargs):
-            return 0
-
-        def mean(self):
-            return 0
-
-    def __init__(self):
-        self.timer = self.Timer()
-
-    def __call__(self, name):
-        return self.timer
-
-    def get_timers(self):
-        return {}
-
-    def log(self, names, normalizer=1.0, reset=True, memory_breakdown=False, ranks=None):
-        ...
-
-    def get_mean(self, names, normalizer=1.0, reset=True):
-        ...
-
-
-class ThroughputTimer:
-
-    def __init__(self, config, batch_size, start_step=2, steps_per_output=None, monitor_memory=False, logging_fn=None):
-        from deepspeed.utils import logger
-        self.config = config
+class ThroughputTimer():
+    def __init__(self,
+                 batch_size,
+                 num_workers,
+                 start_step=2,
+                 steps_per_output=50,
+                 monitor_memory=False,
+                 logging_fn=None):
         self.start_time = 0
         self.end_time = 0
         self.started = False
