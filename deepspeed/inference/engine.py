@@ -315,11 +315,13 @@ class InferenceEngine(Module):
             self.module.float()
 
     def _pre_forward_hook(self, module, *inputs, **kwargs):
-        if self.use_cuda_events:
-            self.timers(INFERENCE_MODEL_TIMER).start()
-        else:
-            get_accelerator().synchronize()
-            self._start = time.time()
+        for input in inputs:
+            if torch.is_tensor(input):
+                input = input.to(torch.cuda.current_device())
+                if self.mp_world_size > 1:
+                    if not input.is_contiguous():
+                        input = input.contiguous()
+                    dist.broadcast(input, 0)
 
     def _post_forward_hook(self, module, input, output):
         if self.use_cuda_events:
@@ -603,40 +605,11 @@ class InferenceEngine(Module):
                 self.static_inputs[i].copy_(inputs[i])
         for k in kwargs:
             if torch.is_tensor(kwargs[k]):
-                self.static_kwargs[k].copy_(kwargs[k])
-        get_accelerator().replay_graph(self._cuda_graphs)
-        return self.static_output
-
-    def model_times(self):
-        assert self.model_profile_enabled, "model profiling is not enabled"
-        model_times = self._model_times
-        if self._config.enable_cuda_graph and len(self._model_times) == 0:
-            raise ValueError("Model times are empty and cuda graph is enabled. If "
-                             "this is a GPT-style model this combo is not supported. If this is a "
-                             "BERT-style model this is a bug, please report it. "
-                             f"Model type is: {type(self.module)}")
-        self._model_times = []
-        return model_times
-
-    def _module_match(self, module):
-        for policy in generic_policies:
-            policy = policy()
-            if policy.match_replaced(module):
-                return True
-        return False
-
-    def _local_cuda_graph_used(self, module):
-        if isinstance(module, torch.nn.Module):
-            return False
-        else:
-            sub_module_cuda_graph = False
-            for name in module.__dict__.keys():
-                sub_module = getattr(module, name)
-
-                if self._module_match(sub_module) and hasattr(sub_module, "enable_cuda_graph"):
-                    sub_module_cuda_graph = True
-
-            return sub_module_cuda_graph
+                kwargs[k] = kwargs[k].to(torch.cuda.current_device())
+                if self.mp_world_size > 1:
+                    if not kwargs[k].is_contiguous():
+                        kwargs[k] = kwargs[k].contiguous()
+                    dist.broadcast(kwargs[k], 0)
 
     def forward(self, *inputs, **kwargs):
         """Execute forward propagation
@@ -645,17 +618,23 @@ class InferenceEngine(Module):
             *inputs: Variable length input list
             **kwargs: variable length keyword arguments
         """
-        start = None
-        if self.model_profile_enabled and get_accelerator().device_name() == 'cuda' and self._config.enable_cuda_graph:
-            get_accelerator().synchronize()
-            start = time.time()
+        if self.mp_world_size > 1:
+            if self.mpu is None:
+                for input in inputs:
+                    if torch.is_tensor(input):
+                        input = input.to(torch.cuda.current_device())
+                        if self.mp_world_size > 1:
+                            if not input.is_contiguous():
+                                input = input.contiguous()
+                            dist.broadcast(input, 0)
 
-        if get_accelerator().device_name() == 'cuda' and self._config.enable_cuda_graph and not self.local_cuda_graph:
-            if self.cuda_graph_created:
-                outputs = self._graph_replay(*inputs, **kwargs)
-            else:
-                self._create_cuda_graph(*inputs, **kwargs)
-                outputs = self._graph_replay(*inputs, **kwargs)
+                for k in kwargs:
+                    if torch.is_tensor(kwargs[k]):
+                        kwargs[k] = kwargs[k].to(torch.cuda.current_device())
+                        if self.mp_world_size > 1:
+                            if not kwargs[k].is_contiguous():
+                                kwargs[k] = kwargs[k].contiguous()
+                            dist.broadcast(kwargs[k], 0)
 
         else:
             outputs = self.module(*inputs, **kwargs)
