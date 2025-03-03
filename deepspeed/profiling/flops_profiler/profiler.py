@@ -249,6 +249,19 @@ class FlopsProfiler(object):
             top_modules (int, optional): Limits the aggregated profile output to the number of top modules specified.
             detailed (bool, optional): Whether to print the detailed model profile.
         """
+        if not self.started:
+            return
+        import sys
+        import os.path
+        original_stdout = None
+        f = None
+        if output_file and output_file != "":
+            dir_path = os.path.dirname(os.path.abspath(output_file))
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path)
+            original_stdout = sys.stdout
+            f = open(output_file, "w")
+            sys.stdout = f
 
         total_flops = self.get_total_flops()
         total_macs = self.get_total_macs()
